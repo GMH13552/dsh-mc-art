@@ -140,6 +140,24 @@ node install.mjs     # 或 sh install.sh / install.bat：装 skill + 模式 + �
 ——于是"完整 / 无 Cordis"两个模式并成了一个。要改面板源码，用仓库里的 loader 动态发射一次
 （开发用，见 `panel/README.md`）。门禁 `node tools/check_presets.mjs` 盯着"别把那一行加回来"。
 
+### 两代 DSH 对"预设"的模型不一样（踩过）
+
+| | 0.1.x（本仓库开发用的这套） | 0.2.0-rc.x（Windows 桌面端） |
+|---|---|---|
+| 包 | `dsh-agent-presets`（复数） | `dsh-agent-preset`（单数）+ `…-registry` |
+| 预设从哪来 | **扫目录**：`.agent-presets/`、包内 root（`roots` 键） | **组合里的行**：`@deepseek-ai/dsh-agent-preset`，config = `{id,name,description,order,plugins}` |
+| 注册表 Config | `roots` / `includeShippedRoot` / `includeUserRoot` | 只有 `default` / `selectedDefault`（**没有 roots**） |
+
+所以"包内 `preset/` + 给 `agent-presets` 行加一个 root"这招在桌面端会**无声失效**（它打在
+一个不存在的行 id 上，而我们验证过"打不存在的行无害"）。同一批行换一种送达方式就行：
+`presets/mc-studio/desktop-generation.patch.yml` 是把源预设的 18 行包成一条
+`@deepseek-ai/dsh-agent-preset`（skill 那行指到装好的包
+`node_modules/dsh-mc-art-panel/preset/mc-studio/skills`），追加到该 profile 的
+`cordis.patch.yml` 末尾、重启即生效。⚠️ 这份是**手工生成**的（还没接进 `build.mjs`），
+改源预设时要一起重新生成。
+
+（另：桌面端那代的 skill 根照旧扫 `~/.dsh/skills`，所以 skill 只靠用户目录也能送达。）
+
 ## 五、DSH 插件
 
 **面板在 npm 上叫 `dsh-mc-art-panel`，而且它不只是面板**：包里同时带着「MC 模组工作室」模式
