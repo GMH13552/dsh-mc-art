@@ -26,6 +26,48 @@ dsh plugin --profile web add /path/to/dsh-mc-art/panel    # 或 npm 上的包名
   name: dsh-mc-art-panel
 ```
 
+## 这个包带什么
+
+装一个包，面板、模式、两个 skill 一起到位——不需要再跑仓库里的安装器，也不会往你的
+用户目录写任何东西：
+
+```
+panel/                        包根
+├── lib/                      宿主与客户端（由 build.mjs 从 tools/mcart-plugin/ 生成）
+├── cordis.patch.yml          ① 把面板插进组合  ② 把包内预设目录注册成 agent-presets 的一个 root
+└── preset/mc-studio/         「MC 模组工作室」模式
+    ├── agent.cordis.yml      预设的宿主组合（自带 skill-filesystem 行）
+    ├── preset.yml            名字与说明
+    └── skills/               随预设走的 skill：mc-mod、mc-art
+```
+
+两处机制，都照 DSH 出厂预设的做法：
+
+- **模式**：`cordis.patch.yml` 给 `agent-presets` 那一行加了一个 root（`trust: system`），
+  路径用 `!!js` 从 `baseUrl` 算 —— 在 profile 组合里 **`baseUrl` 就是 profile 目录**（实测），
+  所以 `node_modules/dsh-mc-art-panel/preset` 正好落在装好的包上。
+- **skill**：预设自己带 `skills/`，用
+  `process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl))` 定位
+  （预设组合里 `baseUrl` 是**预设自己的目录**）。这正是出厂 `cordis` 预设带它那两份
+  composition skill 的方式；web 组合里基础的 `skill-filesystem` 行是 disabled 的，
+  **本地 skill 归预设管**。
+
+`cert`：`mc-art` 是独立仓库（有自己的历史），这里放的是它的一份**快照**（发布时从克隆复制，
+约 2.9 MB）。想跟上游最新：跑仓库里的 `install.mjs`，它会把 mc-art clone/更新到
+`~/.dsh/skills/mc-art`；`~/.dsh/skills` 是默认 skill 根，两边不会冲突（同名时预设层优先）。
+
+怎么验（本机真跑过）：用 DSH 自己的发现逻辑扫装好的包 ——
+
+```bash
+# 在某个装了这个包的 profile 里
+node -e 'import("/…/@deepseek-ai/dsh-agent-presets/lib/index.js").then(async (m) => {
+  const r = await m.discoverPresets([{ path: "/…/profiles/<名>/node_modules/dsh-mc-art-panel/preset", trust: "system" }],
+    new URL("file:///…/@deepseek-ai/dsh/"))
+  console.log(r.map((p) => p.id + " / " + p.name + " / broken=" + (p.broken ?? "no")).join("\n"))
+})'
+# → mc-studio / MC 模组工作室 / broken=no
+```
+
 ## 同一份源码，两种送达
 
 `lib/` 是**生成物**（`node build.mjs`），来源是仓库里的 `tools/mcart-plugin/{host,client}.js`

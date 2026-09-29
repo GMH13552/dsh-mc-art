@@ -142,14 +142,16 @@ node install.mjs     # 或 sh install.sh / install.bat：装 skill + 模式 + �
 
 ## 五、DSH 插件
 
-**面板在 npm 上叫 `dsh-mc-art-panel`**（未发布前也可以直接从本仓库的 `panel/` 目录装）。
-别人拿到这个插件有三条路，都验证过：
+**面板在 npm 上叫 `dsh-mc-art-panel`，而且它不只是面板**：包里同时带着「MC 模组工作室」模式
+和两个 skill（`mc-mod` + `mc-art`），装一个包就全有 —— 不用再跑安装器，也不往用户目录写东西。
+别人拿到它有三条路，都验证过：
 
 **一条命令装好**（已发布到 npm：`dsh-mc-art-panel@0.1.0`）：
 
 ```bash
 dsh plugin --profile web add dsh-mc-art-panel
-# 国内想走镜像：加 --registry=https://registry.npmmirror.com/（已同步到 0.1.0，实测）
+# （桌面端 profile 通常叫 desktop：--profile desktop）
+# 国内想走镜像：加 --registry=https://registry.npmmirror.com/（已同步，实测）
 # 不想依赖 npm：dsh plugin --profile web add \
 #   https://github.com/GMH13552/dsh-mc-art/releases/latest/download/dsh-mc-art-panel.tgz
 # 重启 DSH → 右侧栏出现「MC 资产」

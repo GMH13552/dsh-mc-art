@@ -20,8 +20,9 @@
  * 于是"同一份代码两种送达"不需要维护两份实现（这是这个仓库最在意的事）。
  * `lib/` 是生成物且要随包发布，所以另有 verify-build.mjs 逐字节比对，防止漂移。
  */
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { cpSync, existsSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -192,17 +193,56 @@ window.__ModuleLoader__.load({
 `
 }
 
+/**
+ * 把仓库里的「模式」和「skill」也复制进包里。
+ *
+ * 为什么：用户从 npm 拉一个包，就该同时得到面板 + 模式 + skill —— 而不是"装了面板，
+ * 预设还得自己拷到 ~/.dsh/.agent-presets"。面板自己的 cordis.patch.yml 会把包内
+ * 这两个目录注册成 agent-presets 的 root 和 skill 的 customSkillDirs（都在 profile
+ * 里，不往用户目录写东西）。
+ *
+ * 副本仍然是**生成物**：唯一真相是仓库里的 presets/ 与 skills/，verify-build.mjs 会
+ * 逐字节比对这两份拷贝，防止它们悄悄漂移。
+ */
+export function vendored() {
+  // mc-art 是**独立仓库**（有自己的历史与节奏），所以它不在本仓库里：
+  // 这里的来源是那个仓库的本地克隆（安装器装到 ~/.dsh/skills/mc-art）。
+  // 发布时把它快照进包里，用户装一个包就同时拿到面板 + 模式 + 两个 skill，
+  // 不需要 git、不需要网络、也不往用户目录写东西。
+  const artSource = process.env.MC_ART_SKILL_DIR ?? join(homedir(), '.dsh', 'skills', 'mc-art')
+  const pairs = [
+    [join(HERE, '..', 'presets', 'mc-studio'), join(HERE, 'preset', 'mc-studio')],
+    // skill 跟着**预设**走：预设的 composition 用 baseUrl 相对定位 skills/，
+    // 所以它们必须落在预设目录里（和出厂 cordis 预设一样）。
+    [join(HERE, '..', 'skills', 'mc-mod'), join(HERE, 'preset', 'mc-studio', 'skills', 'mc-mod')],
+  ]
+  if (existsSync(join(artSource, 'SKILL.md'))) {
+    pairs.push([artSource, join(HERE, 'preset', 'mc-studio', 'skills', 'mc-art')])
+  }
+  else process.stdout.write(`！没找到 mc-art 的克隆（${artSource}），这一份不进包——` +
+    '先跑 install.mjs 拉它，或用 MC_ART_SKILL_DIR 指过去。\n')
+  for (const [from, to] of pairs) {
+    rmSync(to, { recursive: true, force: true })
+    mkdirSync(dirname(to), { recursive: true })
+    // 不要 .git（发布物里没有历史；npm 也会把它排除掉，与其不一致不如自己排除）
+    cpSync(from, to, { recursive: true, filter: (src) => !src.split(/[\\/]/).includes('.git') })
+  }
+  return pairs
+}
+
 export function build() {
   const host = strip(join(SOURCES, 'host.js'))
   const client = strip(join(SOURCES, 'client.js'))
   mkdirSync(join(HERE, 'lib'), { recursive: true })
   writeFileSync(join(HERE, 'lib', 'index.js'), hostModule(host))
   writeFileSync(join(HERE, 'lib', 'client.js'), clientBundle(client))
-  return { host, client }
+  const copied = vendored()
+  return { host, client, copied }
 }
 
 if (process.argv[1] !== undefined && process.argv[1].endsWith('build.mjs')) {
   const out = build()
   process.stdout.write(`已生成 panel/lib/index.js（宿主源码 ${out.host.length} 字符）` +
     ` 与 panel/lib/client.js（客户端源码 ${out.client.length} 字符）\n`)
+  for (const [from, to] of out.copied) process.stdout.write(`已复制 ${from} -> ${to}\n`)
 }

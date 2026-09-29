@@ -1,5 +1,26 @@
-# 把面板挂进 web profile 的宿主组合：就一行，自己。
-# 这是"装完就在"的那一步——`dsh plugin --profile <名> add` 会读这个 patch。
+# 面板随包带来的三样东西：面板自己 + 一个 agent preset（模式）+ 一个 skill。
+#
+# 为什么用 root 而不是"往 ~/.dsh 里拷文件"：
+#   ① 不往用户目录写任何东西（用户装一个包，不该在别处留副本）；
+#   ② 没有副本就没有漂移/重名——曾经因为手工拷过一份，名单里出现过两个同名模式；
+#   ③ 包一升级，模式与 skill 跟着升级，不需要再跑一次安装器。
+#
+# 路径怎么算出来的：`!!js` 的求值作用是 `with (ctx) { return eval(expr) }`，
+# 而 **`baseUrl` 就是 profile 目录**（实测：file:///…/.dsh/profiles/<profile>/），
+# `require` 在那个作用域里是 undefined，所以只能靠 baseUrl 拼：
+#   node_modules/dsh-mc-art-panel/preset  →  <profile>/node_modules/dsh-mc-art-panel/preset
+# replace 那一刀是给 Windows 的：URL.pathname 会给出 `/C:/Users/…`，去掉盘符前那个斜杠。
+
 - insert:
     - id: mcart-panel
       name: 'dsh-mc-art-panel'
+
+# 「MC 模组工作室」模式：作为 agent-presets 的一个 root（trust: system = 只读、随包走）。
+# 根按顺序扫描：shipped → 本行配置的 roots → 用户目录；先出现的赢同名 id，
+# 所以就算用户以前手工装过同名模式，也不会出现两个。
+- id: agent-presets
+  config:
+    default: standard
+    roots:
+      - path: !!js 'decodeURIComponent(new URL("node_modules/dsh-mc-art-panel/preset", baseUrl).pathname).replace(/^\/([A-Za-z]:\/)/, "$1")'
+        trust: system
