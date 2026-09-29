@@ -9,12 +9,29 @@
     "./client": "./lib/client.js",
     "./package.json": "./package.json"
   },
-  "files": ["lib", "cordis.patch.yml", "build.mjs", "README.md"],
-  "keywords": ["deepseek-harness", "dsh", "dsh-plugin", "minecraft", "minecraft-mod", "mc-art", "gametest"],
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "build.mjs",
+    "README.md"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "minecraft",
+    "minecraft-mod",
+    "mc-art",
+    "gametest"
+  ],
   "license": "MIT",
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
-    "entryIds": ["mcart-panel"],
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "entryIds": [
+      "mcart-panel"
+    ],
     "client": {
       "inject": [
         "@deepseek-ai/dsh-cordis-client-runner",
@@ -25,6 +42,25 @@
       "platform": "web",
       "immediately": true
     },
-    "compatibility": { "dsh": ">=0.1.0-rc.8 <0.2.0", "node": ">=20" }
+    "compatibility": {
+      "dsh": ">=0.1.0-rc.8 <0.2.0",
+      "node": ">=20"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GMH13552/dsh-mc-art.git",
+    "directory": "panel"
+  },
+  "homepage": "https://github.com/GMH13552/dsh-mc-art#readme",
+  "bugs": {
+    "url": "https://github.com/GMH13552/dsh-mc-art/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepublishOnly": "node verify-build.mjs && node entry-test.mjs",
+    "verify": "node verify-build.mjs && node entry-test.mjs"
   }
 }

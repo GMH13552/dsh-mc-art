@@ -2,8 +2,11 @@
 /**
  * 装好这套东西：两个 skill + 两个模式。**安装逻辑只有这一份**。
  *
- *   node install.mjs                    # 装/更新
- *   node install.mjs --no-cordis-tools  # 只装"无 Cordis 工具"的那个模式
+ *   node install.mjs                       # 装/更新（skill + 模式 + 面板包）
+ *   node install.mjs --no-panel            # 不装面板包（只装 skill + 模式）
+ *   node install.mjs --profile web         # 面板装进哪个 profile（默认 web）
+ *   node install.mjs --panel-spec <spec>   # 面板从哪来：默认本仓库的 panel/ 目录，
+ *                                          # 发布后也可以直接给 npm 包名 dsh-mc-art-panel
  *
  * 为什么逻辑在 JS 里、而不是各写一份 sh / bat：
  *   三个理由，都是踩出来的。
@@ -34,8 +37,10 @@ export const HERE = dirname(fileURLToPath(import.meta.url))
 const IS_WINDOWS = process.platform === 'win32'
 const ART_REPO = process.env.MC_ART_REPO ?? 'https://github.com/GMH13552/mc-art.git'
 const PYTHON_CANDIDATES = ['python3', 'python', 'py -3']
-/** 两个模式的目录名；完整版在前。 */
-export const PRESETS = ['mc-studio', 'mc-studio-nocordis']
+/** 装哪个模式。只有一个：不带 tool-cordis 的那个（原因见 tools/check_presets.mjs）。 */
+export const PRESETS = ['mc-studio']
+/** 以前发布过、现在不该再留着的模式目录：装的时候顺手清掉。 */
+export const LEGACY_PRESETS = ['mc-studio-nocordis']
 
 export function say(line = '') {
   process.stdout.write(line + '\n')
@@ -111,14 +116,20 @@ export function option(argv, name, fallback) {
 }
 
 export function install(argv = process.argv.slice(2)) {
-  const onlyNoCordis = argv.includes('--no-cordis-tools')
-  // 两个开关除了给测试用，也是给真实用户的：装到别处（--dsh-home），
-  // 或者用镜像拉美术引擎（--art-repo，国内直连 github 常常很慢）。
+  if (argv.includes('--no-cordis-tools')) {
+    say('注：--no-cordis-tools 不再需要了——模式已经不带 tool-cordis（面板由装好的包提供）。')
+  }
+  // 三个开关除了给测试用，也是给真实用户的：装到别处（--dsh-home），
+  // 用镜像拉美术引擎（--art-repo，国内直连 github 常常很慢），
+  // 或者指定面板装进哪个 profile（--profile）。
   const dshRoot = option(argv, 'dsh-home', process.env.DSH_HOME ?? join(homedir(), '.dsh'))
   const artRepo = option(argv, 'art-repo', ART_REPO)
+  const profile = option(argv, 'profile', 'web')
+  const withPanel = !argv.includes('--no-panel')
+  const panelSpec = option(argv, 'panel-spec', join(HERE, 'panel'))
   const skills = join(dshRoot, 'skills')
   const presetsDir = join(dshRoot, '.agent-presets')
-  const wanted = onlyNoCordis ? [PRESETS[1]] : PRESETS
+  const wanted = PRESETS
 
   say(`安装到 ${dshRoot}${IS_WINDOWS ? '（Windows）' : ''}`)
   mkdirSync(skills, { recursive: true })
@@ -161,18 +172,38 @@ export function install(argv = process.argv.slice(2)) {
     }
   }
 
-  // ── 4) 模式 ─────────────────────────────────────────────────────────────
+  // ── 4) 模式（只有一个；顺手清掉历史上发布过的变体）─────────────────────
+  for (const name of LEGACY_PRESETS) {
+    const stale = join(presetsDir, name)
+    if (existsSync(stale)) {
+      rmSync(stale, { recursive: true, force: true })
+      say(`✓ preset ${name.padEnd(18)} 已删除（两个模式合成一个了；面板改由包提供）`)
+    }
+  }
   for (const name of wanted) {
     const source = join(HERE, 'presets', name)
     if (!existsSync(source)) { say(`！preset ${name}  仓库里没有这个目录，跳过`); continue }
     copyDir(source, join(presetsDir, name))
-    const label = name === PRESETS[0] ? '完整（有 Cordis 工具）' : '无 Cordis 工具（能与别的会话并存）'
-    say(`✓ preset ${name.padEnd(18)} -> ${join(presetsDir, name)}   ${label}`)
+    say(`✓ preset ${name} -> ${join(presetsDir, name)}`)
   }
-  if (onlyNoCordis) {
-    say('  （--no-cordis-tools：只装了无 Cordis 工具的那个；完整版没装）')
+
+  // ── 5) 面板包：装进 profile，重启后就在（不用动态发射）───────────────────
+  if (withPanel) {
+    const probe = run('dsh', ['--version'])
+    if (probe.missing === true) {
+      say(`！面板   PATH 里没有 dsh，装不了。手动跑一次：`)
+      say(`        dsh plugin --profile ${profile} add ${panelSpec}`)
+    } else {
+      say(`装面板进 profile ${profile}（${panelSpec}）…`)
+      const added = run('dsh', ['plugin', '--profile', profile, 'add', panelSpec], { stdio: 'inherit' })
+      if (added.code === 0) say(`✓ 面板   已装进 profile ${profile}（重启 DSH 后右侧栏出现「MC 资产」）`)
+      else {
+        say(`！面板   装失败（dsh 退出码 ${added.code}）。手动跑一次看报错：`)
+        say(`        dsh plugin --profile ${profile} add ${panelSpec}`)
+      }
+    }
   } else {
-    say('  两个模式都在名单里，按名字选：需要在这个模式里发射面板就用完整那个。')
+    say('（--no-panel：没装面板包）')
   }
 
   // ── 5) 依赖自检：只说事实 ───────────────────────────────────────────────
@@ -213,9 +244,11 @@ export function install(argv = process.argv.slice(2)) {
   const pythonHint = python === null ? (IS_WINDOWS ? 'python' : 'python3') : python
   say('')
   say('下一步：')
-  say('  1. 重启 DSH，模式名单里会出现两个「MC 模组工作室」（完整 / 无 Cordis 工具）')
-  say(`  2. 面板要用加载器激活一次：把 ${loaderHint} 作为 code.host、`)
-  say('     loader.client.js 作为 code.client 交给 cordis_define，再 cordis_run')
+  say('  1. 重启 DSH：模式名单里有「MC 模组工作室」，右侧栏里应当出现「MC 资产」面板')
+  say('  2. 面板没出现的话（面板是装进 profile 的包）：')
+  say(`       dsh plugin --profile ${profile} add ${panelSpec}`)
+  say(`     （开发面板时才用动态发射那条路：${loaderHint} 作为 code.host、`)
+  say('     loader.client.js 作为 code.client，交给 cordis_define + cordis_run）')
   say('  3. 判定一次：cd fleshland/mod && ' + pythonHint + ' ../../tools/mcmod_gametest.py')
   return 0
 }
@@ -223,7 +256,8 @@ export function install(argv = process.argv.slice(2)) {
 if (process.argv[1] !== undefined && process.argv[1].endsWith('install.mjs') &&
     !process.argv.includes('--selftest')) {
   if (process.argv.includes('-h') || process.argv.includes('--help')) {
-    say('用法：node install.mjs [--no-cordis-tools] [--dsh-home <路径>] [--art-repo <git 地址>] [--selftest]')
+    say('用法：node install.mjs [--no-panel] [--profile <名>] [--panel-spec <spec>]' +
+      ' [--dsh-home <路径>] [--art-repo <git 地址>] [--selftest]')
     process.exit(0)
   }
   process.exit(install())

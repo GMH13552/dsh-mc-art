@@ -125,23 +125,47 @@ const MCART_HOME = '/home/gmh/mc-art/tools/mcart-plugin'
 
 ## 四、作为独立模式（agent preset）
 
-`presets/mc-studio/` 是一个 agent preset（**模式**）：把它拷到
-`${DSH_HOME:-$HOME/.dsh}/.agent-presets/mc-studio/`，重启 DSH 后模式选择里就有
-**MC 模组工作室**。它 = 完整编码能力 + Cordis 工具（用来把面板拉起来）+ 一段"工作室"人格
-（先读 `mc-mod`/`mc-art`、面板怎么激活、裁判怎么跑、版本矩阵在哪）。
+`presets/mc-studio/` 是一个 agent preset（**模式**）：装好之后，模式选择里就有
+**MC 模组工作室**。它 = 完整编码/文件/命令能力 + 两个 skill 的路由 + 一段"工作室"人格
+（先读 `mc-mod`/`mc-art`、面板从哪来、裁判怎么跑、版本矩阵在哪）。
 
 ```bash
-cp -r dsh-mc-art/presets/mc-studio ~/.dsh/.agent-presets/
+node install.mjs     # 或 sh install.sh / install.bat：装 skill + 模式 + 面板包
 ```
 
-**一条已知限制（实测）**：它的 `tool-cordis` 行会注册 Host Inspect provider，而那个注册表是
-**进程级**的——所以**同一进程里不能同时有两个带 Cordis 工具集的会话**。这不是本模式引入的：
-出厂的"创造模式"用的是同一行、同一个注册表，性质一样（验证方式：在已有 Cordis 会话的进程里
-挂载一份同样的行 → `Host Cordis inspect provider "Service" is already registered`）。
-想让它和别的模式并存，把那行加 `disabled: true`（代价：模式里不能自己激活面板）。
-`agent.cordis.yml` 的其余部分已通过 `standingKeyFor` 真挂载验证。
+**这个模式刻意不带 `tool-cordis`。** 那套工具集能动态挂载插件，但它注册的 Host Inspect provider
+是**进程级**的：同一进程里已经有别的会话用着它时，这一行会**挂载失败**并报
+`Host Cordis inspect provider "Service" is already registered`（实测；出厂的创造模式用的是同一行、
+同一个注册表）。面板因此改由**装进 profile 的真包**提供（见第五节），模式自己不需要那套工具集
+——于是"完整 / 无 Cordis"两个模式并成了一个。要改面板源码，用仓库里的 loader 动态发射一次
+（开发用，见 `panel/README.md`）。门禁 `node tools/check_presets.mjs` 盯着"别把那一行加回来"。
 
 ## 五、DSH 插件
+
+**面板在 npm 上叫 `dsh-mc-art-panel`**（未发布前也可以直接从本仓库的 `panel/` 目录装）。
+别人拿到这个插件有三条路，都验证过：
+
+| 怎么给 | 别人怎么装 | 备注 |
+|---|---|---|
+| npm 包名 | 插件对话框里填 `dsh-mc-art-panel`，或 `dsh plugin --profile web add dsh-mc-art-panel` | 最省事；对话框里还能选中国大陆镜像源 |
+| tarball | `npm pack` 出的 `.tgz` 挂到 GitHub Release，填那个下载 URL | 不需要 npm 账号 |
+| 本地目录 | `dsh plugin --profile web add /path/to/dsh-mc-art/panel` | 自己用/开发用 |
+
+⚠️ **不要填本仓库的 GitHub 地址**：包在 `panel/` 子目录里，pnpm 会把整个仓库当成一个
+`0.0.0` 的空包装上（**不报错**），但它没有 `dsh.bundle.patch`，于是不会进 bundle 栈——
+用户看到的是"装好了但什么都没发生"。DSH 判定"装上来的算不算插件"看的就是这一条。
+
+发布（需要你的 npm 账号，本机 `npm adduser` 之后）：
+
+```bash
+cd panel
+npm version patch        # 或 minor/major；版本号是别人升级的唯一线索
+npm publish              # prepublishOnly 会先跑 verify-build + entry-test，漂移就发不出去
+npm view dsh-mc-art-panel version   # 回读确认
+```
+
+发完之后，`node install.mjs --panel-spec dsh-mc-art-panel` 就是纯 npm 路径了（默认仍用本地目录，
+这样克隆仓库的人离线也能装）。DSH 目前**不支持插件自动更新**，升级 = 改版本号重发，别人重新装。
 
 - **GitHub topics**：`dsh-plugin`、`deepseek-harness`、`cordis-plugin`、`agent-skill`、
   `minecraft`、`minecraft-mod`、`gametest`
