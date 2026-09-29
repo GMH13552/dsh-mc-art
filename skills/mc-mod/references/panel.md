@@ -91,3 +91,34 @@ MC 资产            [物品列表] [⚙]
 - 它不改 Java 代码，不编译，不跑游戏。**行为验证在游戏里**（见 `gametest.md`）。
 - 它不生成 datagen 输出。它在 `pack/` 里改的就是资源**唯一真相**；
   mod 工程里的那份资源应当由 datagen 从 atlas 生成，而不是手写。
+
+## Two ways it reaches you (and the one rule that bites)
+
+The panel ships as a real DSH package (`GMH13552/dsh-mc-art`, `panel/`) and can also
+be launched per-session as a dynamic Cordis plugin. Both are generated from **one
+source** (`tools/mcart-plugin/{host,client}.js`) by `panel/build.mjs`.
+
+The rule: the client bundle's `window.__ModuleLoader__.load({ id })` **must be the
+package name** (`dsh-mc-art-panel`). dsh's client-modules looks modules up by the id
+in the boot graph (= package name) and, when it does not match, the only symptom is a
+line at the top of the page — `Failed to load plugins: <name>` — while the package
+installs fine and every offline check passes. Measured once: a wrong id (`mcart-panel`)
+also produced a misleading second error naming *another* package
+(`duplicate factory registration for "@deepseek-ai/dsh-api-gateway"`), because the
+failed batch got re-executed.
+
+So after installing it into a profile, check delivery — not just installation:
+
+```bash
+dsh plugin --profile mcart-check add /path/to/dsh-mc-art/panel
+# then add "@deepseek-ai/dsh-web-app" to that profile's dsh.profile.bundles
+# (a profile created this way only has dsh-base, and will not serve a web UI)
+dsh --profile mcart-check --port 3099 --no-open     # the startup line prints the token URL
+node panel/serve-check.mjs --url http://127.0.0.1:3099 --token <token>
+rm -rf ~/.dsh/profiles/mcart-check                  # it is a throwaway
+```
+
+`serve-check.mjs` reads our row out of the boot graph, byte-compares the served bundle
+against `panel/lib/client.js`, then loads the page in a real headless browser and
+requires our activation marker (`<style data-plugin="dsh-mc-art-panel">`, which the
+plugin's `apply` inserts). A clean run prints `全部通过`; a wrong id makes 4 checks fail.

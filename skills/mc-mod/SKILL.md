@@ -72,6 +72,12 @@ point the reference directory at a game version. It writes exactly three things:
 `atlas.saveTexture`, `atlas.saveVoxel`, `atlas.saveSettings` — and only ever into
 the **project's own pack**, never into a jar. Full manual: `references/panel.md`.
 
+It ships two ways from one source (a real DSH package, and a dynamic Cordis plugin).
+If you install the package, verify **delivery** and not just installation: the client
+bundle must register under the package name, or the page silently shows
+`Failed to load plugins` while every offline check stays green — recipe and the
+one-command check in `references/panel.md`.
+
 ## Running the judge
 
 ```bash
