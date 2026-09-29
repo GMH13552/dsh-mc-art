@@ -40,6 +40,13 @@ const STRIPPER = join(HERE, '..', 'tools', 'strip_comments.py')
  * 客户端那一半永远 "import failed"，页面上什么都不出现。
  * 所以包名只从 package.json 读一份，绝不手写。
  */
+/** 生成物里不该出现的东西（相对任一路径都成立）。 */
+export function isJunk(path) {
+  const parts = String(path).split(/[\\/]/)
+  if (parts.includes(".git") || parts.includes("__pycache__") || parts.includes(".cache")) return true
+  return /\.pyc$/.test(String(path))
+}
+
 export const PACKAGE_NAME = JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).name
 if (typeof PACKAGE_NAME !== 'string' || PACKAGE_NAME === '') {
   throw new Error('panel/package.json 里没有有效的 name，客户端 bundle 不知道该注册成什么 id')
@@ -224,8 +231,9 @@ export function vendored() {
   for (const [from, to] of pairs) {
     rmSync(to, { recursive: true, force: true })
     mkdirSync(dirname(to), { recursive: true })
-    // 不要 .git（发布物里没有历史；npm 也会把它排除掉，与其不一致不如自己排除）
-    cpSync(from, to, { recursive: true, filter: (src) => !src.split(/[\\/]/).includes('.git') })
+    // 只带该带的东西：.git（没有历史）、__pycache__ / *.pyc（机器相关）、.cache（缓存）。
+    // npm 打包时本来也会排掉其中一些，但那不该是"能不能出垃圾"的唯一防线。
+    cpSync(from, to, { recursive: true, filter: (src) => !isJunk(src) })
   }
   return pairs
 }

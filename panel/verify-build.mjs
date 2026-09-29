@@ -9,10 +9,11 @@
  *   node verify-build.mjs
  *   node verify-build.mjs --fault   # 往"期望结果"里塞一个字节，要求门禁红
  */
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { build, hostModule, clientBundle } from './build.mjs'
+import { build, hostModule, clientBundle, isJunk } from './build.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const FAULT = process.argv.includes('--fault')
@@ -20,13 +21,15 @@ let failures = 0
 function fail(line) { failures += 1; console.log(line) }
 
 /** 目录里每个文件的相对路径 → 内容（用于逐字节比对随包的 preset/ 与 skill/）。 */
-function snapshot(root) {
+function snapshot(root, skip = () => false) {
   const out = new Map()
   const walk = (dir) => {
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry)
+      const key = relative(root, full).replace(/\\/g, '/')
+      if (skip(key)) continue
       if (statSync(full).isDirectory()) walk(full)
-      else out.set(relative(root, full).replace(/\\/g, '/'), readFileSync(full, 'utf8'))
+      else out.set(key, readFileSync(full, 'utf8'))
     }
   }
   walk(root)
@@ -37,7 +40,6 @@ function snapshot(root) {
 const before = {
   index: readFileSync(join(HERE, 'lib', 'index.js'), 'utf8'),
   client: readFileSync(join(HERE, 'lib', 'client.js'), 'utf8'),
-  preset: snapshot(join(HERE, 'preset')),
 }
 
 // ② 重新生成
@@ -61,20 +63,40 @@ for (const [label, disk, expected] of [['lib/index.js', before.index, expectedHo
   }
 }
 
-for (const [label, dir] of [['preset', 'preset']]) {
-  const after = snapshot(join(HERE, dir))
-  const oldKeys = [...before[label].keys()].sort()
-  const newKeys = [...after.keys()].sort()
-  const missing = oldKeys.filter((key) => !newKeys.includes(key))
-  const extra = newKeys.filter((key) => !oldKeys.includes(key))
-  const changed = oldKeys.filter((key) => newKeys.includes(key) && before[label].get(key) !== after.get(key))
-  if (missing.length === 0 && extra.length === 0 && changed.length === 0 && oldKeys.length > 0) {
-    console.log(`  OK   ${dir}/ 与仓库里的源码逐字节相同（${oldKeys.length} 个文件）`)
-    continue
-  }
-  fail(`  FAIL ${dir}/ 与仓库源码不一致：旧有 ${oldKeys.length} 个文件，新生成 ${newKeys.length} 个` +
+/** 两份目录树逐字节比；一致返回 null，否则返回一句人话。 */
+function treeDiff(expectedRoot, actualRoot, label, skipActual = () => false) {
+  // 垃圾（.git / __pycache__ / .cache）两边都要忽略；skipActual 只用来处理
+  // "生成的那份多带了 skills/" 这种结构性差异。
+  const expected = snapshot(expectedRoot, isJunk)
+  const actual = snapshot(actualRoot, (key) => isJunk(key) || skipActual(key))
+  const missing = [...expected.keys()].filter((key) => !actual.has(key))
+  const extra = [...actual.keys()].filter((key) => !expected.has(key))
+  const changed = [...expected.keys()].filter((key) => actual.has(key) && expected.get(key) !== actual.get(key))
+  if (missing.length === 0 && extra.length === 0 && changed.length === 0) return null
+  return `${label}：应有 ${expected.size} 个文件、实际 ${actual.size} 个` +
     `（少了 ${missing.length}、多了 ${extra.length}、改了 ${changed.length}）` +
-    (changed.length > 0 ? ' 例如 ' + changed.slice(0, 3).join(', ') : ''))
+    (changed.length > 0 ? ' 例如 ' + changed.slice(0, 3).join(', ') : '') +
+    (missing.length > 0 ? ' 缺 ' + missing.slice(0, 3).join(', ') : '')
+}
+
+// 随包的 preset/ 是 panel/vendor.mjs 在打包时生成的（仓库里不留副本），
+// 所以这里比的是"生成出来的那份"和"它的来源"。
+const artSource = process.env.MC_ART_SKILL_DIR ?? join(homedir(), '.dsh', 'skills', 'mc-art')
+const pairs = [
+  // 生成的那份还带着随包 skill（skills/），来源里没有——比的是"预设本身"。
+  ['「MC 模组工作室」模式', join(HERE, '..', 'presets', 'mc-studio'), join(HERE, 'preset', 'mc-studio'),
+    (key) => key.startsWith('skills/')],
+  ['mc-mod skill', join(HERE, '..', 'skills', 'mc-mod'), join(HERE, 'preset', 'mc-studio', 'skills', 'mc-mod')],
+]
+if (existsSync(join(artSource, 'SKILL.md'))) {
+  pairs.push(['mc-art skill', artSource, join(HERE, 'preset', 'mc-studio', 'skills', 'mc-art'), isJunk])
+} else {
+  console.log(`  SKIP mc-art 没在本机找到克隆（${artSource}）——这一份没进包，也没得比`)
+}
+for (const [label, from, to, skipActual] of pairs) {
+  const problem = treeDiff(from, to, label, skipActual)
+  if (problem === null) console.log(`  OK   ${label}：包里那份与来源逐字节相同（${snapshot(to).size} 个文件）`)
+  else fail(`  FAIL ${problem}`)
 }
 
 console.log(failures === 0 ? '全部通过' : `${failures} 项失败`)

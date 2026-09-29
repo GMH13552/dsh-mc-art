@@ -62,7 +62,8 @@
     "access": "public"
   },
   "scripts": {
-    "prepublishOnly": "node verify-build.mjs && node entry-test.mjs",
-    "verify": "node verify-build.mjs && node entry-test.mjs"
+    "prepublishOnly": "node build.mjs && node verify-build.mjs && node entry-test.mjs",
+    "verify": "node verify-build.mjs && node entry-test.mjs",
+    "prepare": "node vendor.mjs"
   }
 }

@@ -27,3 +27,6 @@ Thumbs.db
 /villagers/
 /vanilla3d/
 /AGENT.md
+
+# 面板包里那份"模式 + skill"是打包时由 panel/vendor.mjs 生成的（发布物需要它，仓库不留副本）
+panel/preset/

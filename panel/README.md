@@ -41,6 +41,15 @@ panel/                        包根
     └── skills/               随预设走的 skill：mc-mod、mc-art
 ```
 
+**多大**：解包后约 1.1 MB（压缩后 306 kB）——`lib/` 250 KB、`mc-art` skill 826 KB
+（引擎 `mc_art/` + 60 个测试 + 文档；它就是一份完整可离线用的美术引擎）、`mc-mod` skill 41 KB、
+模式本身 17 KB。
+
+`panel/preset/` 是**打包时生成的**（`prepare` → `panel/vendor.mjs`），仓库里不留副本：
+所以这个仓库不携带 mc-art 的内容（它是独立仓库）。复制时排除 `.git`、`__pycache__`、`*.pyc`、
+`.cache`——早先没排除时，光是 `__pycache__` 和有 129 KB 的 `references/.cache/` 就让磁盘上的
+副本虚胖到 2.4 MB（npm 打包时本来也会排掉它们，但那不该是唯一防线）。
+
 两处机制，都照 DSH 出厂预设的做法：
 
 - **模式**：`cordis.patch.yml` 给 `agent-presets` 那一行加了一个 root（`trust: system`），
