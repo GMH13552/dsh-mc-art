@@ -29,6 +29,21 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const SOURCES = join(HERE, '..', 'tools', 'mcart-plugin')
 const STRIPPER = join(HERE, '..', 'tools', 'strip_comments.py')
 
+/**
+ * 包名 = 客户端模块的**注册 id**。
+ *
+ * 这条不能抄错：dsh 的 client-modules 按启动图里那一行的 id 去 factories 里找模块
+ * （`register` 存 `stripClientSuffix(registration.id)`，`arrive` 里
+ * `if (!this.factories.has(id)) throw ... loaded without registering "${id}"`），
+ * 而图里的 id 就是包名。曾经这里写成宿主行的名字 `mcart-panel`，结果包能装、
+ * 客户端那一半永远 "import failed"，页面上什么都不出现。
+ * 所以包名只从 package.json 读一份，绝不手写。
+ */
+export const PACKAGE_NAME = JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).name
+if (typeof PACKAGE_NAME !== 'string' || PACKAGE_NAME === '') {
+  throw new Error('panel/package.json 里没有有效的 name，客户端 bundle 不知道该注册成什么 id')
+}
+
 /** 去掉注释：复用仓库里那一份实现（它是"注释怎么算"的唯一真相）。 */
 export function strip(file) {
   for (const python of ['python3', 'python']) {
@@ -123,7 +138,8 @@ export function apply(ctx) {
 export function clientBundle(clientSource) {
   return `// 生成物：由 panel/build.mjs 从 tools/mcart-plugin/client.js 生成 —— 不要手改。
 window.__ModuleLoader__.load({
-  id: 'mcart-panel',
+  // 必须是包名：client-modules 拿启动图里那一行的 id 来 factories 里找它。
+  id: ${JSON.stringify(PACKAGE_NAME)},
   factory: function (require) {
     var module = { exports: {} }
     var exports = module.exports
@@ -135,12 +151,12 @@ window.__ModuleLoader__.load({
 
     // 三个垫片，对齐动态插件里注入的那三个名字。
     function ensureStyles(css) {
-      var id = 'mcart-panel:styles'
+      var id = ${JSON.stringify(PACKAGE_NAME + ':styles')}
       if (typeof document === 'undefined') return function () {}
       var tag = document.querySelector('style[data-plugin-css=' + JSON.stringify(id) + ']')
       if (tag === null) {
         tag = document.createElement('style')
-        tag.dataset.plugin = 'mcart-panel'
+        tag.dataset.plugin = ${JSON.stringify(PACKAGE_NAME)}
         tag.dataset.pluginCss = id
         tag.textContent = css
         document.head.appendChild(tag)
@@ -167,7 +183,7 @@ window.__ModuleLoader__.load({
     if (plugin === null || typeof plugin !== 'object' || typeof plugin.apply !== 'function') {
       throw new Error('mcart 客户端源码没有返回一个带 apply 的插件')
     }
-    exports.name = plugin.name === undefined ? 'mcart-panel' : plugin.name
+    exports.name = plugin.name === undefined ? ${JSON.stringify(PACKAGE_NAME)} : plugin.name
     exports.inject = plugin.inject === undefined ? [] : plugin.inject
     exports.apply = plugin.apply
     return module.exports

@@ -12,6 +12,14 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
+/**
+ * 包名就是客户端模块的注册 id：dsh 的 client-modules 按启动图里那一行的 id
+ * 去 factories 里找模块（找不到就 `bundle … loaded without registering "…"`）。
+ * 这里也从这个唯一真相读，避免门禁自己抄错。
+ */
+const PACKAGE_NAME = JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).name
+/** `--fault`：把注册 id 改错，要求门禁当场失败（证明它真的在看这一条）。 */
+const FAULT = process.argv.includes('--fault')
 let failures = 0
 function check(name, ok, detail) {
   if (ok) console.log('  OK   ' + name)
@@ -73,7 +81,15 @@ check('GET 被拒（只收 POST）', notPost === 405, String(notPost))
 
 // ── 客户端入口 ──────────────────────────────────────────────────────────────
 console.log('--- 客户端入口（lib/client.js，__ModuleLoader__ 形式）')
-const bundle = readFileSync(join(HERE, 'lib', 'client.js'), 'utf8')
+let bundle = readFileSync(join(HERE, 'lib', 'client.js'), 'utf8')
+if (FAULT) {
+  const before = bundle
+  bundle = bundle.replace(/(__ModuleLoader__\.load\(\{[\s\S]*?\bid: )"[^"]*"/, '$1"wrong-id"')
+  if (bundle === before) {
+    console.log('  FAIL 故障注入没生效：没能在 bundle 里找到 __ModuleLoader__.load({ id: … })')
+    failures += 1
+  }
+}
 let loaded = null
 const registered = []
 const React = {
@@ -90,8 +106,9 @@ const require = (name) => {
 }
 const run = new Function('window', 'require', 'fetch', bundle + '\nreturn window.__ModuleLoader__.load && null;')
 run(window, require, () => Promise.resolve({ json: () => Promise.resolve({}) }))
-check('bundle 调用了 __ModuleLoader__.load 且带 id', loaded !== null && loaded.id === 'mcart-panel',
-  JSON.stringify(loaded && loaded.id))
+check('bundle 注册的 id 就是包名（client-modules 按启动图里那一行的 id 找模块）',
+  loaded !== null && loaded.id === PACKAGE_NAME,
+  '注册成 ' + JSON.stringify(loaded && loaded.id) + '，图里那一行要的是 ' + JSON.stringify(PACKAGE_NAME))
 let clientFailed = null
 let moduleExports = null
 try {

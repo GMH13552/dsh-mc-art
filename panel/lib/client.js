@@ -1,6 +1,7 @@
 // 生成物：由 panel/build.mjs 从 tools/mcart-plugin/client.js 生成 —— 不要手改。
 window.__ModuleLoader__.load({
-  id: 'mcart-panel',
+  // 必须是包名：client-modules 拿启动图里那一行的 id 来 factories 里找它。
+  id: "dsh-mc-art-panel",
   factory: function (require) {
     var module = { exports: {} }
     var exports = module.exports
@@ -12,12 +13,12 @@ window.__ModuleLoader__.load({
 
     // 三个垫片，对齐动态插件里注入的那三个名字。
     function ensureStyles(css) {
-      var id = 'mcart-panel:styles'
+      var id = "dsh-mc-art-panel:styles"
       if (typeof document === 'undefined') return function () {}
       var tag = document.querySelector('style[data-plugin-css=' + JSON.stringify(id) + ']')
       if (tag === null) {
         tag = document.createElement('style')
-        tag.dataset.plugin = 'mcart-panel'
+        tag.dataset.plugin = "dsh-mc-art-panel"
         tag.dataset.pluginCss = id
         tag.textContent = css
         document.head.appendChild(tag)
@@ -44,7 +45,7 @@ window.__ModuleLoader__.load({
     if (plugin === null || typeof plugin !== 'object' || typeof plugin.apply !== 'function') {
       throw new Error('mcart 客户端源码没有返回一个带 apply 的插件')
     }
-    exports.name = plugin.name === undefined ? 'mcart-panel' : plugin.name
+    exports.name = plugin.name === undefined ? "dsh-mc-art-panel" : plugin.name
     exports.inject = plugin.inject === undefined ? [] : plugin.inject
     exports.apply = plugin.apply
     return module.exports

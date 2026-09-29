@@ -151,6 +151,11 @@ cp -r dsh-mc-art/presets/mc-studio ~/.dsh/.agent-presets/
   而那边只能看到 Run 卡片上一句 `x is not defined`。
 - **门禁**：`node tools/mcart-plugin/loader-test.js` 用真实的两个半文件跑通加载器，
   并注入"少传一个绑定"证明它会当场炸。
+- **真包形态与"送达"门禁**：`panel/` 是同一份源码包成的真包（`dsh plugin --profile web add <路径>`）。
+  它有四道门：`verify-build.mjs`（挡漂移）、`entry-test.mjs`（两个入口真的装载，`--fault` 会红）、
+  `serve-check.mjs`（**对着跑着的实例**查启动图 + bundle 字节 + 真浏览器里的激活痕迹）。
+  第三道不是装饰：客户端 bundle 必须注册成**包名**，早先抄错成宿主行的名字，
+  包能装、前两道全绿，**页面上却什么都不出现**。细节见 `panel/README.md`。
 
 ## 六、通用流程与版本
 
