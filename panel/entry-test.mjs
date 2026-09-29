@@ -120,17 +120,51 @@ check('导出的是 Cordis 插件（inject + apply）',
   moduleExports !== null && Array.isArray(moduleExports.inject) && typeof moduleExports.apply === 'function',
   moduleExports === null ? 'null' : JSON.stringify(Object.keys(moduleExports || {})))
 
-const clientCtx = {
-  get: (name) => (name === 'slots' ? {
+/** 跑一次客户端 apply，返回它注册了哪些槽。options 决定那个壳长什么样。 */
+function clientRun(options) {
+  const seen = []
+  const slots = {
     inject: (slot, callback) => callback(),
-    register: (options, factory) => { registered.push(options.name + ':' + (options.key || options.id)); return () => {} },
-  } : undefined),
-  effect: (fn) => { fn(); return () => {} },
-  timer: { interval: () => () => {}, timeout: async () => {} },
+    register: (settings) => { seen.push(settings.name + ':' + (settings.key || settings.id)); return () => {} },
+    entries: (name) => ((options.slotEntries || []).includes(name) ? [{ id: 'shell-own' }] : []),
+  }
+  const ctx = {
+    get: (name) => {
+      if (name === 'slots') return slots
+      if ((options.tabs === true || options.services === true) && name === 'sidebarRightTabs') {
+        return { register: () => () => {} }
+      }
+      if (options.services === true && name === 'sidebarRight') return {}
+      return undefined
+    },
+    effect: (fn) => { fn(); return () => {} },
+    timer: { interval: () => () => {}, timeout: async () => {} },
+  }
+  return { seen, result: moduleExports.apply(ctx) }
 }
+
 let applyFailed = null
-try { await moduleExports.apply(clientCtx) } catch (error) { applyFailed = error }
-check('客户端 apply(ctx) 不炸', applyFailed === null, applyFailed === null ? '' : String(applyFailed && applyFailed.message))
+try { await moduleExports.apply({ get: () => undefined, effect: (fn) => fn(), timer: { interval: () => () => {}, timeout: async () => {} } }) }
+catch (error) { applyFailed = error }
+check('客户端 apply(ctx) 不炸（连 slots 都没有时）', applyFailed === null,
+  applyFailed === null ? '' : String(applyFailed && applyFailed.message))
+
+// 右栏判据：服务在 → 右栏；服务不在但槽在（桌面端那种壳）→ 也必须进右栏；
+// 两者都没有 → 才回退到左栏。这三条是实测出来的区别，不是我想当然。
+const byService = clientRun({ services: true }).seen
+check('两个服务都在 → 右侧栏', byService.some((key) => key.startsWith('sidebar.right.pane.tab:')), byService.join(' '))
+const noSidebarRight = clientRun({ tabs: true, slotEntries: ['sidebar.right.pane.tab'] }).seen
+check('有 tabs、没有 sidebarRight 服务（桌面端）→ 也进右侧栏',
+  noSidebarRight.some((key) => key.startsWith('sidebar.right.pane.tab:')) &&
+  !noSidebarRight.some((key) => key.startsWith('sidebar.panellist:')), noSidebarRight.join(' '))
+const noTabs = clientRun({ slotEntries: ['sidebar.right.pane.tab'] }).seen
+check('没有 tabs（注册不了 tab）→ 回退左栏，且不炸',
+  noTabs.some((key) => key.startsWith('sidebar.panellist:')) &&
+  !noTabs.some((key) => key.startsWith('sidebar.right.pane.tab:')), noTabs.join(' '))
+const fallback = clientRun({}).seen
+check('什么都没有 → 回退左栏',
+  fallback.some((key) => key.startsWith('sidebar.panellist:')) &&
+  !fallback.some((key) => key.startsWith('sidebar.right.pane.tab:')), fallback.join(' '))
 
 // 真注入：把宿主入口那层垫片去掉（模拟"直接当动态插件跑"），派发路由就不该存在。
 const withoutShim = readFileSync(join(HERE, 'lib', 'index.js'), 'utf8')

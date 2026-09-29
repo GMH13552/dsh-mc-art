@@ -921,7 +921,24 @@ return {
 
     const tabs = ctx.get('sidebarRightTabs')
     const sidebarRight = ctx.get('sidebarRight')
-    const inRightColumn = tabs !== undefined && sidebarRight !== undefined
+    // 右侧栏的判据不能只看服务名。有些壳（桌面端实测）不暴露 sidebarRightTabs 服务，
+    // 但右侧栏的**槽**是实实在在存在的——只看服务会让面板掉进左栏回退，
+    // 看起来像"装了个旧版本"。所以：服务在，或者那个槽已经有条目，都算右侧栏。
+    function slotHasEntries(name) {
+      try {
+        if (typeof slots.entries !== 'function') return false
+        const list = slots.entries(name)
+        return Array.isArray(list) && list.length > 0
+      } catch (error) {
+        return false
+      }
+    }
+    // 需要 tabs 才能往右侧栏注册 tab（它是唯一的必需品）；而"右侧栏在不在"这个证据，
+    // 服务名和槽名哪个在都算——桌面端实测就是"有 tabs、没有 sidebarRight 服务"，
+    // 只看服务名会让面板掉进左栏回退。没有 tabs 时只能回退左栏：注册不了 tab，
+    // 硬进右栏分支会直接炸在 tabs.register 上（门禁抓着过我这一版）。
+    const inRightColumn = tabs !== undefined &&
+      (sidebarRight !== undefined || slotHasEntries('sidebar.right.pane.tab'))
 
     function Atlas(props) {
       const sessionId = props.sessionId === undefined ? '' : String(props.sessionId)
