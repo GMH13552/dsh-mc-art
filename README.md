@@ -145,18 +145,21 @@ node install.mjs     # 或 sh install.sh / install.bat：装 skill + 模式 + �
 **面板在 npm 上叫 `dsh-mc-art-panel`**（未发布前也可以直接从本仓库的 `panel/` 目录装）。
 别人拿到这个插件有三条路，都验证过：
 
-**一条命令装好**（不需要 npm 账号；这条 URL 永远指向最新版，升级就是重跑它）：
+**一条命令装好**（已发布到 npm：`dsh-mc-art-panel@0.1.0`）：
 
 ```bash
-dsh plugin --profile web add https://github.com/GMH13552/dsh-mc-art/releases/latest/download/dsh-mc-art-panel.tgz
+dsh plugin --profile web add dsh-mc-art-panel
+# 国内想走镜像：加 --registry=https://registry.npmmirror.com/（已同步到 0.1.0，实测）
+# 不想依赖 npm：dsh plugin --profile web add \
+#   https://github.com/GMH13552/dsh-mc-art/releases/latest/download/dsh-mc-art-panel.tgz
 # 重启 DSH → 右侧栏出现「MC 资产」
 ```
 
 | 怎么给 | 别人怎么装 | 备注 |
 |---|---|---|
-| **Release tarball**（现在就走这条） | 上面那条命令 | 不需要 npm 账号；文件名不带版本号 + `releases/latest/download/` = 命令永久有效 |
-| npm 包名 | 插件对话框里填 `dsh-mc-art-panel` | 发布之后最省事，且能选中国大陆镜像源 |
-| 本地目录 | `dsh plugin --profile web add /path/to/dsh-mc-art/panel` | 克隆了仓库的人 / 开发用 |
+| **npm 包名**（现在走这条） | 插件对话框里填 `dsh-mc-art-panel`，或上面那条命令 | 实测：装完 bundles 里有它、组合里有 `- id: mcart-panel`；npmmirror 已同步 |
+| Release tarball | 上面注释里那条 URL | 不需要 npm 账号；文件名不带版本号 + `releases/latest/download/` = 命令永久有效 |
+| 本地目录 | `dsh plugin --profile web add /path/to/dsh-mc-art/panel` | 克隆了仓库的人 / 改面板源码时用 |
 
 打包与发版（我这边已经做过一次，记下来）：
 
