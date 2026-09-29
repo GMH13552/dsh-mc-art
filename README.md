@@ -167,6 +167,21 @@ npm view dsh-mc-art-panel version   # 回读确认
 发完之后，`node install.mjs --panel-spec dsh-mc-art-panel` 就是纯 npm 路径了（默认仍用本地目录，
 这样克隆仓库的人离线也能装）。DSH 目前**不支持插件自动更新**，升级 = 改版本号重发，别人重新装。
 
+**发布这件事上的几个坑**（都值得先说清）：
+
+- **装不用登录，发必须登录**，而且要一个**邮箱已验证**的免费账号：<https://www.npmjs.com/signup>。
+  命令行侧 `npm login`（npm 9+ 默认走浏览器授权：它打印一个网址，在浏览器里点一下即可；
+  WSL 里自动开浏览器可能失败，把网址复制到 Windows 浏览器打开也一样）。
+- **不想走浏览器就用 Token**：网页 → 头像 → Access Tokens → Generate New Token（发布用
+  **Automation** 类型），然后 `npm config set //registry.npmjs.org/:_authToken=<token>`。
+  开了 2FA 时这条最省事（否则每次发布都要 OTP）。Token 是密码级的东西，别提交进仓库。
+- **发布只能去官方 registry**：`registry.npmmirror.com` 是只读镜像，往那儿 publish 会被拒。
+  如果你为装包把 registry 换成了镜像，发布时要显式指回官方：
+  `npm publish --registry https://registry.npmjs.org/`。
+- **名字被占就加 scope**：`@你的用户名/dsh-mc-art-panel`。客户端注册的 id 是从 `package.json`
+  的 `name` 读的，所以改名后 id 自动跟着变（不用动代码）；`publishConfig.access: public`
+  已经设好了（scoped 包不加这个会被当成私有、发不出去）。
+
 - **GitHub topics**：`dsh-plugin`、`deepseek-harness`、`cordis-plugin`、`agent-skill`、
   `minecraft`、`minecraft-mod`、`gametest`
 - **形态**：DSH 动态 Cordis 插件（host 半 + client 半）。两半由 `new Function` 编译，
