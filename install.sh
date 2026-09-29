@@ -30,6 +30,12 @@ say() { printf '%s\n' "$*"; }
 
 mkdir -p "$SKILLS" "$PRESETS"
 
+PY=""
+for candidate in python3 python; do
+  if command -v "$candidate" >/dev/null 2>&1; then PY="$candidate"; break; fi
+done
+
+
 # ── 1) mc-mod：就在本仓库里 ────────────────────────────────────────────────
 rm -rf "$SKILLS/mc-mod"
 cp -r "$HERE/skills/mc-mod" "$SKILLS/mc-mod"
@@ -48,6 +54,24 @@ else
   else
     say "！skill  mc-art     拉不下来：$ART_REPO（装好后可手动 git clone 到 $SKILLS/mc-art）"
   fi
+fi
+
+# ── 2.5) 面板加载器：把 MCART_HOME 指到这次克隆的真实路径 ──────────────────
+# 这一步原来写在 README 里让人手动改；脚本知道路径，就不该让人改。
+LOADER="$HERE/tools/mcart-plugin/loader.host.js"
+if [ -f "$LOADER" ] && command -v "$PY" >/dev/null 2>&1; then
+  "$PY" - "$LOADER" "$HERE/tools/mcart-plugin" <<'PYEOF'
+import pathlib, sys, re
+path, want = sys.argv[1], sys.argv[2]
+p = pathlib.Path(path)
+s = p.read_text(encoding='utf-8')
+new = re.sub(r"const MCART_HOME = '[^']*'", "const MCART_HOME = '%s'" % want, s, count=1)
+if new != s:
+    p.write_text(new, encoding='utf-8')
+    print("✓ loader  MCART_HOME -> " + want)
+else:
+    print("✓ loader  MCART_HOME 已经是 " + want)
+PYEOF
 fi
 
 # ── 3) 模式 ───────────────────────────────────────────────────────────────
@@ -73,10 +97,6 @@ say ""
 say "依赖自检："
 if command -v git >/dev/null 2>&1; then say "  ✓ git"; else say "  ！git 没找到"; fi
 
-PY=""
-for candidate in python3 python; do
-  if command -v "$candidate" >/dev/null 2>&1; then PY="$candidate"; break; fi
-done
 if [ -n "$PY" ]; then
   say "  ✓ $PY $("$PY" -c 'import sys;print(".".join(map(str,sys.version_info[:3])))' 2>/dev/null || echo '')"
   if "$PY" -c 'import PIL' 2>/dev/null; then

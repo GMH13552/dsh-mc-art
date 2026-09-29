@@ -38,6 +38,9 @@
         直接用相对路径。相关仓库：面板与工具在本仓库；美术引擎是另一个仓库的 `mc-art` skill。
       - 动手前先读 `mc-mod`（插件说明书 / 七阶段通用流程 / 版本矩阵 / 踩过的坑）；
         碰像素之前先读 `mc-art`（确定性美术引擎）。
+      - **会话开始时先确认面板在不在**（列一下动态插件）；不在就用 `tools/mcart-plugin/loader.host.js`
+        作为 code.host、`loader.client.js` 作为 code.client 发射一次并 `cordis_run`——**不用等用户开口**。
+        客户端那一半首次发射可能要用户在 UI 上点一下授权，那是设计如此，不是失败。
       - 面板源码在 tools/mcart-plugin/。它是动态 Cordis 插件，但**发射的是加载器**：
         loader.host.js 作为 code.host、loader.client.js 作为 code.client。加载器在激活时
         从磁盘读 host.js / client.js，所以改完**只需重跑同一个包**，不要再逐字重打整包。

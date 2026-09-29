@@ -69,8 +69,14 @@ git clone https://github.com/GMH13552/dsh-mc-art.git
 sh dsh-mc-art/install.sh
 ```
 
-它做四件事：装 `mc-mod`；**把美术引擎 `mc-art` 拉下来**（已存在就 `git pull --ff-only`）；
-装模式 `mc-studio`；自检依赖（Python / Pillow / JDK）。可重复执行。
+它做五件事：装 `mc-mod`；**把美术引擎 `mc-art` 拉下来**（已存在就 `git pull --ff-only`）；
+把面板加载器里的 `MCART_HOME` **指向这次克隆的真实路径**（不用再手改）；装模式 `mc-studio`；
+自检依赖（Python / Pillow / JDK）。可重复执行。
+
+装完剩下的是"发射一次面板"：模式的人格已经写了**会话开始时自己拉起来，不用等你开口**。
+之所以还要发射，是因为它现在是**动态插件**——重启就没了。要做到"重启就在"，得按官方那条
+文件级插件路径打包（`package.json` 的 `exports["./client"]` + `dsh.client` 元数据，
+再用 `dsh plugin --profile <名> add`），那是一次独立的打包工程。
 
 ```bash
 sh install.sh --no-cordis-tools   # 把模式里的 Cordis 工具行关掉（见第四节的限制）
