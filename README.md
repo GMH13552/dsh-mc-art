@@ -145,11 +145,27 @@ node install.mjs     # 或 sh install.sh / install.bat：装 skill + 模式 + �
 **面板在 npm 上叫 `dsh-mc-art-panel`**（未发布前也可以直接从本仓库的 `panel/` 目录装）。
 别人拿到这个插件有三条路，都验证过：
 
+**一条命令装好**（不需要 npm 账号；这条 URL 永远指向最新版，升级就是重跑它）：
+
+```bash
+dsh plugin --profile web add https://github.com/GMH13552/dsh-mc-art/releases/latest/download/dsh-mc-art-panel.tgz
+# 重启 DSH → 右侧栏出现「MC 资产」
+```
+
 | 怎么给 | 别人怎么装 | 备注 |
 |---|---|---|
-| npm 包名 | 插件对话框里填 `dsh-mc-art-panel`，或 `dsh plugin --profile web add dsh-mc-art-panel` | 最省事；对话框里还能选中国大陆镜像源 |
-| tarball | `npm pack` 出的 `.tgz` 挂到 GitHub Release，填那个下载 URL | 不需要 npm 账号 |
-| 本地目录 | `dsh plugin --profile web add /path/to/dsh-mc-art/panel` | 自己用/开发用 |
+| **Release tarball**（现在就走这条） | 上面那条命令 | 不需要 npm 账号；文件名不带版本号 + `releases/latest/download/` = 命令永久有效 |
+| npm 包名 | 插件对话框里填 `dsh-mc-art-panel` | 发布之后最省事，且能选中国大陆镜像源 |
+| 本地目录 | `dsh plugin --profile web add /path/to/dsh-mc-art/panel` | 克隆了仓库的人 / 开发用 |
+
+打包与发版（我这边已经做过一次，记下来）：
+
+```bash
+cd panel && npm pack --pack-destination /tmp          # 出 dsh-mc-art-panel-0.1.0.tgz
+gh release create v0.1.0 /tmp/dsh-mc-art-panel-0.1.0.tgz --title … --notes …
+cp /tmp/dsh-mc-art-panel-0.1.0.tgz /tmp/dsh-mc-art-panel.tgz
+gh release upload v0.1.0 /tmp/dsh-mc-art-panel.tgz --clobber   # 不带版本号的那份，给 latest/download 用
+```
 
 ⚠️ **不要填本仓库的 GitHub 地址**：包在 `panel/` 子目录里，pnpm 会把整个仓库当成一个
 `0.0.0` 的空包装上（**不报错**），但它没有 `dsh.bundle.patch`，于是不会进 bundle 栈——

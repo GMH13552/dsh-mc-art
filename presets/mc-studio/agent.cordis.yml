@@ -41,7 +41,9 @@
       - **面板是以"装好的包"形式来的**（`dsh-mc-art-panel`，装进 profile 后每次开页面都在）。
         会话开始时先确认它在不在（右侧栏该有「MC 资产」）。不在就按顺序做两件事：
         ① 让用户跑一次 `install.bat`（Windows）或 `sh install.sh`——它会顺手把面板装进 profile；
-        ② 或直接 `dsh plugin --profile web add dsh-mc-art-panel` 后重启 DSH。
+        ② 或直接装发布好的包（不需要 npm 账号，这条 URL 永远指向最新版）：
+           `dsh plugin --profile web add https://github.com/GMH13552/dsh-mc-art/releases/latest/download/dsh-mc-art-panel.tgz`
+           然后重启 DSH。（npm 上发布之后，`dsh plugin … add dsh-mc-art-panel` 也一样。）
         **不要**在本模式里用 Cordis 工具动态发射面板：这个模式刻意不带 `tool-cordis`
         （那个工具集会占用进程级的 Cordis inspect provider，和另一个用着它的会话直接冲突，
         冲突时是整行挂载失败）。面板源码在 tools/mcart-plugin/，装成包的那份由 panel/build.mjs 生成。
