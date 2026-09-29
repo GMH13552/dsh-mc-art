@@ -23,6 +23,7 @@
 | `tools/mcmod_gametest.py` | **判定工具**：跑 `GameTestServer`、读退出码、解析日志、给裁决；`--fault` 注入错误断言 |
 | `fleshland/mod/` | 一个**完整可运行的模组骨架**（Forge 1.18.2）：故意不带资源，只带代码 + 两条 GameTest |
 | `presets/mc-studio/` | **MC 模组工作室**模式（agent preset）：把面板能力 + 流程 + 裁判包装成一个可选的模式 |
+| `panel/` | 面板的**真包**形态：`dsh plugin --profile web add <路径>` 装进 profile，重启就在（不用发射动态插件） |
 
 ## 一、面板（`mcart`）
 
@@ -73,7 +74,14 @@ sh dsh-mc-art/install.sh
 把面板加载器里的 `MCART_HOME` **指向这次克隆的真实路径**（不用再手改）；装模式 `mc-studio`；
 自检依赖（Python / Pillow / JDK）。可重复执行。
 
-装完剩下的是"发射一次面板"：模式的人格已经写了**会话开始时自己拉起来，不用等你开口**。
+**面板有两种装法**（同一份源码，`panel/` 里是真包）：
+
+```bash
+dsh plugin --profile web add "$PWD/panel"    # 真包：重启 DSH 就在，不用发射
+```
+
+或者用动态插件（`loader.host.js` + `loader.client.js` 交给 `cordis_define`/`cordis_run`）——
+模式的人格已经写了**会话开始时自己拉起来，不用等你开口**。
 之所以还要发射，是因为它现在是**动态插件**——重启就没了。要做到"重启就在"，得按官方那条
 文件级插件路径打包（`package.json` 的 `exports["./client"]` + `dsh.client` 元数据，
 再用 `dsh plugin --profile <名> add`），那是一次独立的打包工程。

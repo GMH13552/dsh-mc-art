@@ -1,0 +1,30 @@
+{
+  "name": "dsh-mc-art-panel",
+  "version": "0.1.0",
+  "description": "MC 资产面板：3D+物品栏、像素/结构编辑器、@ 提意见；配套 mc-mod / mc-art 两个 skill 与 GameTest 判定闭环",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["lib", "cordis.patch.yml", "build.mjs", "README.md"],
+  "keywords": ["deepseek-harness", "dsh", "dsh-plugin", "minecraft", "minecraft-mod", "mc-art", "gametest"],
+  "license": "MIT",
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "entryIds": ["mcart-panel"],
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-cordis-client-runner",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "platform": "web",
+      "immediately": true
+    },
+    "compatibility": { "dsh": ">=0.1.0-rc.8 <0.2.0", "node": ">=20" }
+  }
+}

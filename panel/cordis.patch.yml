@@ -1,0 +1,5 @@
+# 把面板挂进 web profile 的宿主组合：就一行，自己。
+# 这是"装完就在"的那一步——`dsh plugin --profile <名> add` 会读这个 patch。
+- insert:
+    - id: mcart-panel
+      name: 'dsh-mc-art-panel'
