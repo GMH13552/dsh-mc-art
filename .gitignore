@@ -1,0 +1,23 @@
+# 本地美术项目：你自己的资产，不上传（mod 骨架要，单独放行）
+/fleshland/*
+!/fleshland/mod
+/eyeball_tree/*
+
+# 构建产物 / 运行目录 / 依赖缓存
+**/build/
+**/run/
+**/.gradle/
+**/__pycache__/
+*.pyc
+**/node_modules/
+
+# 门禁自己生成的夹具
+tools/mcart-plugin/.*-fixture/
+
+# skill 的运行缓存（参考目录扫描结果）
+skills/mc-art/references/.cache/
+
+# 日志与系统垃圾
+*.log
+.DS_Store
+Thumbs.db

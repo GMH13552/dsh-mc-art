@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Strip comments from a dynamic Package half before it is emitted.
+
+WHY THIS EXISTS.  A Cordis Package carries its Host and Client halves as literal
+strings in ONE tool call, and a half cannot be omitted -- `startFresh` does
+`if (plugin.run !== void 0) await this.retract(plugin)` before it looks at the
+new definition, so a package with only one half leaves the plugin without the
+other one.  The two halves are now ~195 KB of characters, and one call is all the
+output budget there is.
+
+About 13% of that is comments, and the comments in this repository are mostly
+Chinese -- which costs roughly one token per character against roughly one token
+per four characters for code.  Dropping them from the TRANSPORT is the difference
+between a call that fits and a call that does not.
+
+WHAT IS NOT LOST.  The annotated source stays in `tools/mcart-plugin/` and is what
+people read and edit.  What ships to the runtime is this function of it, and
+`tools/verify_emitted.py` compares the emitted strings against `strip()` of those
+files -- so the artifact is still pinned, just to the stripped form.
+
+THE LOADER (the cheap way, and now the normal one).  Re-typing 200 KB per change
+was the real cost here -- 94 emits in one session, and one mistyped character meant
+doing the whole thing again.  So a package may instead emit `loader.host.js` /
+`loader.client.js`: ~1.3 KB each, which read `host.js` / `client.js` off disk when
+the package activates and run them.  `verify_emitted.py` accepts either artifact
+and says which one it matched.  Two things follow, and both are load-bearing:
+
+  * what runs is the file at ACTIVATION time, so an edit needs the package re-run
+    (`cordis_run` with the SAME packageId, mode `run`) -- not a new package;
+  * `new Function` compiles in GLOBAL scope, so every binding the runtime injects
+    has to be handed in explicitly (`harness`/`console`/`TextEncoder`/`btoa`/
+    `atob` on the host; `React`/`host`/`styles`/`console` on the client).
+    `tools/mcart-plugin/loader-test.js` runs the real halves THROUGH the loader
+    and injects that omission, because forgetting one fails at run time inside a
+    browser page, where the only evidence is a Run card.
+
+WHAT IS REMOVED, EXACTLY.  Only two shapes, both of which cannot appear inside a
+string or a regex:
+
+  * `/** ... */` and `/* ... */` blocks
+  * lines whose first non-space characters are `//`
+
+Trailing `//` comments are deliberately LEFT ALONE: deciding whether a `//` is a
+comment or part of a string or a regex needs a real JavaScript lexer, and this
+script is not allowed to be clever about code.  The two shapes above are decided
+per line by position, not by scanning inside code.
+
+   python3 tools/strip_comments.py <file> [<file> ...]
+   python3 tools/strip_comments.py --check <annotated> <stripped>
+"""
+import re
+import sys
+
+BLOCK = re.compile(r"/\*[\s\S]*?\*/")
+WHOLE_LINE = re.compile(r"^[ \t]*//[^\n]*\n?", re.MULTILINE)
+
+
+def strip(text):
+    without_blocks = BLOCK.sub("", text)
+    without_lines = WHOLE_LINE.sub("", without_blocks)
+    return rstrip_lines(without_lines)
+
+
+def rstrip_lines(text):
+    """Drop trailing whitespace from every line.
+
+    A block comment that began on an indented line leaves its indentation
+    behind as a whitespace-only line, so the transported string used to depend
+    on bytes nobody can see -- which turned "was it pasted exactly?" into a
+    question about invisible characters.  Trailing whitespace cannot change what
+    JavaScript means, and neither half contains a template literal or any other
+    multi-line string (every backtick in both files is inside a comment), so it
+    is removed from the TRANSPORT and `verify_emitted.py` compares against this
+    same function.  The annotated sources are not touched.
+    """
+    return "\n".join(line.rstrip() for line in text.split("\n"))
+
+
+def main(argv):
+    if len(argv) >= 3 and argv[0] == "--check":
+        with open(argv[1], "r", encoding="utf-8") as handle:
+            annotated = handle.read()
+        with open(argv[2], "r", encoding="utf-8") as handle:
+            stripped = handle.read()
+        if strip(annotated) == stripped:
+            print("ok: %s 就是 %s 去掉注释的样子" % (argv[2], argv[1]))
+            return 0
+        print("不一致：%s 不等于 %s 去掉注释的结果" % (argv[2], argv[1]))
+        return 1
+    if not argv:
+        print(__doc__)
+        return 2
+    for path in argv:
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+        sys.stdout.write(strip(text))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
