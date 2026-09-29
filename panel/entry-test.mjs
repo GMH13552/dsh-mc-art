@@ -120,27 +120,45 @@ check('导出的是 Cordis 插件（inject + apply）',
   moduleExports !== null && Array.isArray(moduleExports.inject) && typeof moduleExports.apply === 'function',
   moduleExports === null ? 'null' : JSON.stringify(Object.keys(moduleExports || {})))
 
-/** 跑一次客户端 apply，返回它注册了哪些槽。options 决定那个壳长什么样。 */
+/** 跑一次客户端 apply，返回它注册了哪些槽、以及"晚到的服务"怎么触发。 */
 function clientRun(options) {
   const seen = []
+  const lateCallbacks = []
+  // 右侧栏插件同时提供两个服务；晚到的情形也是两个一起到（实测如此）。
+  let tabsPresent = options.tabs === true || options.services === true
+  let sidebarRightPresent = options.sidebarRight === true || options.services === true
   const slots = {
     inject: (slot, callback) => callback(),
-    register: (settings) => { seen.push(settings.name + ':' + (settings.key || settings.id)); return () => {} },
+    register: (settings) => {
+      const key = settings.name + ':' + (settings.key || settings.id)
+      seen.push(key)
+      // 真的撤掉，这样"搬到右栏后左栏那份没了"是可验证的（返回的 disposer 会被调用）
+      return () => { const at = seen.indexOf(key); if (at >= 0) seen.splice(at, 1) }
+    },
     entries: (name) => ((options.slotEntries || []).includes(name) ? [{ id: 'shell-own' }] : []),
   }
   const ctx = {
     get: (name) => {
       if (name === 'slots') return slots
-      if ((options.tabs === true || options.services === true) && name === 'sidebarRightTabs') {
-        return { register: () => () => {} }
-      }
-      if (options.services === true && name === 'sidebarRight') return {}
+      if (tabsPresent && name === 'sidebarRightTabs') return { register: () => () => {} }
+      if (sidebarRightPresent && name === 'sidebarRight') return {}
       return undefined
     },
+    inject: (names, callback) => { lateCallbacks.push(callback); return () => {} },
     effect: (fn) => { fn(); return () => {} },
     timer: { interval: () => () => {}, timeout: async () => {} },
   }
-  return { seen, result: moduleExports.apply(ctx) }
+  const result = moduleExports.apply(ctx)
+  return {
+    seen,
+    result,
+    /** 右侧栏服务"晚到"了：服务出现后触发回调，面板应当从左边搬过去。 */
+    arriveLate() {
+      tabsPresent = true
+      sidebarRightPresent = true
+      for (const callback of lateCallbacks) callback()
+    },
+  }
 }
 
 let applyFailed = null
@@ -161,10 +179,20 @@ const noTabs = clientRun({ slotEntries: ['sidebar.right.pane.tab'] }).seen
 check('没有 tabs（注册不了 tab）→ 回退左栏，且不炸',
   noTabs.some((key) => key.startsWith('sidebar.panellist:')) &&
   !noTabs.some((key) => key.startsWith('sidebar.right.pane.tab:')), noTabs.join(' '))
-const fallback = clientRun({}).seen
+const fallbackRun = clientRun({})
 check('什么都没有 → 回退左栏',
-  fallback.some((key) => key.startsWith('sidebar.panellist:')) &&
-  !fallback.some((key) => key.startsWith('sidebar.right.pane.tab:')), fallback.join(' '))
+  fallbackRun.seen.some((key) => key.startsWith('sidebar.panellist:')) &&
+  !fallbackRun.seen.some((key) => key.startsWith('sidebar.right.pane.tab:')), fallbackRun.seen.join(' '))
+// 冷启动实测：右侧栏插件比我们晚挂载 → 原来它把面板留在左栏，重启后就成了左栏。
+// 现在服务一出现就搬过去，并且把左栏那份撤掉（同一个面板不该两处都在）。
+const lateRun = clientRun({})
+check('服务晚到之前，先有一个能用的落点（左栏）',
+  lateRun.seen.some((key) => key.startsWith('sidebar.panellist:')), lateRun.seen.join(' '))
+lateRun.arriveLate()
+check('服务晚到之后，搬到右侧栏且撤掉左栏那份',
+  lateRun.seen.some((key) => key.startsWith('sidebar.right.pane.tab:')) &&
+  !lateRun.seen.some((key) => key.startsWith('sidebar.panellist:')) &&
+  !lateRun.seen.some((key) => key.startsWith('main:')), lateRun.seen.join(' '))
 
 // 真注入：把宿主入口那层垫片去掉（模拟"直接当动态插件跑"），派发路由就不该存在。
 const withoutShim = readFileSync(join(HERE, 'lib', 'index.js'), 'utf8')

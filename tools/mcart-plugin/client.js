@@ -933,12 +933,21 @@ return {
         return false
       }
     }
-    // 需要 tabs 才能往右侧栏注册 tab（它是唯一的必需品）；而"右侧栏在不在"这个证据，
-    // 服务名和槽名哪个在都算——桌面端实测就是"有 tabs、没有 sidebarRight 服务"，
-    // 只看服务名会让面板掉进左栏回退。没有 tabs 时只能回退左栏：注册不了 tab，
-    // 硬进右栏分支会直接炸在 tabs.register 上（门禁抓着过我这一版）。
-    const inRightColumn = tabs !== undefined &&
-      (sidebarRight !== undefined || slotHasEntries('sidebar.right.pane.tab'))
+    // 右侧栏在不在：**必须**有 tabs（注册 tab 的唯一必需品），证据可以是 sidebarRight
+    // 服务或右侧栏的槽。没有 tabs 就只能回退左栏——硬进右栏会炸在 tabs.register 上
+    // （门禁抓着过我这一版）。
+    //
+    // 但**不能只在 apply 那一刻采样一次**：冷启动时右侧栏插件可能比我们晚挂载，
+    // 于是同一个包"热重载进右栏、重启后进左栏"（用户实测）。所以：先放一个能用的
+    // 落点，并等 sidebarRightTabs 出现——出现就搬过去，等不到就一直留在左栏。
+    function rightColumnReady() {
+      return ctx.get('sidebarRightTabs') !== undefined &&
+        (ctx.get('sidebarRight') !== undefined || slotHasEntries('sidebar.right.pane.tab'))
+    }
+    const tabsReady = ctx.get('sidebarRightTabs')
+    const sidebarRightReady = ctx.get('sidebarRight')
+    const inRightColumn = tabsReady !== undefined &&
+      (sidebarRightReady !== undefined || slotHasEntries('sidebar.right.pane.tab'))
 
     function Atlas(props) {
       const sessionId = props.sessionId === undefined ? '' : String(props.sessionId)
@@ -3432,8 +3441,37 @@ return {
       (props) => React.createElement(ReferenceBar, { useInput: props.useInput, inputActions: props.inputActions }),
     ))
 
-    if (inRightColumn) {
-      ctx.effect(() => tabs.register({
+    let placement = null
+    const leftStops = []
+    function placeLeft() {
+      if (placement !== null) return
+      placement = 'left'
+      const keep = []
+      slots.inject('main', () => {
+        const stop = slots.register({ name: 'main', key: 'mcarts' },
+          () => React.createElement(Atlas, { sessionId: '' }))
+        keep.push(stop)
+        return stop
+      })
+      slots.inject('sidebar.panellist', () => {
+        const stop = slots.register({ name: 'sidebar.panellist', id: 'mcarts', order: 12, label: 'MC 资产' },
+          () => React.createElement('span', null, 'MC'))
+        keep.push(stop)
+        return stop
+      })
+      leftStops.push(() => { for (const stop of keep) { try { if (typeof stop === 'function') stop() } catch (error) {  } } })
+    }
+    function placeRight() {
+      if (placement === 'right') return
+      if (placement === 'left') {
+        // 搬到右栏：先把左栏那份撤掉，免得同一个面板在两处都在。
+        for (const stop of leftStops) { try { stop() } catch (error) {  } }
+        leftStops.length = 0
+      }
+      placement = 'right'
+      const rightTabs = ctx.get('sidebarRightTabs')
+      if (rightTabs === undefined) return
+      ctx.effect(() => rightTabs.register({
         id: TAB_ID,
         kind: TAB_ID,
         priority: 'extension',
@@ -3453,15 +3491,16 @@ return {
         { name: 'sidebar.right.pane.tab.title', key: TAB_ID },
         () => React.createElement(TabTitle, null),
       ))
-    } else {
-      slots.inject('main', () => slots.register(
-        { name: 'main', key: 'mcarts' },
-        () => React.createElement(Atlas, { sessionId: '' }),
-      ))
-      slots.inject('sidebar.panellist', () => slots.register(
-        { name: 'sidebar.panellist', id: 'mcarts', order: 12, label: 'MC 资产' },
-        () => React.createElement('span', null, 'MC'),
-      ))
+    }
+
+    if (inRightColumn) placeRight()
+    else {
+      placeLeft()
+      if (typeof ctx.inject === 'function') {
+        try {
+          ctx.inject(['sidebarRightTabs'], () => { if (rightColumnReady()) placeRight() })
+        } catch (error) {  }
+      }
     }
   },
 }
