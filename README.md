@@ -62,14 +62,25 @@ python3 ../../tools/mcmod_gametest.py --fault  # 必须失败，否则这个闭�
 
 ## 三、快速开始
 
-### 1. 装 skill
+### 1. 一条命令装好
 
 ```bash
 git clone https://github.com/GMH13552/dsh-mc-art.git
-cp -r dsh-mc-art/skills/mc-mod ~/.dsh/skills/
-# 美术那一半是另一个仓库：
-git clone https://github.com/GMH13552/mc-art.git ~/.dsh/skills/mc-art
+sh dsh-mc-art/install.sh
 ```
+
+它做四件事：装 `mc-mod`；**把美术引擎 `mc-art` 拉下来**（已存在就 `git pull --ff-only`）；
+装模式 `mc-studio`；自检依赖（Python / Pillow / JDK）。可重复执行。
+
+```bash
+sh install.sh --no-cordis-tools   # 把模式里的 Cordis 工具行关掉（见第四节的限制）
+```
+
+> **美术引擎不是子模块，但它会被自动装。** `install.sh` 会 clone（或更新）它。
+> 为什么不做成 `git submodule`：它有自己的仓库、历史和节奏，本来也独立可用（一台确定性引擎）；
+> 子模块会把它钉在某个 commit 上（更新要手动 bump），而最常见的坑是 `git clone` 忘了
+> `--recursive` —— "装好了"却少了半个引擎。想手动装也一样：
+> `git clone https://github.com/GMH13552/mc-art.git ~/.dsh/skills/mc-art`
 
 ### 2. 用面板（作为 DSH 动态插件）
 
