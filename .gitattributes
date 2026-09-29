@@ -1,0 +1,25 @@
+# 这个仓库要同时在 Linux 和 Windows 上用，所以行尾不能靠"谁 clone 谁碰运气"。
+#
+# 具体吃过一次教训：`.bat` 只有 LF 时 cmd.exe 大多能跑，但带标签/跳转的脚本会出怪事，
+# 而"装不上"看起来完全不像行尾问题。反过来，`.sh` 带 CRLF 会让 `sh install.sh`
+# 报 `\r: command not found`。所以两边都钉死。
+
+* text=auto eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+*.sh text eol=lf
+*.mjs text eol=lf
+*.js  text eol=lf
+*.py  text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+
+*.png binary
+*.jar binary
+*.nbt binary
+*.ogg binary
+*.zip binary

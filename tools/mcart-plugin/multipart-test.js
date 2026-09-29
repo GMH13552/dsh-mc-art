@@ -13,6 +13,7 @@ const os = require('os')
 const nodeFs = require('fs')
 const nodePath = require('path')
 const cp = require('child_process')
+const { runPython } = require('./python-bin.js')
 
 const { handlers } = require('./run.js')
 
@@ -164,7 +165,7 @@ function buildFixture() {
   nodeFs.rmSync(REF, { recursive: true, force: true })
   const script = nodePath.join(os.tmpdir(), 'mcart-mp-fixture.py')
   nodeFs.writeFileSync(script, FIXTURE)
-  const out = cp.spawnSync('python3', [script], { encoding: 'utf8' })
+  const out = runPython([script], { encoding: 'utf8' })
   if (out.status !== 0) throw new Error('fixture failed: ' + (out.stderr || out.stdout))
 }
 

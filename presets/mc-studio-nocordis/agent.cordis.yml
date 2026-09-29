@@ -276,6 +276,7 @@
 # trust boundary, not a sandbox — see this file's header.
 - id: tool-cordis
   name: '@deepseek-ai/dsh-tool-cordis'
+  disabled: true
 
 # 这个模式不随 preset 携带 skill：`mc-mod` / `mc-art` 在全局 skill 根里
 # （~/.dsh/skills），任何模式都能路由到；出厂那两份 composition 创作 skill

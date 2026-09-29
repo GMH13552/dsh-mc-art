@@ -27,6 +27,7 @@ const os = require('os')
 const nodeFs = require('fs')
 const nodePath = require('path')
 const cp = require('child_process')
+const { runPython } = require('./python-bin.js')
 
 // The same service stubs every other host gate uses, so what runs here is the
 // emitted host -- not a re-implementation of it.
@@ -177,7 +178,7 @@ function buildFixture() {
   nodeFs.rmSync(REF, { recursive: true, force: true })
   const script = nodePath.join(os.tmpdir(), 'mcart-icon-fixture.py')
   nodeFs.writeFileSync(script, FIXTURE)
-  const out = cp.spawnSync('python3', [script], { encoding: 'utf8' })
+  const out = runPython([script], { encoding: 'utf8' })
   if (out.status !== 0) throw new Error('fixture failed: ' + (out.stderr || out.stdout))
 }
 

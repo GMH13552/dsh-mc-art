@@ -16,9 +16,10 @@ produced. That is why it, and not a bot, is the primary way to check a mod.
 
 ```bash
 # in the mod project
-python3 tools/mcmod_gametest.py                 # verdict + parsed log + result JSON
-python3 tools/mcmod_gametest.py --fault         # inject a false assertion: it MUST fail
+python tools/mcmod_gametest.py                 # verdict + parsed log + result JSON
+python tools/mcmod_gametest.py --fault         # inject a false assertion: it MUST fail
 ./gradlew runGameTestServer --no-daemon --console=plain   # what the tool runs
+#   (Windows: gradlew.bat -- the tool picks it by platform)
 echo $?                                         # = failed required tests
 ```
 

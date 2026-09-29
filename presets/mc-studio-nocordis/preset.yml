@@ -1,0 +1,2 @@
+name: MC 模组工作室（无 Cordis 工具）
+description: 同上，但把 tool-cordis 那一行 disabled：这个模式**不占用**进程级的 Cordis 工具集，所以能和另一个已经用着 Cordis 工具的会话并存。代价是本模式里发射不了面板（面板由完整版「MC 模组工作室」负责开），只做不需要面板的部分：写 atlas / 代码 / 资源、跑 GameTest 判定、读 mc-mod 与 mc-art 两个 skill。

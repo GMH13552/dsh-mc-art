@@ -733,8 +733,48 @@ return {
 
     async function findScanner(start) { return await findTool(start, SCAN_SCRIPT) }
 
-    async function runScanner(scanner, argument, timeoutMs, workspaceRoot, maxBytes) {
-      const result = await runShell('python3 ' + shellDecoded(scanner) + ' ' + argument, timeoutMs, policyFor(workspaceRoot), maxBytes)
+    // Which Python?  The extractor used to be launched as a hard-coded `python3`,
+    // and that single word is what made the whole reference path (blocks, items,
+    // icons, namespaces) die on a Windows machine: the interpreter there is
+    // `python.exe` or the `py` launcher -- there is no `python3`.
+    //
+    // The shell service is `bash -c` on every platform, so a probe is the honest
+    // way to ask: run the candidate and see whether it answers.  A working answer
+    // is cached for the life of the plugin; a total failure is NOT cached, so a
+    // machine where Python gets installed mid-session recovers on the next call.
+    const PYTHON_CANDIDATES = ['python3', 'python', 'py -3']
+    let pythonLauncher = ''
+    async function resolvePython(workspaceRoot) {
+      if (pythonLauncher !== '') return pythonLauncher
+      for (const candidate of PYTHON_CANDIDATES) {
+        const probe = await runShell(candidate + ' -c "print(1)"', 20000,
+          policyFor(workspaceRoot), 4096)
+        if (probe.exitCode === 0 && String(probe.text).trim() === '1') {
+          pythonLauncher = candidate
+          return candidate
+        }
+      }
+      return null
+    }
+
+    /** The launcher for a message the user reads, without probing. */
+    function pythonHint() {
+      return pythonLauncher === '' ? PYTHON_CANDIDATES[0] : pythonLauncher
+    }
+
+    // 参数一律当作**原始字符串数组**交进来，只在这里按方言转义——转义点只有这一个，
+    // 就不会出现"某处漏了引号，Windows 上把带空格的路径拆成两个参数"这种事。
+    async function runScanner(scanner, tokens, timeoutMs, workspaceRoot, maxBytes) {
+      const python = await resolvePython(workspaceRoot)
+      if (python === null) {
+        return { error: '找不到 Python（试过 ' + PYTHON_CANDIDATES.join(' / ') +
+          '）。抽取器是 Python 写的，先装一个 Python 3 并让它进 PATH；' +
+          'Windows 上装完通常叫 python 或 py。' }
+      }
+      const dialect = await currentShell(workspaceRoot)
+      const argument = (tokens === undefined ? [] : tokens).map((token) => dialect.word(token)).join(' ')
+      const result = await runShell(python + ' ' + dialect.word(scanner) + (argument === '' ? '' : ' ' + argument),
+        timeoutMs, policyFor(workspaceRoot), maxBytes)
       if (result.exitCode !== 0) {
         const detail = beforeStderr(result.err === undefined || result.err === null ? '' : result.err)
         return { error: '扫描脚本退出码 ' + result.exitCode + (detail === '' ? '，没有任何错误输出' : '：' + detail) }
@@ -769,7 +809,7 @@ return {
       const signature = await referenceSignature(dir)
       const cached = scanCache.get(dir)
       if (cached !== undefined && cached.signature === signature) return cached.result
-      const parsed = await runScanner(scanner, shellDecoded(dir), 180000, dir)
+      const parsed = await runScanner(scanner, [dir], 180000, dir)
       if (parsed.error !== undefined) return Object.assign({}, empty, { error: String(parsed.error) })
       const result = { root: parsed.root, shape: parsed.shape || '', namespaces: parsed.namespaces || [],
         sources: parsed.sources || [], textures: parsed.textures || 0, error: null }
@@ -928,8 +968,9 @@ return {
       if (extractor === null || extractor === undefined) {
         return { error: '找不到 ' + EXTRACT_SCRIPT + '（从项目目录往上找了 5 层都没有）。' }
       }
-      const parsed = await runScanner(extractor, rootArgs(resolved.roots)
-        + ' --item ' + shellDecoded(namespace + ':' + item), 120000, project.dir, REFERENCE_MAX_BYTES)
+      const parsed = await runScanner(extractor,
+        rootArgs(resolved.roots).concat(['--item', namespace + ':' + item]),
+        120000, project.dir, REFERENCE_MAX_BYTES)
       if (parsed === undefined || (parsed.error !== undefined && parsed.error !== null)) {
         return { error: String(parsed === undefined ? '抽取脚本没有返回任何东西' : parsed.error) }
       }
@@ -974,9 +1015,10 @@ return {
       return { roots: [reference], reference: reference }
     }
 
+    /** `--root <一> --root <二>`：交原始字符串，转义留给 runScanner（唯一转义点）。 */
     function rootArgs(roots) {
-      let out = ''
-      for (const one of roots) out += ' --root ' + shellDecoded(one)
+      const out = []
+      for (const one of roots) out.push('--root', one)
       return out
     }
 
@@ -1074,8 +1116,8 @@ return {
       if (resolved.error !== undefined) return { error: resolved.error }
       const extractor = await findTool(project.dir, EXTRACT_SCRIPT)
       if (extractor === null || extractor === undefined) return { error: '找不到 ' + EXTRACT_SCRIPT }
-      const parsed = await runScanner(extractor, rootArgs(resolved.roots)
-        + ' --list --namespace ' + shellDecoded(namespace) + ' --kind item',
+      const parsed = await runScanner(extractor,
+        rootArgs(resolved.roots).concat(['--list', '--namespace', namespace, '--kind', 'item']),
         180000, project.dir, REFERENCE_MAX_BYTES)
       if (parsed === undefined || parsed.error !== undefined) {
         return { error: String(parsed === undefined ? '没有返回任何东西' : parsed.error) }
@@ -1090,9 +1132,9 @@ return {
       if (extractor === null || extractor === undefined) return { error: '找不到 ' + EXTRACT_SCRIPT }
       // ONE process for the page: a single item spends almost all of its time
       // opening every jar, so forty processes would make the picker unusable.
-      const parsed = await runScanner(extractor, rootArgs(resolved.roots)
-        + ' --items ' + shellDecoded(items.join(','))
-        + ' --namespace ' + shellDecoded(namespace), 180000, project.dir, REFERENCE_MAX_BYTES)
+      const parsed = await runScanner(extractor,
+        rootArgs(resolved.roots).concat(['--items', items.join(','), '--namespace', namespace]),
+        180000, project.dir, REFERENCE_MAX_BYTES)
       if (parsed === undefined || parsed.error !== undefined) {
         return { error: String(parsed === undefined ? '没有返回任何东西' : parsed.error) }
       }
@@ -1120,11 +1162,13 @@ return {
         return { error: '找不到 ' + EXTRACT_SCRIPT + '（从项目目录往上找了 5 层都没有）。' }
       }
       const blockArg = namespace + ':' + block
-      const variantArg = wanted === null ? '' : ' --variant ' + shellDecoded(wanted)
-      const command = 'python3 ' + shellDecoded(extractor) + ' --root ' + shellDecoded(directory)
-        + ' --block ' + shellDecoded(blockArg) + variantArg
-      const parsed = await runScanner(extractor, '--root ' + shellDecoded(directory)
-        + ' --block ' + shellDecoded(blockArg) + variantArg, 120000, project.dir, REFERENCE_MAX_BYTES)
+      const tokens = ['--root', directory, '--block', blockArg]
+      if (wanted !== null) tokens.push('--variant', wanted)
+      // 展示给人看的那条命令也按方言拼，免得用户拿去手跑时报"找不到命令"。
+      const dialect = await currentShell(project.dir)
+      const command = pythonHint() + ' ' + dialect.word(extractor) + ' ' +
+        tokens.map((token) => dialect.word(token)).join(' ')
+      const parsed = await runScanner(extractor, tokens, 120000, project.dir, REFERENCE_MAX_BYTES)
       if (parsed === undefined || parsed.error !== undefined) {
         return { error: String(parsed === undefined ? '抽取脚本没有返回任何东西' : parsed.error) }
       }
@@ -1800,8 +1844,94 @@ return {
     }
 
     async function available(tool) {
-      const result = await runShell('command -v ' + tool, 10000)
+      const dialect = await currentShell('')
+      const result = await runShell(dialect.available(tool), 10000)
       return result.exitCode === 0 && String(result.text).trim().length > 0
+    }
+
+    // ── 这个 shell 说的是哪种方言 ────────────────────────────────────────────
+    // DSH 按平台换 shell：POSIX 上是 `bash -c`，Windows 上是
+    // `pwsh -NoLogo -NoProfile -NonInteractive -Command <整串>`——dsh-base 的
+    // cordis.patch.yml 里 bash 那几行在 win32 上 disabled、pwsh 那几行启用
+    // （tool-bash/tool-pwsh 同理）。所以 `$(printf … | base64 -d)`、`rm -f`、
+    // `mv -f`、`command -v` 在 Windows 上一个都不是命令。
+    //
+    // 这里是"谁在给我跑命令"的唯一真相：探一次，然后所有命令都按方言拼。
+    // 探法：`$($PSVersionTable.PSVersion.Major)` 在 bash 里是个跑不通的命令替换
+    // （展开成空），在 PowerShell 里展开成 5 或 7。
+    const PS_QUOTE = (value) => "'" + String(value).split("'").join("''") + "'"
+    const SHELLS = {
+      posix: {
+        name: 'posix',
+        word: (value) => shellDecoded(value),
+        available: (tool) => 'command -v ' + tool,
+        remove: (path) => 'rm -f ' + shellDecoded(path),
+        move: (from, to) => 'mv -f ' + shellDecoded(from) + ' ' + shellDecoded(to),
+        // 从暂存文件解开（命令行里只有路径）；writeInline 只在没有 fs 服务时兜底。
+        decodeFile: (source, target) =>
+          'base64 -d < ' + shellDecoded(source) + ' > ' + shellDecoded(target),
+        writeInline: (target, base64) =>
+          'printf %s ' + quoteRaw(base64) + ' | base64 -d > ' + shellDecoded(target),
+      },
+      pwsh: {
+        name: 'pwsh',
+        word: (value) => PS_QUOTE(value),
+        available: (tool) => '(Get-Command ' + PS_QUOTE(tool) + ' -ErrorAction SilentlyContinue) -ne $null',
+        remove: (path) => 'Remove-Item -LiteralPath ' + PS_QUOTE(path) + ' -Force -ErrorAction SilentlyContinue',
+        move: (from, to) => 'Move-Item -LiteralPath ' + PS_QUOTE(from) +
+          ' -Destination ' + PS_QUOTE(to) + ' -Force',
+        // .NET 一次解码；暂存文件的内容由 fs 服务写（见 writeDecodedFile），
+        // 所以命令行里同样只有路径——Windows 的 32767 字符上限碰不到。
+        decodeFile: (source, target) => '[IO.File]::WriteAllBytes(' + PS_QUOTE(target) +
+          ', [Convert]::FromBase64String([IO.File]::ReadAllText(' + PS_QUOTE(source) + ')))',
+        writeInline: (target, base64) => '[IO.File]::WriteAllBytes(' + PS_QUOTE(target) +
+          ', [Convert]::FromBase64String(' + PS_QUOTE(base64) + '))',
+      },
+    }
+    let shellDialect = null
+    async function currentShell(workspaceRoot) {
+      if (shellDialect !== null) return SHELLS[shellDialect]
+      const probe = await runShell('echo "mcart-shell:$($PSVersionTable.PSVersion.Major)"', 20000,
+        policyFor(workspaceRoot), 4096)
+      // 探不通就不下结论、也不缓存：服务没起来的时候不该把这个会话钉在错的方言上。
+      if (probe.exitCode !== 0) return SHELLS.posix
+      shellDialect = /^mcart-shell:\d+/.test(String(probe.text).trim()) ? 'pwsh' : 'posix'
+      return SHELLS[shellDialect]
+    }
+
+    /**
+     * 把 base64 解成一个文件——**分两步，命令行里永远只有路径**。
+     *
+     * 为什么不直接把 base64 拼进命令：Windows 的命令行总长上限约 32767 字符，
+     * 一张 128×128 的贴图 base64 就有几十 KB，塞进 `pwsh -Command` 会失败，
+     * 而且失败得含糊（"命令行太长"）。而且图片内容本来就不该经过一个会被日志和
+     * 引号规则来回揉的通道。
+     *
+     * 所以：base64 当**文本**用 fs 服务写进一个暂存文件（同一条 sandbox 策略，
+     * 且 fs.writeText 对长度没意见），shell 只负责"把这个文件解成字节"。
+     * 没有 fs 服务时才退回把 payload 拼进命令的老办法（那时数据也小）。
+     */
+    async function writeDecodedFile(target, base64, workspaceRoot, timeoutMs) {
+      const dialect = await currentShell(workspaceRoot)
+      const policy = policyFor(workspaceRoot)
+      const staging = target + '.mcart-b64'
+      const staged = await writeTextFile(staging, base64, workspaceRoot)
+      if (staged.ok !== true) {
+        return { ok: false, exitCode: null, err: String(staged.detail), step: 1, steps: 2 }
+      }
+      const done = await runShell(dialect.decodeFile(staging, target), timeoutMs, policy)
+      const cleanup = await runShell(dialect.remove(staging), 15000, policy)
+      if (done.exitCode !== 0) {
+        return { ok: false, exitCode: done.exitCode, err: done.err, step: 2, steps: 2 }
+      }
+      return { ok: true, steps: 2, dialect: dialect.name, stagingRemoved: cleanup.exitCode === 0 }
+    }
+
+    /** 一条收尾命令（删/移），按方言拼。 */
+    async function shellFileOp(workspaceRoot, build, timeoutMs) {
+      const dialect = await currentShell(workspaceRoot)
+      const done = await runShell(build(dialect), timeoutMs, policyFor(workspaceRoot))
+      return { ok: done.exitCode === 0, exitCode: done.exitCode, err: done.err }
     }
 
     async function runDialog(command, sandboxPolicy) {
@@ -1845,8 +1975,8 @@ return {
         fsDetail = 'no fs service'
       }
       if (shell !== undefined) {
-        const command = 'printf %s ' + quoteRaw(base64OfString(text)) + ' | base64 -d > ' + shellDecoded(path)
-        const result = await runShell(command, 20000, policy)
+        const dialect = await currentShell(workspaceRoot)
+        const result = await runShell(dialect.writeInline(path, base64OfString(text)), 20000, policy)
         if (result.exitCode === 0) return { ok: true, via: 'shell' }
         const detail = beforeStderr(result.err === undefined || result.err === null ? '' : result.err)
         return { ok: false, detail: 'fs: ' + fsDetail + ' | shell exit=' + result.exitCode + (detail === '' ? '' : ' err=' + detail) }
@@ -2020,16 +2150,21 @@ return {
         // Write beside the original, check it, and only then move it into place.
         // Writing straight over the texture meant a bad encode destroyed the
         // sprite *before* anyone noticed it was not a PNG.
+        //
+        // 三个动作（写/移/删）都按 shell 方言拼：Windows 上这条路径原来写的
+        // `printf | base64 -d`、`mv -f`、`rm -f` 一个都不是命令，而贴图正是
+        // 面板最核心的写入——不修的话 Windows 用户"能看不能改"。
         const temp = target + '.mcart-tmp'
         const policy = policyFor(root)
         async function discard(reason) {
-          const cleanup = await runShell('rm -f ' + shellDecoded(temp), 15000, policy)
-          return { error: reason + (cleanup.exitCode === 0 ? '（原文件没有被改动）' : '（临时文件也没清掉：' + temp + '）') }
+          const cleanup = await shellFileOp(root, (dialect) => dialect.remove(temp), 15000)
+          return { error: reason + (cleanup.ok === true ? '（原文件没有被改动）' : '（临时文件也没清掉：' + temp + '）') }
         }
-        const written = await runShell('printf %s ' + quoteRaw(base64) + ' | base64 -d > ' + shellDecoded(temp), 30000, policy)
-        if (written.exitCode !== 0) {
+        const written = await writeDecodedFile(temp, base64, root, 30000)
+        if (written.ok !== true) {
           const detail = beforeStderr(written.err === undefined || written.err === null ? '' : written.err)
-          return await discard('写入失败（退出码 ' + written.exitCode + '）' + (detail === '' ? '，没有错误输出' : '：' + detail))
+          return await discard('写入失败（退出码 ' + written.exitCode + '，第 ' + written.step + '/' + written.steps + ' 步）' +
+            (detail === '' ? '，没有错误输出' : '：' + detail))
         }
         const staged = await statOf(temp)
         if (staged === undefined || staged.type !== 'file') return await discard('写完之后读不到临时文件')
@@ -2040,8 +2175,8 @@ return {
             return await discard('写出来的不是 PNG（开头 ' + Array.prototype.slice.call(bytes, 0, 8).join(',') + '）')
           }
         }
-        const moved = await runShell('mv -f ' + shellDecoded(temp) + ' ' + shellDecoded(target), 20000, policy)
-        if (moved.exitCode !== 0) {
+        const moved = await shellFileOp(root, (dialect) => dialect.move(temp, target), 20000)
+        if (moved.ok !== true) {
           const detail = beforeStderr(moved.err === undefined || moved.err === null ? '' : moved.err)
           return await discard('换上新图失败（退出码 ' + moved.exitCode + '）' + (detail === '' ? '' : '：' + detail))
         }
@@ -2262,8 +2397,8 @@ return {
         // actually read.  The PNG scanner counts textures across every installed
         // version, so it reported "minecraft 13209 张" for a namespace this tool
         // can offer 407 blocks out of -- a number you cannot get.
-        const parsed = await runScanner(extractor, '--root ' + shellDecoded(directory)
-          + ' --namespaces', 120000, project.dir, REFERENCE_MAX_BYTES)
+        const parsed = await runScanner(extractor, ['--root', directory, '--namespaces'],
+          120000, project.dir, REFERENCE_MAX_BYTES)
         if (parsed === undefined || parsed.error !== undefined) {
           return { error: String(parsed === undefined ? '没有返回任何东西' : parsed.error) }
         }
@@ -2350,8 +2485,8 @@ return {
         const cacheKey = 'list:' + namespace
         const cached = referenceBlocks.get(cacheKey)
         if (cached !== undefined && cached.signature === signature) return cached.value
-        const parsed = await runScanner(extractor, '--root ' + shellDecoded(directory)
-          + ' --list --namespace ' + shellDecoded(namespace), 120000, project.dir, REFERENCE_MAX_BYTES)
+        const parsed = await runScanner(extractor, ['--root', directory, '--list', '--namespace', namespace],
+          120000, project.dir, REFERENCE_MAX_BYTES)
         if (parsed === undefined || parsed.error !== undefined) {
           return { error: String(parsed === undefined ? '没有返回任何东西' : parsed.error) }
         }
@@ -2379,9 +2514,9 @@ return {
         if (directory === '') return { error: '还没有设置参考目录' }
         const extractor = await findTool(project.dir, EXTRACT_SCRIPT)
         if (extractor === null || extractor === undefined) return { error: '找不到 ' + EXTRACT_SCRIPT }
-        const parsed = await runScanner(extractor, '--root ' + shellDecoded(directory)
-          + ' --namespace ' + shellDecoded(namespace)
-          + ' --icons ' + shellDecoded(wanted.join(',')), 180000, project.dir, REFERENCE_MAX_BYTES)
+        const parsed = await runScanner(extractor,
+          ['--root', directory, '--namespace', namespace, '--icons', wanted.join(',')],
+          180000, project.dir, REFERENCE_MAX_BYTES)
         if (parsed === undefined || parsed.error !== undefined) {
           return { error: String(parsed === undefined ? '没有返回任何东西' : parsed.error) }
         }

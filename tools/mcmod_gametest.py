@@ -45,12 +45,24 @@ FAULT_FIND = "state -> state.is(FleshlandMod.FLESH_BLOCK.get())"
 FAULT_REPLACE = "state -> state.is(net.minecraft.world.level.block.Blocks.DIRT)"
 
 
+def gradle_command(platform_name: str | None = None) -> list[str]:
+    """The wrapper for this OS.  Windows has no `./gradlew`: it ships `gradlew.bat`.
+
+    `platform_name` exists so a self-check can ask for the other platform's answer
+    without being on it (`gradle_command("nt")` must say gradlew.bat) -- an
+    unverifiable branch is how "it works on my machine" gets shipped.
+    """
+    windows = (os.name == "nt") if platform_name is None else (platform_name == "nt")
+    wrapper = "gradlew.bat" if windows else "./gradlew"
+    return [wrapper, GRADLE_TASK, "--no-daemon", "--console=plain"]
+
+
 def run_gradle(project: Path, log: Path, timeout: int) -> tuple[int, str]:
     """One `runGameTestServer`, its exit code, and the log text."""
     env = dict(os.environ)
     env["GRADLE_OPTS"] = PROXY
     env["JAVA_TOOL_OPTIONS"] = ""
-    command = ["./gradlew", GRADLE_TASK, "--no-daemon", "--console=plain"]
+    command = gradle_command()
     log.parent.mkdir(parents=True, exist_ok=True)
     started = time.time()
     with open(log, "wb") as handle:

@@ -77,8 +77,8 @@ game's own test framework; it runs the real server and fails with a machine-read
 verdict. Full detail in `gametest.md`.
 
 ```bash
-python3 tools/mcmod_gametest.py            # verdict: exit code = failed required tests
-python3 tools/mcmod_gametest.py --fault    # prove the verdict can say NO
+python tools/mcmod_gametest.py            # verdict: exit code = failed required tests
+python tools/mcmod_gametest.py --fault    # prove the verdict can say NO
 ```
 
 **Acceptance:** a green run **and** a red run from an injected fault. One without the

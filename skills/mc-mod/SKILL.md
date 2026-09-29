@@ -82,8 +82,8 @@ one-command check in `references/panel.md`.
 
 ```bash
 # from a mod project (see references/gametest.md for what the project must contain)
-python3 tools/mcmod_gametest.py                 # verdict: exit code + parsed log
-python3 tools/mcmod_gametest.py --fault         # inject a false assertion; it MUST fail
+python tools/mcmod_gametest.py                 # verdict: exit code + parsed log
+python tools/mcmod_gametest.py --fault         # inject a false assertion; it MUST fail
 ```
 
 Measured in this workspace on 1.18.2 / Forge 40.2.0: a clean run says

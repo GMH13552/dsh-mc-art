@@ -58,7 +58,7 @@ javap -classpath "$MAP" net.minecraft.world.item.BlockItem | grep getBlock
 javap -v -p -classpath "$MAP" net.minecraft.gametest.framework.StructureUtils | grep "= String"
 
 # 4. The compiler is a 13-second judge on a warm cache
-./gradlew compileJava
+./gradlew compileJava        # Windows: gradlew.bat compileJava
 ```
 
 **Never** trust a blog post or memory for an exact signature — the version in front

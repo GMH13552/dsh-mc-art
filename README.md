@@ -57,8 +57,8 @@
 
 ```bash
 cd fleshland/mod
-python3 ../../tools/mcmod_gametest.py          # 裁决 + 机器可读 JSON
-python3 ../../tools/mcmod_gametest.py --fault  # 必须失败，否则这个闭环是摆设
+python ../../tools/mcmod_gametest.py          # 裁决 + 机器可读 JSON
+python ../../tools/mcmod_gametest.py --fault  # 必须失败，否则这个闭环是摆设
 ```
 
 ## 三、快速开始
@@ -67,7 +67,7 @@ python3 ../../tools/mcmod_gametest.py --fault  # 必须失败，否则这个闭�
 
 ```bash
 git clone https://github.com/GMH13552/dsh-mc-art.git
-sh dsh-mc-art/install.sh
+sh dsh-mc-art/install.sh   # Windows: dsh-mc-art\install.bat
 ```
 
 它做五件事：装 `mc-mod`；**把美术引擎 `mc-art` 拉下来**（已存在就 `git pull --ff-only`）；
@@ -166,8 +166,17 @@ cp -r dsh-mc-art/presets/mc-studio ~/.dsh/.agent-presets/
   Forge 的 GameTest 要 `1.18.1+ / 39.0.88+`；1.18.2 实测 `Java 17 / DataVersion 2975 /
   pack_format 9-8-9`；"怎么查而不是猜"（读 `version.json`、`javap` 映射 jar）：
   `skills/mc-mod/references/versions.md`
-- **Windows**：整套是跨平台的，但有 6 处 POSIX 假设正在修（`python3`、`command -v`、
-  贴图保存用的 `rm/printf|base64 -d/mv`、`./gradlew`、`mc-art` 的 bash 启动器、文档命令拼法）。
+- **Windows（原生，不需要 WSL）**：安装用 `install.bat`（POSIX 用 `sh install.sh`，两者都是
+  薄壳，逻辑在同一份 `install.mjs` 里）。要注意三件事，都是实测过的：
+  1. **Python 的名字**：Windows 上没有 `python3`，装完叫 `python` 或 `py`。面板宿主、
+     三门禁、GameTest 工具都会自己探测（`python3` → `python` → `py -3`），你只要让它进 PATH。
+  2. **shell 不是 bash**：DSH 在 win32 上把 bash 那几行 disabled、启用 PowerShell
+     （`dsh-base` 的 `cordis.patch.yml`）。所以面板里所有 shell 命令都按方言拼
+     （`rm -f`/`mv -f`/`$(printf|base64 -d)` → `Remove-Item`/`Move-Item`/`.NET`），
+     门禁 `node tools/mcart-plugin/shell-dialect-test.js` 会把捕获到的命令**交给真的
+     Windows PowerShell 执行**来验（本机跑过：12 项全绿；谎报方言则 8 项红）。
+  3. **JDK 版本要对**：1.18.2 的模组要 **JDK 17**；只有 21 会在 Gradle/Forge 配置阶段就失败。
+  `./gradlew` 在 Windows 上是 `gradlew.bat`，`tools/mcmod_gametest.py` 自己会选。
 
 ## 七、实测记录（不是宣传）
 

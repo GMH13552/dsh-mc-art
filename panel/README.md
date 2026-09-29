@@ -53,6 +53,28 @@ if (!this.factories.has(id)) throw new Error(`bundle ${url} loaded without regis
 两个入口单独测都过，**页面上却什么都不出现**。现在 id 从 `package.json` 的 `name` 读一份
 （`build.mjs` 里的 `PACKAGE_NAME`），`entry-test.mjs` 与 `serve-check.mjs` 都拿同一个真相来判。
 
+### shell 在 Windows 上是 PowerShell，不是 bash
+
+面板的宿主半要起 Python、要写二进制贴图，这些都经过 DSH 的 shell 服务。而 DSH 按平台换 shell：
+POSIX 上是 `bash -c`，**Windows 上是 `pwsh … -Command <整串>`**（`dsh-base` 的 `cordis.patch.yml`
+里 bash 那几行在 win32 上 disabled、pwsh 那几行启用）。所以 `$(printf … | base64 -d)`、`rm -f`、
+`mv -f`、`command -v` 一个都不能写死——宿主现在探一次方言，然后按方言拼：
+
+| 要做的事 | POSIX | PowerShell |
+|---|---|---|
+| 传一个参数 | `"$(printf %s <base64> | base64 -d)"`（绕开所有引号问题） | `'值'`（单引号里 `''` 表示一个 `'`） |
+| 判断有没有某个命令 | `command -v x` | `(Get-Command 'x' -ErrorAction SilentlyContinue) -ne $null` |
+| 删 / 移 | `rm -f` / `mv -f` | `Remove-Item -Force` / `Move-Item -Force` |
+| 把 base64 解成文件 | `base64 -d < 暂存 > 目标` | `[IO.File]::WriteAllBytes(目标, [Convert]::FromBase64String([IO.File]::ReadAllText(暂存)))` |
+
+**图片数据不进命令行**：Windows 的命令行总长上限约 32767 字符，一张 128×128 贴图的 base64
+就有几十 KB。所以 base64 先用 `fs.writeText` 当文本落成一个暂存文件（同一条 sandbox 策略），
+shell 只做"把这个文件解成字节"这一件事——命令行里永远只有路径。
+
+`node tools/mcart-plugin/shell-dialect-test.js` 验这件事：它把 shell 桩装成 Windows PowerShell，
+捕获宿主真正发出的命令，然后**逐条交给真的 Windows PowerShell 执行**，最后比对贴图字节；
+`--fault` 让探针谎报 POSIX，要求门禁变红（实测：正常 12 项全绿，谎报 8 项红）。
+
 ## 门禁
 
 ```bash
