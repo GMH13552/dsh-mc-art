@@ -22,6 +22,7 @@
 | `tools/mcart_scan_refs.py` | 参考扫描：从游戏目录/模组 jar 里列出命名空间与方块 |
 | `tools/mcmod_gametest.py` | **判定工具**：跑 `GameTestServer`、读退出码、解析日志、给裁决；`--fault` 注入错误断言 |
 | `fleshland/mod/` | 一个**完整可运行的模组骨架**（Forge 1.18.2）：故意不带资源，只带代码 + 两条 GameTest |
+| `presets/mc-studio/` | **MC 模组工作室**模式（agent preset）：把面板能力 + 流程 + 裁判包装成一个可选的模式 |
 
 ## 一、面板（`mcart`）
 
@@ -97,7 +98,25 @@ const MCART_HOME = '/home/gmh/mc-art/tools/mcart-plugin'
 | JDK 17 | 编译/运行 1.18.2 的模组（1.20.5+ 要 21） |
 | 一份 Minecraft 安装 | 当**参考目录**：原版/模组的模型与贴图从那里读 |
 
-## 四、DSH 插件
+## 四、作为独立模式（agent preset）
+
+`presets/mc-studio/` 是一个 agent preset（**模式**）：把它拷到
+`${DSH_HOME:-$HOME/.dsh}/.agent-presets/mc-studio/`，重启 DSH 后模式选择里就有
+**MC 模组工作室**。它 = 完整编码能力 + Cordis 工具（用来把面板拉起来）+ 一段"工作室"人格
+（先读 `mc-mod`/`mc-art`、面板怎么激活、裁判怎么跑、版本矩阵在哪）。
+
+```bash
+cp -r dsh-mc-art/presets/mc-studio ~/.dsh/.agent-presets/
+```
+
+**一条已知限制（实测）**：它的 `tool-cordis` 行会注册 Host Inspect provider，而那个注册表是
+**进程级**的——所以**同一进程里不能同时有两个带 Cordis 工具集的会话**。这不是本模式引入的：
+出厂的"创造模式"用的是同一行、同一个注册表，性质一样（验证方式：在已有 Cordis 会话的进程里
+挂载一份同样的行 → `Host Cordis inspect provider "Service" is already registered`）。
+想让它和别的模式并存，把那行加 `disabled: true`（代价：模式里不能自己激活面板）。
+`agent.cordis.yml` 的其余部分已通过 `standingKeyFor` 真挂载验证。
+
+## 五、DSH 插件
 
 - **GitHub topics**：`dsh-plugin`、`deepseek-harness`、`cordis-plugin`、`agent-skill`、
   `minecraft`、`minecraft-mod`、`gametest`
@@ -108,7 +127,7 @@ const MCART_HOME = '/home/gmh/mc-art/tools/mcart-plugin'
 - **门禁**：`node tools/mcart-plugin/loader-test.js` 用真实的两个半文件跑通加载器，
   并注入"少传一个绑定"证明它会当场炸。
 
-## 五、通用流程与版本
+## 六、通用流程与版本
 
 - **流程（七阶段）**：定目标 → 定有什么 → 出美术 → 写 atlas → 生成代码/资源 →
   **游戏内验证** → 人眼验证 → 分支与移植，每阶段写清"什么算过"：
@@ -120,14 +139,14 @@ const MCART_HOME = '/home/gmh/mc-art/tools/mcart-plugin'
 - **Windows**：整套是跨平台的，但有 6 处 POSIX 假设正在修（`python3`、`command -v`、
   贴图保存用的 `rm/printf|base64 -d/mv`、`./gradlew`、`mc-art` 的 bash 启动器、文档命令拼法）。
 
-## 六、实测记录（不是宣传）
+## 七、实测记录（不是宣传）
 
 - GameTest：正常绿 / 注入红（见上表）。
 - 正交相机的贴图插值：条纹宽度 **1.03**（正确）vs **2.81**（旧的透视插值，远侧压到一半）。
 - 面板点击偏移：盒子比画宽时，点"画出来的左边缘"会被算成**第 4 格**（该是第 0 格）。
 - 平铺图标曾因"依赖活的 `<img>`"而**全空（0 像素）**，立方体不受影响。
 
-## 七、没包含什么
+## 八、没包含什么
 
 - 美术引擎（`mc-art`）的副本 —— 它在[自己的仓库](https://github.com/GMH13552/mc-art)里。
 - 本地美术项目与个人笔记：这是**工具**仓库，不带创作数据。

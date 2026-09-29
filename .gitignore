@@ -21,3 +21,9 @@ skills/mc-art/references/.cache/
 *.log
 .DS_Store
 Thumbs.db
+
+# 其它会话留下的产物目录 / 个人笔记：这是"工具"仓库，不带创作数据
+/outputs/
+/villagers/
+/vanilla3d/
+/AGENT.md
