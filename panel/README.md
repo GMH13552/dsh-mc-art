@@ -46,9 +46,13 @@ panel/                        包根
 模式本身 17 KB。
 
 `panel/preset/` 是**打包时生成的**（`prepare` → `panel/vendor.mjs`），仓库里不留副本：
-所以这个仓库不携带 mc-art 的内容（它是独立仓库）。复制时排除 `.git`、`__pycache__`、`*.pyc`、
-`.cache`——早先没排除时，光是 `__pycache__` 和有 129 KB 的 `references/.cache/` 就让磁盘上的
-副本虚胖到 2.4 MB（npm 打包时本来也会排掉它们，但那不该是唯一防线）。
+所以这个仓库不携带 mc-art 的内容（它是独立仓库）。
+
+**里面没有任何美术素材**：参考贴图/模型是引擎在运行时扫 asset root、版本 jar、mods 得到的
+（那是 `mc-art` 的设计，不是打包进来的资源）。砍掉的是纯垃圾：`.git`、`__pycache__`、`*.pyc`、
+`.pytest_cache`、`.cache`（含 `references/.cache/` 那份派生缓存——它跟机器和资产相关，
+随包发还可能给出过期结果）。排除之前磁盘副本虚胖到 2.4 MB；npm 打包时本来也会排掉一部分，
+但那不该是唯一防线。
 
 两处机制，都照 DSH 出厂预设的做法：
 

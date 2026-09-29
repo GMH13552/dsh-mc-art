@@ -43,8 +43,10 @@ const STRIPPER = join(HERE, '..', 'tools', 'strip_comments.py')
 /** 生成物里不该出现的东西（相对任一路径都成立）。 */
 export function isJunk(path) {
   const parts = String(path).split(/[\\/]/)
-  if (parts.includes(".git") || parts.includes("__pycache__") || parts.includes(".cache")) return true
-  return /\.pyc$/.test(String(path))
+  const junkDirs = ['.git', '__pycache__', '.cache', '.pytest_cache', '.mypy_cache', '.ruff_cache',
+    '.venv', 'node_modules', '.DS_Store', '.ipynb_checkpoints']
+  if (parts.some((part) => junkDirs.includes(part))) return true
+  return /\.(pyc|pyo|egg-info|log|swp)$/.test(String(path))
 }
 
 export const PACKAGE_NAME = JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).name
