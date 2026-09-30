@@ -789,11 +789,58 @@ return {
         if (info !== undefined && info.type === 'file') { found = at + '/' + relative; break }
         at = parentOf(at) || ''
       }
+      // 项目目录往上找不到时，再问**包自己带的**那份和用户的 skills 目录。
+      //
+      // 为什么必须这样：这两个脚本原来只从项目目录往上找 5 层 —— 于是"项目不在 mc-art
+      // 仓库里"的机器上，参考目录整条路都是死的：设置存得下，但什么也读不出来
+      // （用户实测："那个用它根本用不了"）。而面板包里**本来就带着**一份完整引擎
+      // （preset/mc-studio/skills/mc-art/tools/…），pnpm 把它装在 profile 的
+      // node_modules 里，是真文件、Python 读得到。
+      if (found === null) {
+        for (const candidate of skillToolCandidates(relative)) {
+          const info = await statOf(candidate)
+          if (info !== undefined && info.type === 'file') { found = candidate; break }
+        }
+      }
       toolPaths.set(relative, found)
       return found
     }
 
     async function findScanner(start) { return await findTool(start, SCAN_SCRIPT) }
+
+    /** 包自带的引擎 / 用户 skills 目录里的脚本候选（顺序 = 优先次序）。 */
+    function skillToolCandidates(relative) {
+      const out = []
+      const push = (value) => {
+        if (typeof value !== 'string' || value === '') return
+        const trimmed = value.charAt(value.length - 1) === '/' ? value.slice(0, value.length - 1) : value
+        if (trimmed !== '' && out.indexOf(trimmed) < 0) out.push(trimmed)
+      }
+      const dir = moduleDirOf()
+      if (dir !== '') {
+        const pkg = parentOf(dir) || ''                       // <包>/lib → <包>
+        const above = pkg === '' ? '' : (parentOf(pkg) || '')  // <包> → profile / 仓库根
+        const base = relative.slice(relative.lastIndexOf('/') + 1)
+        // **随包的那份**：<包>/python/mcart_scan_refs.py —— 安装后的正常形态，也是唯一
+        // 保证"别人的机器上也有"的那一份。两个脚本只依赖标准库，所以随包带一份就够
+        // （原来是"项目必须恰好在仓库里"才找得到；verify-build 会挡住它和仓库里那份漂移）。
+        push(pkg + '/python/' + base)
+        push(above + '/python/' + base)
+        // 在仓库里直接跑的形态（最后兜底：本仓库根目录下的 tools/）
+        push(above + '/' + relative)
+        // 旧形态：万一有人把引擎放在 skill 目录里
+        push(pkg + '/preset/mc-studio/skills/mc-art/' + relative)
+        push(above + '/preset/mc-studio/skills/mc-art/' + relative)
+        push(above + '/skills/mc-art/' + relative)
+      }
+      const named = envOf('MC_ART_SKILL_DIR')
+      if (named !== '') push(named + '/' + relative)
+      const home = envOf('USERPROFILE') || envOf('HOME')
+      const dshHome = envOf('DSH_HOME') || (home === '' ? '' : home + '/.dsh')
+      if (dshHome !== '') push(dshHome + '/skills/mc-art/' + relative)
+      if (home !== '') push(home + '/.agents/skills/mc-art/' + relative)
+      return out
+    }
 
     // Which Python?  The extractor used to be launched as a hard-coded `python3`,
     // and that single word is what made the whole reference path (blocks, items,
@@ -806,16 +853,78 @@ return {
     // machine where Python gets installed mid-session recovers on the next call.
     const PYTHON_CANDIDATES = ['python3', 'python', 'py -3']
     let pythonLauncher = ''
-    async function resolvePython(workspaceRoot) {
-      if (pythonLauncher !== '') return pythonLauncher
-      for (const candidate of PYTHON_CANDIDATES) {
-        const probe = await runShell(candidate + ' -c "print(1)"', 20000,
-          policyFor(workspaceRoot), 4096)
-        if (probe.exitCode === 0 && String(probe.text).trim() === '1') {
-          pythonLauncher = candidate
-          return candidate
+    let pythonWhy = null
+
+    /**
+     * 捆绑运行时（桌面端自带的那份 Python）。
+     *
+     * 桌面 app 把 Python 3.12 + numpy/Pillow/… 放在 `<resources>/runtime/primary-runtime/
+     * dependencies/python/` 里，**但不进 PATH**（`desktopNodeEnvironment` 给子进程前置的
+     * 只有 node/bin）。它给模型看的那条路是一个工具（workspace-dependencies），宿主插件
+     * 拿不到 —— 所以这里按桌面端自己用的那几个位置推：环境变量、DSH_HOME 下的安装位、
+     * 以及从本模块路径推出来的 resources 目录。
+     */
+    function bundledPythonDirs() {
+      const out = []
+      const push = (value) => {
+        if (typeof value !== 'string' || value === '') return
+        const trimmed = value.charAt(value.length - 1) === '/' ? value.slice(0, value.length - 1) : value
+        if (trimmed !== '' && out.indexOf(trimmed) < 0) out.push(trimmed)
+      }
+      push(envOf('DSH_DESKTOP_PRIMARY_RUNTIME_DIR'))
+      const home = envOf('USERPROFILE') || envOf('HOME')
+      const dshHome = envOf('DSH_HOME') || (home === '' ? '' : home + '/.dsh')
+      if (dshHome !== '') {
+        push(dshHome + '/dsh-runtimes/dsh-primary-runtime')
+        push(dshHome + '/dsh-runtimes/dsh-primary-runtime/dependencies')
+      }
+      const dir = moduleDirOf()
+      if (dir !== '') {
+        // <resources>/app.asar/dsh/node_modules/<包>/lib → <resources>
+        const pkg = parentOf(dir) || ''
+        const profile = pkg === '' ? '' : (parentOf(pkg) || '')
+        const appDsh = profile === '' ? '' : (parentOf(profile) || '')
+        const resources = appDsh === '' ? '' : (parentOf(appDsh) || '')
+        if (resources !== '') {
+          push(resources + '/runtime/primary-runtime')
+          push(resources + '/runtime/primary-runtime/dependencies')
         }
       }
+      return out
+    }
+
+    /** 候选解释器：环境变量 → 系统 PATH → 桌面端自带的那份。 */
+    function pythonCandidates() {
+      const out = []
+      const push = (value) => {
+        if (typeof value !== 'string' || value === '') return
+        if (out.indexOf(value) < 0) out.push(value)
+      }
+      push(envOf('MC_ART_PYTHON'))
+      for (const name of PYTHON_CANDIDATES) push(name)
+      for (const dir of bundledPythonDirs()) {
+        push(dir + '/python/python.exe')    // Windows: dependencies/python/python.exe
+        push(dir + '/python/bin/python3')   // POSIX:    dependencies/python/bin/python3
+        push(dir + '/python/bin/python')
+      }
+      return out
+    }
+
+    async function resolvePython(workspaceRoot) {
+      if (pythonLauncher !== '') return pythonLauncher
+      const dialect = await currentShell(workspaceRoot)
+      const tried = []
+      for (const candidate of pythonCandidates()) {
+        // 绝对路径里可能有空格（Windows 的 Program Files），必须按方言转义。
+        const launcher = (candidate.indexOf('/') >= 0 ? dialect.word(candidate) : candidate)
+        const probe = await runShell(launcher + ' -c "print(1)"', 20000, policyFor(workspaceRoot), 4096)
+        if (probe.exitCode === 0 && String(probe.text).trim() === '1') {
+          pythonLauncher = launcher
+          return pythonLauncher
+        }
+        tried.push(candidate + '(exit=' + String(probe.exitCode) + ')')
+      }
+      pythonWhy = tried.join('、')
       return null
     }
 
@@ -829,9 +938,9 @@ return {
     async function runScanner(scanner, tokens, timeoutMs, workspaceRoot, maxBytes) {
       const python = await resolvePython(workspaceRoot)
       if (python === null) {
-        return { error: '找不到 Python（试过 ' + PYTHON_CANDIDATES.join(' / ') +
-          '）。抽取器是 Python 写的，先装一个 Python 3 并让它进 PATH；' +
-          'Windows 上装完通常叫 python 或 py。' }
+        return { error: '找不到 Python（试过 ' + String(pythonWhy) +
+          '）。抽取器是 Python 写的；桌面版自带的那份在 <resources>/runtime/primary-runtime/' +
+          'dependencies/python/python.exe，也可以用 MC_ART_PYTHON 指定一个。' }
       }
       const dialect = await currentShell(workspaceRoot)
       const argument = (tokens === undefined ? [] : tokens).map((token) => dialect.word(token)).join(' ')
@@ -895,6 +1004,18 @@ return {
       if (typeof process === 'undefined' || process.env === undefined) return ''
       const value = process.env[name]
       return typeof value === 'string' ? value : ''
+    }
+
+    /** 平台：`process.platform`，问不到就空串（动态插件那种环境）。 */
+    function platformOf() {
+      if (typeof process === 'undefined' || process === null) return ''
+      return typeof process.platform === 'string' ? process.platform : ''
+    }
+
+    /** 本模块所在目录（<包>/lib）——随包的那份引擎、以及捆绑运行时都从这里推。 */
+    function moduleDirOf() {
+      if (typeof moduleDir !== 'undefined' && typeof moduleDir === 'string') return moduleDir
+      return ''
     }
 
     /** 纯函数：按环境给候选（不碰盘），好单独测。 */
@@ -2036,14 +2157,58 @@ return {
       },
     }
     let shellDialect = null
+    /** 诊断用：平台与探针各说了什么（`atlas.env` 里回读）。 */
+    let shellProbeInfo = null
     async function currentShell(workspaceRoot) {
       if (shellDialect !== null) return SHELLS[shellDialect]
+      // **先看平台，再看探针**。平台是事实，探针是猜测 —— 而"探针失败就当成 POSIX"
+      // 曾经在 Windows 上造成过一句彻头彻尾错的提示：所有命令都按 bash 拼，
+      // `command -v powershell.exe` 自然找不到，于是面板说
+      // 「这个环境既没有 powershell.exe（Windows/WSL）也没有 zenity/kdialog/yad」。
+      // 用户当场就问"为啥啊" —— 因为 Windows 上 powershell.exe 怎么可能没有。
+      const platform = platformOf()
+      if (platform === 'win32') {
+        shellProbeInfo = { platform: platform, dialect: 'pwsh', why: '按平台定的（没跑探针）' }
+        shellDialect = 'pwsh'
+        return SHELLS.pwsh
+      }
+      if (platform === 'linux' || platform === 'darwin' || platform === 'freebsd' || platform === 'openbsd' || platform === 'sunos' || platform === 'aix') {
+        shellProbeInfo = { platform: platform, dialect: 'posix', why: '按平台定的（没跑探针）' }
+        shellDialect = 'posix'
+        return SHELLS.posix
+      }
+      // 平台问不到（只在动态插件那种没有 `process` 的环境里）才让探针说话。
       const probe = await runShell('echo "mcart-shell:$($PSVersionTable.PSVersion.Major)"', 20000,
         policyFor(workspaceRoot), 4096)
+      shellProbeInfo = { platform: platform, exitCode: probe.exitCode,
+        text: String(probe.text).slice(0, 80), err: String(probe.err).slice(0, 80) }
       // 探不通就不下结论、也不缓存：服务没起来的时候不该把这个会话钉在错的方言上。
       if (probe.exitCode !== 0) return SHELLS.posix
       shellDialect = /^mcart-shell:\d+/.test(String(probe.text).trim()) ? 'pwsh' : 'posix'
       return SHELLS[shellDialect]
+    }
+
+    /**
+     * 这台机器上的 Windows PowerShell 在哪。
+     *
+     * 以前只用 `command -v powershell.exe`（`Get-Command`）问 shell —— 那等于把
+     * "能不能弹目录对话框"押在"宿主进程的 PATH 恰好和用户终端一样"上。现在先看
+     * **绝对路径**（SystemRoot 下那个是 Windows 自带的固定位置），再看 PATH，最后 `pwsh`。
+     */
+    async function windowsPowerShell() {
+      const root = (envOf('SystemRoot') || 'C:/Windows').split(BACKSLASH).join('/')
+      const absolute = [
+        root + '/System32/WindowsPowerShell/v1.0/powershell.exe',
+        'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe',
+      ]
+      for (const candidate of absolute) {
+        const info = await statOf(candidate)
+        if (info !== undefined && info.type === 'file') return candidate
+      }
+      for (const name of ['powershell.exe', 'pwsh']) {
+        if (shellOf() !== undefined && await available(name)) return name
+      }
+      return null
     }
 
     /**
@@ -2278,7 +2443,8 @@ return {
       const start = typeof request.start === 'string' ? request.start : ''
       if (shellOf() === undefined) return { supported: false, detail: '宿主没有 shell 服务，' }
       try {
-        if (await available('powershell.exe')) {
+        const powerShell = await windowsPowerShell()
+        if (powerShell !== null) {
           const winStart = await convertPath('-w', start)
           const lines = [
             '$ProgressPreference = "SilentlyContinue"',
@@ -2289,13 +2455,15 @@ return {
           ]
           if (winStart !== null) lines.push("$d.SelectedPath = '" + winStart.split("'").join("''") + "'")
           lines.push('if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write("' + PICK_BEGIN + '" + $d.SelectedPath + "' + PICK_END + '") }')
-          const output = await runDialog('powershell.exe -NoProfile -STA -EncodedCommand ' + utf16leBase64(lines.join('\n')), policyFor(start))
+          const quoting = await currentShell(start)
+          const output = await runDialog(quoting.word(powerShell) + ' -NoProfile -STA -EncodedCommand ' +
+            utf16leBase64(lines.join('\n')), policyFor(start))
           const picked = betweenMarkers(output)
-          if (picked === '') return { supported: true, cancelled: true, via: 'windows' }
+          if (picked === '') return { supported: true, cancelled: true, via: 'windows', exe: powerShell }
           const converted = await convertPath('-u', picked)
           const usable = converted !== null ? converted : picked
           const info = await statOf(usable)
-          if (info !== undefined && info.type === 'directory') return { path: usable, raw: picked, via: 'windows' }
+          if (info !== undefined && info.type === 'directory') return { path: usable, raw: picked, via: 'windows', exe: powerShell }
           return { supported: true, error: '你选的是 ' + picked + '，但宿主打不开它（转换后：' + usable + '）。' }
         }
         const linuxPickers = [
@@ -2311,7 +2479,12 @@ return {
           if (info !== undefined && info.type === 'directory') return { path: picked, raw: picked, via: picker.tool }
           return { supported: true, error: '选择器返回了 ' + picked + '，但打不开这个目录。' }
         }
-        return { supported: false, detail: '这个环境既没有 powershell.exe（Windows/WSL）也没有 zenity/kdialog/yad（Linux 桌面），' }
+        // 措辞要**如实**：说的是"这台宿主里没找到可用的对话框"，并且把平台与试过的东西
+        // 都写出来 —— 上一版在这里断言"没有 powershell.exe"，而 Windows 上那句话
+        // 基本一定是错的（真实原因是方言探针失败，命令按 bash 拼的）。
+        return { supported: false, platform: platformOf() || null, shellDialect: shellDialect,
+          detail: '这个宿主里没找到能用的目录对话框（平台 ' + (platformOf() || '问不到') +
+            '；试过 powershell.exe 的绝对路径与 PATH、以及 zenity/yad/kdialog）。' }
       } catch (error) {
         return { error: '目录选择器出错：' + String(error && error.message ? error.message : error) }
       }
@@ -2730,7 +2903,9 @@ return {
     // 服务真的不在，而实际上那句话谁也没查过。现在失败信息自己带原因（见 ensureDir），
     // 这个方法把同一件事变成**可读的一行**：哪些服务在、哪条退路可用、方言是什么。
     // 别人机器上再出问题，让他们点一下这个，比猜十轮快。
-    ctx.effect(() => harness.handle('atlas.env', async () => {
+    ctx.effect(() => harness.handle('atlas.env', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' && request.root !== '' ? request.root : '.'
       const picker = ctx.get('directoryPickerController')
       const services = {
         fs: fsOf() !== undefined,
@@ -2739,16 +2914,30 @@ return {
         webServer: ctx.get('webServer') !== undefined,
         directoryPickerController: picker !== undefined && typeof picker.createDirectory === 'function',
         localFs: localOf() !== null,
+        subprocess: ctx.get('subprocess') !== undefined,
       }
       let dialect = null
       if (services.shell) {
         try { dialect = (await currentShell('')).name } catch (error) { dialect = 'probe failed: ' + messageOf(error) }
       }
       const missing = Object.keys(services).filter((key) => services[key] !== true)
+      // 参考目录这条路依赖的三样东西分别在哪儿 —— 它们每一个都曾经"看着有、其实没有"，
+      // 而失败信息里说不清。这里一次答完：脚本路径、Python 解释器、捆绑运行时目录、
+      // 以及 shell 方言是**按平台定的**还是探针说的。
+      const scanner = await findScanner(root)
+      const extractor = await findTool(root, EXTRACT_SCRIPT)
+      let python = null
+      try { python = await resolvePython(root) } catch (error) { python = 'probe failed: ' + messageOf(error) }
       return { services: services, shellDialect: dialect,
-        platform: typeof process === 'undefined' ? null : process.platform,
+        platform: platformOf() || null,
         node: typeof process === 'undefined' ? null : process.version,
         missing: missing,
+        scanner: scanner, extractor: extractor, python: python,
+        pythonCandidates: pythonCandidates().slice(0, 8),
+        bundledPythonDirs: bundledPythonDirs(),
+        shellProbe: shellProbeInfo,
+        powershell: platformOf() === 'win32' ? await windowsPowerShell() : null,
+        moduleDir: moduleDirOf() || null,
         note: missing.length === 0 ? '每一条路都在。'
           : '缺 ' + missing.join('、') + '；每一件写入都会自动走能用的那条路（建目录/写文件/写字节各有退路），结果里会写 via=…' }
     }))

@@ -121,7 +121,17 @@ function buildHost(record) {
       record.commands.push(command)
       if (command.indexOf('mcart-shell') >= 0) {
         // --fault：谎报 POSIX（真实 shell 仍是 PowerShell）——测"方言猜错了门禁红不红"。
+        // record.probeFails：模拟探针跑不通（桌面端那次就是这样）。
+        if (record.probeFails === true) {
+          return { exitCode: 1, stdout: { text: '' }, stderr: { text: 'probe failed' } }
+        }
         return { exitCode: 0, stdout: { text: FAULT ? 'mcart-shell:\n' : 'mcart-shell:5\n' }, stderr: { text: '' } }
+      }
+      if (command.indexOf('EncodedCommand') >= 0) {
+        // 目录对话框：回一串带标记的"用户选了 X"。
+        record.dialogs = (record.dialogs || 0) + 1
+        return { exitCode: 0, stdout: { text: (record.pick === undefined ? '' :
+          'MCART_PICK_BEGIN' + record.pick + 'MCART_PICK_END') }, stderr: { text: '' } }
       }
       if (command.indexOf('print(1)') >= 0) {
         return { exitCode: 0, stdout: { text: '1\n' }, stderr: { text: '' } }
@@ -139,14 +149,20 @@ function buildHost(record) {
   }
   globalThis.harness = { handle: (name, fn) => { handlers[name] = fn } }
   const body = nodeFs.readFileSync(process.env.MCART_HOST || HOST, 'utf8')
-  new Function(body)().apply(ctx)
+  // **平台由用例决定**：方言现在是按 `process.platform` 定的，探针只在平台问不到时
+  // 才说话（老行为"探针失败就当 POSIX"正是用户那句错提示的根因）。
+  // record.platform === undefined → 用真平台；'' → 模拟"平台问不到"。
+  const fake = record.platform === undefined ? process
+    : { platform: record.platform, env: record.env || {}, version: 'v20.0.0' }
+  new Function('harness', 'console', 'TextEncoder', 'btoa', 'atob', 'nodeFs', 'moduleDir', 'process', body)(
+    globalThis.harness, console, TextEncoder, btoa, atob, undefined, undefined, fake).apply(ctx)
   return handlers
 }
 
 ;(async () => {
   console.log('--- A. 装成 Windows PowerShell，检查宿主发出的命令')
-  const record = { commands: [], fsWrites: [], executed: [] }
-  const shellLiveLater = { commands: [], fsWrites: [], executed: [], shellFromStart: false }
+  const record = { commands: [], fsWrites: [], executed: [], platform: '' }
+  const shellLiveLater = { commands: [], fsWrites: [], executed: [], shellFromStart: false, platform: '' }
   buildFixture()
   const handlers = buildHost(record)
   const saved = await handlers['atlas.saveTexture']({
@@ -199,7 +215,7 @@ function buildHost(record) {
 
   // ── D. 只有 execute() 的 shell（0.2.0-rc 桌面端那代）────────────────────────
   console.log('--- D. 只有 execute() 的服务（桌面端那代，实测报过 run is not a function）')
-  const execOnly = { commands: [], fsWrites: [], executed: [], shellApi: 'execute' }
+  const execOnly = { commands: [], fsWrites: [], executed: [], shellApi: 'execute', platform: '' }
   buildFixture()
   const execHandlers = buildHost(execOnly)
   const execSaved = await execHandlers['atlas.saveTexture']({
@@ -208,6 +224,47 @@ function buildHost(record) {
   check('只有 execute() 时也能写贴图（兼容 run/execute 两代）',
     execSaved && execSaved.saved === true, JSON.stringify(execSaved))
   check('确实没有走 run()（证明这条对照测的是新形状）', typeof execOnly.commands.length === 'number')
+
+  // ── E. 平台是 win32、但探针跑不通（用户那句错提示的根因）──────────────────────
+  //
+  // 用户实测：Windows 上点"选择目录…"，面板回「这个环境既没有 powershell.exe（Windows/WSL）
+  // 也没有 zenity/kdialog/yad（Linux 桌面）」——Windows 上这句话基本一定是错的。
+  // 真因：方言探针没跑通 → 被当成 POSIX → `command -v powershell.exe` 当然找不到。
+  console.log('--- E. 平台是 win32 但探针跑不通：方言不许被猜成 POSIX')
+  // 假的 SystemRoot：里面就有 Windows 自带的那个绝对路径。
+  const sysRoot = WORK_WIN + '/sysroot'
+  nodeFs.mkdirSync(TO_POSIX(sysRoot + '/System32/WindowsPowerShell/v1.0'), { recursive: true })
+  nodeFs.writeFileSync(TO_POSIX(sysRoot + '/System32/WindowsPowerShell/v1.0/powershell.exe'), 'stub')
+  // 桌面端那代只有 execute()（没有 start），这里就按那个形状建桩。
+  const pickedDir = WORK_WIN + '/pickeddir'
+  nodeFs.mkdirSync(TO_POSIX(pickedDir), { recursive: true })
+  const winRecord = { commands: [], fsWrites: [], executed: [], platform: 'win32', probeFails: true,
+    shellApi: 'execute', env: { SystemRoot: sysRoot, USERPROFILE: 'C:/Users/probe' }, pick: pickedDir }
+  const winHandlers = buildHost(winRecord)
+  const picked = await winHandlers['atlas.pickDirectory']({ start: '' })
+  check('平台是 win32 时按 PowerShell 拼命令（不去问 command -v）',
+    winRecord.commands.every((c) => !/\bcommand -v\b/.test(c)), JSON.stringify(winRecord.commands.slice(0, 3)))
+  check('powershell.exe 靠**绝对路径**找到了，并真的弹了对话框',
+    winRecord.dialogs === 1, 'dialogs=' + String(winRecord.dialogs))
+  check('对话框回来的路径可用（不再是一句"没有选择器"）',
+    picked && picked.path === pickedDir, JSON.stringify(picked))
+
+  // 对照：平台问不到（探针也失败）时，绝对路径那条路**仍然**能兜住 —— 这不是巧合，
+  // 是有意的：`powershell.exe` 的固定位置是 Windows 自带的，不该依赖平台变量或 PATH。
+  const blindRecord = { commands: [], fsWrites: [], executed: [], platform: '', probeFails: true,
+    shellApi: 'execute', env: { SystemRoot: WORK_WIN + '/emptysysroot', USERPROFILE: 'C:/Users/probe' },
+    pick: pickedDir }
+  nodeFs.mkdirSync(TO_POSIX(WORK_WIN + '/emptysysroot'), { recursive: true })
+  const blind = await buildHost(blindRecord)['atlas.pickDirectory']({ start: '' })
+  check('对照：平台问不到时也能靠绝对路径兜住（不依赖 platform 或 PATH）',
+    blind && (blind.path === pickedDir || blind.cancelled === true), JSON.stringify(blind))
+
+  // 那句错的提示必须从**发出去的产物**里消失 —— 它就是用户"为啥啊"的由来。
+  // （看生成物而不是注释源码：源码注释里那句话是解释历史的，保留着没问题。）
+  const emitted = nodePath.join(__dirname, '..', '..', 'panel', 'lib', 'index.js')
+  check('发出去的宿主里不再有那句错的断言（"既没有 powershell.exe"）',
+    nodeFs.existsSync(emitted) && nodeFs.readFileSync(emitted, 'utf8').indexOf('既没有 powershell.exe') < 0,
+    nodeFs.existsSync(emitted) ? '产物里还有' : '还没 build（先跑 node panel/build.mjs）')
 
   nodeFs.rmSync(WORK, { recursive: true, force: true })
   console.log(failures === 0 ? '全部通过' : failures + ' 项失败')

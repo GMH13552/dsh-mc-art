@@ -300,7 +300,8 @@ check('生成物里有本地文件系统垫片', shimBody.length > 200, shimBody
 check('生成物把 node:fs 和 node:path 绑进来了（垫片靠它们）',
   generated.includes("from 'node:fs/promises'") && generated.includes("from 'node:path'"))
 check('生成物把垫片当参数交给宿主源码（不是全局共享）',
-  generated.includes("'nodeFs', SOURCE") || generated.includes("'atob', 'nodeFs', SOURCE"))
+  /new Function\([^)]*'nodeFs'[^)]*SOURCE\)/.test(generated),
+  (generated.match(/const plugin = new Function\([^)]*\)/) || ['(没找到)'])[0].slice(0, 160))
 check('垫片两份都声明了 available: true（宿主源码靠它判断"这条退路在不在"）',
   /available:\s*true/.test(shimBody) && /available:\s*true/.test(shimMethods))
 for (const method of ['mkdirp', 'stat', 'listDir', 'readText', 'readBytes', 'writeText', 'writeBase64', 'remove', 'move']) {

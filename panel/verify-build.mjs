@@ -13,7 +13,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { build, hostModule, clientBundle, isJunk, isSkipped } from './build.mjs'
+import { ENGINE_SCRIPTS, build, hostModule, clientBundle, isJunk, isSkipped } from './build.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const FAULT = process.argv.includes('--fault')
@@ -96,6 +96,17 @@ if (existsSync(join(artSource, 'SKILL.md'))) {
 } else {
   console.log(`  SKIP mc-art 没在本机找到克隆（${artSource}）——这一份没进包，也没得比`)
 }
+// 随包的 Python 引擎脚本：包里的那份必须和仓库里的**逐字节相同**
+// （它们读 jar、决定参考目录能读到什么；一份漂了的副本会让"别人机器上读不出来"重现）。
+for (const name of ENGINE_SCRIPTS) {
+  const from = join(HERE, '..', 'tools', name)
+  const to = join(HERE, 'python', name)
+  if (!existsSync(to)) { fail(`  FAIL 引擎脚本没进包：${to}`); continue }
+  const same = readFileSync(from, 'utf8') === readFileSync(to, 'utf8')
+  if (same) console.log(`  OK   引擎脚本 ${name}：包里那份与仓库逐字节相同`)
+  else fail(`  FAIL 引擎脚本 ${name} 与仓库里的不一样（先跑 node panel/build.mjs）`)
+}
+
 for (const [label, from, to, skipActual] of pairs) {
   const problem = treeDiff(from, to, label, skipActual)
   if (problem === null) console.log(`  OK   ${label}：包里那份与来源逐字节相同（${snapshot(to).size} 个文件）`)

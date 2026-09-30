@@ -20,7 +20,7 @@
  * 于是"同一份代码两种送达"不需要维护两份实现（这是这个仓库最在意的事）。
  * `lib/` 是生成物且要随包发布，所以另有 verify-build.mjs 逐字节比对，防止漂移。
  */
-import { cpSync, existsSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -77,9 +77,21 @@ export function hostModule(hostSource) {
 // 改行为请改那份源码，然后 \`node panel/build.mjs\`（verify-build.mjs 会挡住漂移）。
 import { mkdir as nodeMkdir, readdir as nodeReaddir, readFile as nodeReadFile, rename as nodeRename, rm as nodeRm, stat as nodeStat, writeFile as nodeWriteFile } from 'node:fs/promises'
 import { dirname as nodeDirname } from 'node:path'
+import { fileURLToPath as nodeFileURLToPath } from 'node:url'
 
 const SOURCE = ${JSON.stringify(hostSource)}
 const VERSION = ${JSON.stringify(JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).version)}
+// 本模块所在目录（<包>/lib）。宿主源码用它推出**随包的那份引擎**在哪里 ——
+// 参考目录要靠 Python 脚本读 jar，而"项目不在 mc-art 仓库里"的机器上，
+// 只从项目目录往上找是找不到的（实测：设置存得下、什么也读不出来）。
+//
+// 用 try 包住是有原因的：门禁会把这份模块当 data: URL 加载（注入"垫片没了"那种故障），
+// 那时 import.meta.url 不是 file:，而 fileURLToPath 会直接抛 —— 拿不到路径就不拿，
+// 宿主源码里 moduleDirOf() 本来就允许空串。
+function moduleDirOfSelf() {
+  try { return nodeDirname(nodeFileURLToPath(import.meta.url)) } catch (error) { return '' }
+}
+const MODULE_DIR = moduleDirOfSelf()
 
 // 本地文件系统垫片：**服务都缺席时的最后一条路**。
 //
@@ -164,8 +176,8 @@ export function apply(ctx) {
       return () => { delete handlers[method] }
     },
   }
-  const plugin = new Function('harness', 'console', 'TextEncoder', 'btoa', 'atob', 'nodeFs', SOURCE)(
-    harness, console, TextEncoder, btoa, atob, nodeFs)
+  const plugin = new Function('harness', 'console', 'TextEncoder', 'btoa', 'atob', 'nodeFs', 'moduleDir', 'process', SOURCE)(
+    harness, console, TextEncoder, btoa, atob, nodeFs, MODULE_DIR, process)
   if (plugin === null || typeof plugin !== 'object' || typeof plugin.apply !== 'function') {
     throw new Error('mcart 宿主源码没有返回一个带 apply 的插件')
   }
@@ -324,8 +336,28 @@ export function vendored() {
     // npm 打包时本来也会排掉其中一些，但那不该是"能不能出垃圾"的唯一防线。
     cpSync(from, to, { recursive: true, filter: (src) => !isJunk(src) && !isSkipped(src) })
   }
-  return pairs
+  // **引擎脚本随包走**：参考目录（原版/模组的方块、物品、图标）要靠这两个 Python 脚本
+  // 读 jar，而它们原来只从**项目目录往上找 5 层** —— 也就是"项目恰好在 dsh-mc-art 仓库里"
+  // 才碰得上。别的机器上设置存得下、却什么都读不出来（用户实测："那个用它根本用不了"）。
+  // 两个脚本只依赖标准库，所以直接放进包里，任何 Python 3 都能跑（包括桌面版自带的那份）。
+  const pythonTargets = []
+  const pythonDir = join(HERE, 'python')
+  rmSync(pythonDir, { recursive: true, force: true })
+  mkdirSync(pythonDir, { recursive: true })
+  for (const name of ENGINE_SCRIPTS) {
+    const from = join(HERE, '..', 'tools', name)
+    const to = join(pythonDir, name)
+    if (!existsSync(from)) {
+      throw new Error('缺少引擎脚本 ' + from + '（它必须随包发出去，否则参考目录功能在别人的机器上是死的）')
+    }
+    copyFileSync(from, to)
+    pythonTargets.push([from, to])
+  }
+  return pairs.concat(pythonTargets)
 }
+
+/** 随包发布的 Python 引擎脚本（只依赖标准库）。 */
+export const ENGINE_SCRIPTS = ['mcart_scan_refs.py', 'mcart_extract_block.py']
 
 export function build() {
   const host = strip(join(SOURCES, 'host.js'))

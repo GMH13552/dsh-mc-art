@@ -75,6 +75,9 @@ function jsonProblem(value, path, depth) {
 // 不会有一层垫片替它兜住、把红变成绿。
 function buildHandlers(options) {
   const opts = options || {}
+  // 随包的那份引擎在哪：真包是从 <包>/lib 推的；门禁里指到仓库的 panel/lib
+  // （那里有 vendor 出来的 preset/mc-studio/skills/mc-art/tools/*.py，是真文件）。
+  const moduleDir = opts.moduleDir === undefined ? require('path').join(__dirname, '..', '..', 'panel', 'lib') : opts.moduleDir
   const handlers = {}
   const services = { fs: opts.fs, shell: opts.shell, directoryPickerController: opts.picker }
   const ctx = {
@@ -91,8 +94,9 @@ function buildHandlers(options) {
       }
     },
   }
-  const plugin = new Function('harness', 'console', 'TextEncoder', 'btoa', 'atob', 'nodeFs', body)(
-    globalThis.harness, console, TextEncoder, btoa, atob, opts.nodeFs === undefined ? undefined : opts.nodeFs)
+  const plugin = new Function('harness', 'console', 'TextEncoder', 'btoa', 'atob', 'nodeFs', 'moduleDir', 'process', body)(
+    globalThis.harness, console, TextEncoder, btoa, atob, opts.nodeFs === undefined ? undefined : opts.nodeFs,
+    moduleDir, opts.process === undefined ? process : opts.process)
   plugin.apply(ctx)
   return handlers
 }

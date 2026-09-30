@@ -1,0 +1,168 @@
+#!/usr/bin/env node
+/**
+ * 「参考目录」到底能不能用——端到端那一条链。
+ *
+ * 用户实测的一句话是判据：「那个用它根本用不了」。查下来是链子断在第一环：
+ *
+ *   * 读原版/模组 jar 的两个脚本（`mcart_scan_refs.py` / `mcart_extract_block.py`）
+ *     原来**只从项目目录往上找 5 层** —— 也就是"你的项目恰好在 dsh-mc-art 仓库里"
+ *     才碰得上。别人的机器上：设置存得下、`用它`点得动，然后什么都读不出来；
+ *   * Python 也一样：桌面 app 自带 3.12，但**不进 PATH**，`python3`/`python`/`py -3`
+ *     在那个进程里全都不存在。
+ *
+ * 所以这条门禁造一个**完全孤立**的工程目录（/tmp 下，往上没有任何 tools/），造一个
+ * 假的 `.minecraft`（一个带`assets/<ns>/textures|lang`的 jar），然后要求整条链跑通：
+ * 脚本从**包里**找到 → Python 从"系统 or 捆绑运行时"找到 → 真的读出 jar → JSON 解析。
+ *
+ *   node tools/mcart-plugin/engine-test.js
+ *   node tools/mcart-plugin/engine-test.js --fault   # 掐掉"包自带"那条候选：必须变红
+ */
+const nodeFs = require('fs')
+const nodePath = require('path')
+const nodeOs = require('os')
+const { execFileSync } = require('child_process')
+
+const REPO = nodePath.resolve(__dirname, '..', '..')
+const PANEL = nodePath.join(REPO, 'panel')
+const FAULT = process.argv.includes('--fault')
+
+let failures = 0
+function check(label, ok, detail) {
+  if (!ok) failures += 1
+  console.log('  ' + (ok ? 'OK  ' : 'FAIL') + ' ' + label + (ok || detail === undefined ? '' : '  -> ' + detail))
+}
+
+/** 一个最小的假 jar：assets/<ns>/textures/block/x.png + lang/en_us.json。 */
+function makeJar(path, namespace) {
+  const stage = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'mcart-jar-'))
+  const put = (relative, bytes) => {
+    const target = nodePath.join(stage, relative)
+    nodeFs.mkdirSync(nodePath.dirname(target), { recursive: true })
+    nodeFs.writeFileSync(target, bytes)
+  }
+  put('assets/' + namespace + '/textures/block/x.png', Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  put('assets/' + namespace + '/lang/en_us.json', Buffer.from('{"block.' + namespace + '.x":"X"}\n'))
+  put('assets/' + namespace + '/models/block/x.json', Buffer.from('{"parent":"block/cube_all"}\n'))
+  // blockstates 是**必需**的：抽取器按它数方块，而面板只认 blocks>0 的命名空间。
+  // 少这一样，一个"看着没问题"的 jar 会让整条链回空 —— 第一版夹具就是这么骗过我一次。
+  put('assets/' + namespace + '/blockstates/x.json', Buffer.from('{"variants":{"":{"model":"' + namespace + ':block/x"}}}\n'))
+  nodeFs.mkdirSync(nodePath.dirname(path), { recursive: true })
+  // 用 python 的 zipfile 打（这里一定有 python —— 没有它这条门禁本身就跑不了）
+  execFileSync(pythonForTest(), ['-c', [
+    'import os,sys,zipfile',
+    'stage,out=sys.argv[1],sys.argv[2]',
+    'z=zipfile.ZipFile(out,"w")',
+    '[z.write(os.path.join(root,f), os.path.relpath(os.path.join(root,f),stage)) for root,_,files in os.walk(stage) for f in files]',
+    'z.close()',
+  ].join(';'), stage, path])
+  nodeFs.rmSync(stage, { recursive: true, force: true })
+}
+
+/** 门禁自己用的 Python：系统 PATH 里的第一个能跑的。 */
+function pythonForTest() {
+  for (const candidate of ['python3', 'python']) {
+    try {
+      const out = execFileSync(candidate, ['-c', 'print(1)'], { encoding: 'utf8' }).trim()
+      if (out === '1') return candidate
+    } catch (error) { /* 试下一个 */ }
+  }
+  console.log('  FAIL 这台机器上没有可用的 Python 3 —— 参考目录这条路本来就跑不了，门禁不会假装通过')
+  process.exit(1)
+}
+
+async function main() {
+  pythonForTest()
+  const WORK = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'mcart-engine-'))
+  const project = nodePath.join(WORK, 'proj')
+  nodeFs.mkdirSync(nodePath.join(project, 'pack', 'assets', 'proj', 'textures', 'block'), { recursive: true })
+  nodeFs.writeFileSync(nodePath.join(project, 'mc-art.atlas.json'),
+    JSON.stringify({ schema: 'mc-art.atlas/1', namespace: 'proj', biomes: [], structures: [], entities: [], blocks: [] }))
+  const ref = nodePath.join(WORK, 'ref')
+  makeJar(nodePath.join(ref, 'versions', '1.18.2', 'mods', 'probe.jar'), 'probemod')
+
+  // 关键：工程在 /tmp 下，往上**没有** tools/ —— 正是用户那种布局。
+  const mod = require('./run.js')
+  // 这条链要**执行** Python，所以门禁得给它一个能跑的 shell（0.1.x/0.2.0-rc 两代都行的那套）。
+  const shell = require('./run.js').shellService
+  const source = require('fs').readFileSync(process.env.MCART_HOST || nodePath.join(__dirname, 'host.js'), 'utf8')
+  const patched = source.replace("        push(pkg + '/python/' + base)",
+    "        /* --fault: 掐掉包自带的那条候选 */")
+  if (patched === source) {
+    console.log("  FAIL 故障注入没生效：找不到 pkg + '/python/' 那条候选（门禁要跟着改）")
+    process.exit(1)
+  }
+  if (FAULT) {
+    const path = nodePath.join(WORK, 'fault-host.js')
+    nodeFs.writeFileSync(path, patched)
+    process.env.MCART_HOST = path
+  }
+  // 故障模式下要重新 require（run.js 在模块加载时读宿主源码）
+  delete require.cache[require.resolve('./run.js')]
+  const fresh = require('./run.js')
+  const handlers = (FAULT ? fresh : mod).buildHandlers({
+    nodeFs: (FAULT ? fresh : mod).localFsShim,
+    shell: shell,
+    // 仓库里跑：moduleDir 指到 panel/lib（真包是 <包>/lib）。故障模式下这里指到别处，
+    // 好让"包自带"以外也不残留候选。
+    moduleDir: FAULT ? nodePath.join(WORK, 'nosuch', 'lib') : nodePath.join(PANEL, 'lib'),
+  })
+
+  const env = await handlers['atlas.env']({ root: project })
+  if (process.env.MCART_SHOW_ENGINE === '1') {
+    console.log('  [debug] scanner=' + env.scanner)
+    console.log('  [debug] extractor=' + env.extractor)
+    console.log('  [debug] python=' + env.python)
+    console.log('  [debug] pythonCandidates=' + JSON.stringify(env.pythonCandidates))
+    console.log('  [debug] moduleDir=' + env.moduleDir)
+  }
+
+  if (FAULT) {
+    // 前提证明：没有"包自带"那条候选，孤立工程就找不到脚本 —— 这就是用户遇到的状态。
+    check('掐掉包自带的候选之后，孤立工程找不到扫描脚本（前提成立）',
+      env.scanner === null || env.scanner === undefined || String(env.scanner).indexOf('panel') >= 0 === false,
+      String(env.scanner))
+    nodeFs.rmSync(WORK, { recursive: true, force: true })
+    console.log(failures === 0 ? '全部通过（前提成立：包必须自带引擎）' : failures + ' 项失败')
+    process.exit(failures === 0 ? 0 : 1)
+  }
+
+  // 包里那份和仓库里那份必须逐字节相同 —— 否则"开发时改的"和"用户跑的"就是两个东西。
+  for (const name of ['mcart_scan_refs.py', 'mcart_extract_block.py']) {
+    const a = nodeFs.readFileSync(nodePath.join(REPO, 'tools', name), 'utf8')
+    const b = nodeFs.readFileSync(nodePath.join(PANEL, 'python', name), 'utf8')
+    check('包里那份引擎脚本和仓库里的逐字节相同（' + name + '）', a === b,
+      a === b ? '' : '先跑 node panel/build.mjs')
+  }
+  check('扫描脚本找到了，而且用的是**包里**那一份',
+    typeof env.scanner === 'string' && env.scanner.indexOf(nodePath.join('panel', 'python')) >= 0,
+    String(env.scanner))
+  check('抽取脚本也找到了（包里那份）',
+    typeof env.extractor === 'string' && env.extractor.indexOf(nodePath.join('panel', 'python')) >= 0,
+    String(env.extractor))
+  check('Python 解释器解析出来了', typeof env.python === 'string' && env.python !== '', String(env.python))
+  check('shell 方言是按平台定的（不再靠一次可能失败的探针）',
+    env.shellProbe !== null && env.shellProbe !== undefined && typeof env.shellProbe.why === 'string',
+    JSON.stringify(env.shellProbe))
+
+  // 真跑一遍：把参考目录指到假 .minecraft，要求读出那个命名空间。
+  const saved = await handlers['atlas.saveSettings']({
+    root: WORK, project: 'proj', directory: ref, includeGenerated: true, includeMods: true, mods: {},
+  })
+  check('参考目录存进设置', saved && saved.saved === true, JSON.stringify(saved))
+  const namespaces = await handlers['atlas.refNamespaces']({ root: WORK, project: 'proj' })
+  check('真的从 jar 里读出了命名空间（整条链跑通）',
+    namespaces && Array.isArray(namespaces.namespaces) &&
+    namespaces.namespaces.some((item) => item.name === 'probemod' && item.blocks > 0),
+    JSON.stringify(namespaces).slice(0, 300))
+
+  const blocks = await handlers['atlas.refBlocks']({ root: WORK, project: 'proj', namespace: 'probemod' })
+  check('块列表也读得出来（抽取器那条链）',
+    blocks && Array.isArray(blocks.blocks) && blocks.blocks.length > 0,
+    JSON.stringify(blocks).slice(0, 240))
+
+  nodeFs.rmSync(WORK, { recursive: true, force: true })
+  console.log(failures === 0 ? '全部通过' : failures + ' 项失败')
+  process.exit(failures === 0 ? 0 : 1)
+}
+
+main().catch((error) => { console.error('THREW', error); process.exit(1) })
