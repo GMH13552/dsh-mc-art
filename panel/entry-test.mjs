@@ -128,6 +128,27 @@ const envReply = bodyOf(await callRoute({ name: 'atlas.env', args: {} }))
 check('atlas.env 如实报告服务全缺、但垫片在',
   envReply && envReply.services && envReply.services.fs === false && envReply.services.shell === false &&
   envReply.services.localFs === true, JSON.stringify(envReply && envReply.services))
+
+// 注释剥离器那次事故的回归门禁。
+//
+// `tools/strip_comments.py` 老的块注释规则（任意位置的 `/* … */`）被源码里一句
+// 行注释的 glob 骗了，吞掉宿主 313 行、十个声明（SCAN_SCRIPT、findTool、findScanner、
+// resolvePython、itemRoots…）——整条参考/提取通道。生成物**照样能解析**，
+// `verify-build` 照样绿（它比对的是"再剥一次"的结果），直到用户点 ⚙ 设置，
+// 页面回一句 `findScanner is not defined`。
+//
+// `tools/strip_gate.py` 从声明层面拦（比对注释源与生成物里声明的名字），
+// 这里再从**行为**层面拦一遍：对发出去的那份真跑一遍会用到那些声明的处理器。
+for (const name of ['atlas.settings', 'atlas.refNamespaces', 'atlas.refBlocks', 'atlas.refItems']) {
+  const reply = bodyOf(await callRoute({ name, args: { root: sandbox, project: 'entryproj',
+    namespace: 'minecraft', source: 'reference' } }))
+  const text = JSON.stringify(reply)
+  check('生成物里 ' + name + ' 不缺声明（不该 is not defined / not a function）',
+    !/is not defined|is not a function/.test(text), text.slice(0, 160))
+}
+const settings = bodyOf(await callRoute({ name: 'atlas.settings', args: { root: sandbox, project: 'entryproj' } }))
+check('⚙ 设置这条读得通（模板与扫描器字段都在）',
+  settings && settings.path !== undefined && settings.error === undefined, JSON.stringify(settings).slice(0, 140))
 rmSync(sandbox, { recursive: true, force: true })
 
 // ── 客户端入口 ──────────────────────────────────────────────────────────────

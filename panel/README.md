@@ -167,11 +167,42 @@ directoryPickerController, localFs}` 的在场情况、shell 方言、platform �
 门禁必须变红。`node panel/entry-test.mjs` 另外用**发布出去的那份 `lib/index.js`**、
 在"一个服务都没有"的 ctx 上真建一个工程，证明垫片随着包发得出去。
 
+## 注释剥离器吞过 313 行代码（0.1.13 之前每个版本都中）
+
+`lib/` 里的源码是 `tools/strip_comments.py` 剥掉注释后的结果。老规则是"任意位置的
+`/* … */`"，而宿主源码里有一句**行注释**提到了 glob：
+
+```js
+// Forge keeps every mod in versions/<version>/mods/*.jar.  So "scan the
+```
+
+那个 `/*` 被当成块注释开头，一路吃到 313 行之后的 `*/`。发出去的宿主因此**少了十个声明**：
+`SCAN_SCRIPT`、`EXTRACT_SCRIPT`、`REFERENCE_MAX_BYTES`、`toolPaths`、`findTool`、
+`findScanner`、`PYTHON_CANDIDATES`、`resolvePython`、`itemRoots`、`roots` —— 整条参考/提取通道。
+生成物照样解析、`verify-build` 照样绿（它比对的是"再剥一次"的结果，自证不了），
+直到用户点开 ⚙ 设置，页面回一句 `findScanner is not defined`。
+实测：`0.1.2` 到 `0.1.12` 每一份发布物都缺这两个定义。
+
+现在三件事一起：
+
+* 规则改成**行首才算**（`^[ \t]*/\*`）：行内 `/*` 一律不碰——宁可少剥一层，不能吞代码；
+* 触发它的两处注释改写了措辞（含 glob 的那句、`models/item/*` 那句）；
+* 新增 `tools/strip_gate.py`：比对注释源与生成物里**声明的名字**，少一个就红；
+  `--fault` 用同一份夹具做 A/B（新规则一个都不吞、老规则必吞），证明这条检查能红。
+  同时 `entry-test.mjs` 从**行为**层面再拦一次：对发出去的那份真跑
+  `atlas.settings` / `atlas.refNamespaces` / `atlas.refBlocks` / `atlas.refItems`，
+  任何 `is not defined` 都算失败。
+
+复现验证（做过）：把规则改回贪婪版 + 按原样插回那句 glob 注释 → `strip_gate.py` 报
+「缺 labelFor、localOf、messageOf、policyFor、prefix、rel、tries」，`entry-test.mjs` 报
+`localOf is not defined`，两个门禁同时红。
+
 ## 门禁
 
 ```bash
 node panel/verify-build.mjs   # lib/ 与源码去注释后重新生成的结果逐字节比对（挡漂移）
 node panel/entry-test.mjs     # 两个入口真的加载/apply/派发；含一次真注入
+python3 tools/strip_gate.py   # 剥离器不许吞代码：声明的名字一个都不能少（--fault 证明能红）
 node panel/serve-check.mjs --url http://127.0.0.1:3099 --token <token>   # 真送达：对着跑着的实例查
 ```
 

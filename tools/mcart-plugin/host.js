@@ -766,7 +766,7 @@ return {
     // Where does a reference root actually keep its assets?  Not in one shape.
     // For 1.12.2 the vanilla textures live INSIDE the version jar -- that
     // assets/index.json has zero entries under minecraft/textures/block/ -- and
-    // Forge keeps every mod in versions/<version>/mods/*.jar.  So "scan the
+    // Forge keeps every mod in versions/<version>/mods/<name>.jar.  So "scan the
     // reference" means "read jars", and tools/mcart_scan_refs.py is the single
     // implementation of that.  This side only locates it and calls it.
     const SCAN_SCRIPT = 'tools/mcart_scan_refs.py'
@@ -1053,7 +1053,7 @@ return {
 
     // Which roots an item query reads.
     //
-    // A project's own pack ships `models/item/*` but NOT the vanilla parents
+    // A project's own pack ships `models/item/…` but NOT the vanilla parents
     // those models inherit: `{"parent": "block/cube_all"}` is an UNQUALIFIED
     // reference, which in the game means `minecraft:block/cube_all`.  So the
     // pack alone leaves every chain incomplete -- every one of our own block

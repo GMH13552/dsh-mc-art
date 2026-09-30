@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Strip comments from a dynamic Package half before it is emitted.
+r"""Strip comments from a dynamic Package half before it is emitted.
 
 WHY THIS EXISTS.  A Cordis Package carries its Host and Client halves as literal
 strings in ONE tool call, and a half cannot be omitted -- `startFresh` does
@@ -34,16 +34,30 @@ and says which one it matched.  Two things follow, and both are load-bearing:
     and injects that omission, because forgetting one fails at run time inside a
     browser page, where the only evidence is a Run card.
 
-WHAT IS REMOVED, EXACTLY.  Only two shapes, both of which cannot appear inside a
-string or a regex:
+WHAT IS REMOVED, EXACTLY.  Only two shapes, both decided **per line by position**,
+never by scanning inside code:
 
-  * `/** ... */` and `/* ... */` blocks
+  * block comments whose **first non-space characters begin the line** (`/** ... */`,
+    `/* ... */`, however many lines they span)
   * lines whose first non-space characters are `//`
+
+Both are line-anchored, and that anchoring is LOAD-BEARING.  The block rule was
+once `/\*[\s\S]*?\*/` -- any `/*` anywhere.  A `//` comment mentioning a glob
+("keeps every mod in versions/<version>/mods/*.jar") then opened a block that ran
+to the next `*/` **313 lines later**, and the emitted host silently lost ten
+declarations (SCAN_SCRIPT, EXTRACT_SCRIPT, REFERENCE_MAX_BYTES, toolPaths,
+findTool, findScanner, PYTHON_CANDIDATES, resolvePython, itemRoots, roots) -- the
+entire reference/extraction path.  The artifact still parsed, so nothing noticed
+until a user clicked 设置 and the page said `findScanner is not defined`.  Hence
+narrowing the rule, rewording the two comments that tripped it, and
+`tools/strip_gate.py`, which compares declared names in the source against the
+emitted artifact and fails when one is missing.
 
 Trailing `//` comments are deliberately LEFT ALONE: deciding whether a `//` is a
 comment or part of a string or a regex needs a real JavaScript lexer, and this
-script is not allowed to be clever about code.  The two shapes above are decided
-per line by position, not by scanning inside code.
+script is not allowed to be clever about code.  Inline `/* ... */` pairs (the
+`catch (error) { /* not fatal */ }` shape) are left alone too, for the same
+reason: they do not begin a line, so no rule here can mistake them for code.
 
    python3 tools/strip_comments.py <file> [<file> ...]
    python3 tools/strip_comments.py --check <annotated> <stripped>
@@ -51,7 +65,10 @@ per line by position, not by scanning inside code.
 import re
 import sys
 
-BLOCK = re.compile(r"/\*[\s\S]*?\*/")
+# `^[ \t]*` 是关键：只有"整行就是块注释的开头"才算注释。行内的 `/*`（无论是
+# `catch (e) { /* x */ }` 这种真注释，还是 `// ... mods/*.jar` 这种假开头）
+# 一律不碰 —— 宁可少剥一层，也不能吞掉代码。
+BLOCK = re.compile(r"^[ \t]*/\*[\s\S]*?\*/", re.MULTILINE)
 WHOLE_LINE = re.compile(r"^[ \t]*//[^\n]*\n?", re.MULTILINE)
 
 
