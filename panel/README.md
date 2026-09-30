@@ -26,6 +26,12 @@ dsh plugin --profile web add /path/to/dsh-mc-art/panel    # 或 npm 上的包名
   name: dsh-mc-art-panel
 ```
 
+## 升级之后记得重启进程
+
+宿主的行是启动时挂载的，`dsh plugin add` 只换文件：不重启的话，客户端可能已经热重载成新版，
+而宿主还是老实例（实测症状：面板报 `宿主没有这个方法：…`）。桌面端要把 Electron 主进程也退出
+（托盘常驻时关窗口不算），命令行起的 web 则 `Ctrl-C` 后重启。
+
 ## 这个包带什么
 
 装一个包，面板、模式、两个 skill 一起到位——不需要再跑仓库里的安装器，也不会往你的

@@ -88,6 +88,14 @@ Creating writes `mc-art.atlas.json` plus an empty `pack/assets/<namespace>/` ske
 the same directory, a namespace that differs from one already in the pack, ids or namespaces
 outside `[a-z0-9_]{2,32}`, and any id carrying path separators.
 
+## After upgrading the package, restart the process
+
+The host half is a row mounted at process start; replacing the files on disk does not replace
+the instance already running. Symptom of a stale host: the panel reports
+`宿主没有这个方法：…` while the same package works in another boot order. On the Electron
+desktop app, end `DeepSeek Harness.exe` and its children (closing the window leaves the tray
+process alive); on a `dsh web` instance, stop it and start it again.
+
 ## What it writes (and refuses)
 
 | 动作 | 宿主调用 | 写到哪 |
