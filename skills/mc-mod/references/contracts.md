@@ -35,7 +35,7 @@ invisible.
   and optionally `variant` (a blockstate string, e.g. a facing), which is what keeps
   a placed log from silently straightening the next time it is opened.
 
-**Rule:** a cell may name a block without a namespace (`flesh_soil`); it resolves
+**Rule:** a cell may name a block without a namespace (`example_soil`); it resolves
 against the project's own namespace. A qualified id (`minecraft:stone`) is taken
 as written.
 

@@ -73,6 +73,11 @@ point the reference directory at a game version. It writes exactly three things:
 `atlas.saveTexture`, `atlas.saveVoxel`, `atlas.saveSettings` — and only ever into
 the **project's own pack**, never into a jar. Full manual: `references/panel.md`.
 
+**The reference directory is art-only.** It is read by the mc-art engine to show vanilla/mod
+textures and models for style matching; the build loop never reads it, and setting it does not
+replace ForgeGradle's own asset download (`downloadAssets` fills `GRADLE_USER_HOME`). Where the
+setting lives, and which file to read to find out what it points at: `references/panel.md`.
+
 It ships two ways from one source (a real DSH package, and a dynamic Cordis plugin).
 If you install the package, verify **delivery** and not just installation: the client
 bundle must register under the package name, or the page silently shows
@@ -82,14 +87,24 @@ one-command check in `references/panel.md`.
 ## Running the judge
 
 ```bash
+# 0) 先问"这个 JVM 能不能写 jar"——这一步能省掉一次 26 分钟的构建
+python scripts/check_jdk.py                    # exit 3 = 这台机器上没有能用的 JDK
 # from a mod project (see references/gametest.md for what the project must contain)
 python tools/mcmod_gametest.py                 # verdict: exit code + parsed log
 python tools/mcmod_gametest.py --fault         # inject a false assertion; it MUST fail
 ```
 
+**Step 0 is not optional, and it is not about the version string.** `jdk.zipfs` decides
+whether a jar is writable with `Files.isWritable()`, and a JVM started from Minecraft's own
+bundled runtime runs at **Low mandatory integrity** — where that call returns false even for a
+file the JVM just wrote. ForgeGradle's access-transformer step then dies with
+`ReadOnlyFileSystemException` and leaves a 22-byte empty jar. `scripts/check_jdk.py` starts
+each candidate and makes it write a file and a zip (`scripts/JvmWriteSelfTest.java`), so the
+answer comes from the JVM you are actually about to build with. Full trap: `gametest.md`.
+
 Measured in this workspace on 1.18.2 / Forge 40.2.0: a clean run says
 `All 2 required tests passed :)` and exits 0; with `--fault` the server reports
-`fleshblockplaces failed! <message> at x,y,z` and `1 required tests failed :(`,
+`exampleblockplaces failed! <message> at x,y,z` and `1 required tests failed :(`,
 exit code 1. First build ~26 min (downloads), every run after that ~1 min.
 
 ## The traps (each one cost a run — `references/traps.md`)

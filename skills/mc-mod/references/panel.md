@@ -130,6 +130,42 @@ To ask a host what it can see: call `atlas.env` — it returns the presence of
 `fs`, `shell`, `sessions`, `webServer`, `directoryPickerController`, `localFs`, plus the shell
 dialect, platform and node version.
 
+## How the panel, the engine and the build loop relate (they read different files)
+
+Three pieces, three jobs — a failure in one is not a failure in another:
+
+| 谁 | 是什么 | 读什么 | 写什么 |
+|---|---|---|---|
+| **面板** `dsh-mc-art-panel` | 宿主行 + 右栏 UI（`atlas.*` 方法） | 项目目录、`mc-art.atlas.json`、`mc-art.settings.json` | 贴图、atlas、settings |
+| **mc-art 引擎**（随包 `python/` 的两个脚本 + skill） | 读资产根/版本 jar/mods 的抽取器；面板替它起进程 | `mc-art.atlas.json`、**参考目录** | 只往 stdout 出 JSON（**不改任何游戏文件**） |
+| **mc-mod skill + Gradle** | 建工程、跑 GameTestServer 出判决 | 项目源码、`gradle.properties`、**Gradle 自己的缓存** | 构建产物、日志 |
+
+**参考目录是给美术引擎用的，构建那条链一眼都不看它。** 它指向 `.minecraft`／某个版本目录／
+`mods`／单个 jar，是为了让你在面板里看到原版和模组的贴图与模型（对齐风格、做参照）。
+ForgeGradle 的 `downloadAssets` 装的是**它自己**的资源库（`GRADLE_USER_HOME` 下），
+两者指向同一个游戏安装、给两个不同的消费者 —— 所以"我已经设了参考目录"**不会**省掉
+第一次构建那几百 MB 的下载。
+
+**参考目录写在哪（agent 可以直接读）**：`<项目>/mc-art.settings.json` 的
+`reference.directory`（面板里 ⚙ 设置 的"参考目录"那一行就是它）。想知道面板现在指的是哪儿，
+读这个文件比猜快；要**改**它，用面板（或在 agent 侧写这个文件，然后让面板刷新 —— 面板会
+重新读）。同一个文件里的其余字段：
+
+```json
+{
+  "schema": "mc-art.settings/1",
+  "reference": {
+    "directory": "C:/Users/<你的用户名>/AppData/Roaming/.minecraft",
+    "includeGenerated": true,
+    "includeMods": true,
+    "mods": { "<命名空间>": true }
+  }
+}
+```
+
+`includeMods` 为真时，参考目录里每个命名空间可以单独开关 —— 面板设置卡里"参考目录中的模组
+资源文件"那一段就是它。**抽取器只读**：它读 jar、把 JSON 打到 stdout，从不写游戏目录。
+
 ## After upgrading the package, restart the process
 
 The host half is a row mounted at process start; replacing the files on disk does not replace

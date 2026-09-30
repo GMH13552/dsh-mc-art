@@ -32,9 +32,62 @@ clean    →  [minecraft/GameTestServer]: All 2 required tests passed :)        
             [minecraft/GameTestServer]: 1 required tests failed :(             exit 1
 ```
 
-First build ≈ 26 min (Gradle distribution + MC/Forge artifacts + ~450 MB of assets,
-through the proxy). **Every run after that ≈ 1 min.** Warm caches turn the loop into
-something you can afford to run per change.
+First build ≈ 26 min (Gradle distribution + MC/Forge artifacts + a few hundred MB of
+vanilla assets, through the proxy). **Every run after that ≈ 1 min.** Warm caches turn the
+loop into something you can afford to run per change.
+
+**Those assets are Gradle's own, and the panel's 参考目录 is not them.** `downloadAssets`
+fills ForgeGradle's asset store under `GRADLE_USER_HOME` (put it inside the project — e.g.
+`-g .gradle-home` — so it survives a clean and can be deleted as one directory). The panel's
+reference root (see `panel.md`) is read by the **art engine** to show you vanilla/mod
+textures and models for style matching; nothing in the build reads it, and pointing it at a
+`.minecraft` does **not** stop this download. Both point at the same game installation, for
+two different consumers — that is the whole relationship.
+
+## Before the first build: does this JVM lie about writability?
+
+**Symptom.** `runGameTestServer` dies in the access-transformer step with
+
+```
+java.nio.file.ReadOnlyFileSystemException
+    at jdk.nio.zipfs.ZipFileSystem.checkWritable(ZipFileSystem.java:370)
+    at net.minecraftforge.accesstransformer.TransformerProcessor.lambda$processJar$3
+Could not find net.minecraftforge:forge:…_mapped_official_…       ← the AT output never appeared
+```
+
+and the artefact it left behind is a **22-byte empty zip** (`PK\x05\x06` + 18 zero bytes).
+Exit code is `2` (stage = `setup`), not the number of failed tests — the judge script says so
+and it is right to.
+
+**Cause.** `jdk.zipfs` decides whether a jar is writable with `Files.isWritable()`. A JVM
+started from Mojang's bundled runtime (`%APPDATA%\\.minecraft\\runtime\\java-runtime-gamma*`)
+runs at **Low mandatory integrity** (`Mandatory Label\\Low`, `S-1-16-4096`), and in that
+context `Files.isWritable()` returns **false even for a file the JVM just wrote itself** —
+writes succeed, the access check does not. Every jar therefore looks read-only, so the AT
+step can never write. A sandbox that grants writes through a capability SID without the full
+`FILE_GENERIC_WRITE` mask produces the same lie; that is why "cmd can write `%TEMP%`, java
+cannot" looks like a sandbox problem and is not.
+
+**Fix.** Use a normal JDK 17/21 (Temurin / Microsoft / Oracle / JBR). Do **not** use
+Minecraft's bundled `runtime` java to build. `scripts/check_jdk.py` resolves one and proves it
+by running `scripts/JvmWriteSelfTest.java` — write a file, ask `isWritable`, write a zip entry
+through zipfs — and reports every candidate it rejected and why:
+
+```bash
+python3 scripts/check_jdk.py                       # find one; exit 3 = none usable
+python3 scripts/check_jdk.py --java-home 'C:\Program Files\\Eclipse Adoptium\\jdk-17…'
+```
+
+A copy of the same JDK placed in an ordinary directory inherits **Medium** and works, which is
+one cheap repair when the only 17 on the machine is the game's.
+
+**Do not try to repair this with ACLs.** Granting more rights on the workspace does not move
+the process off Low integrity, and raising the directory to Medium makes a Low process unable
+to write *downward* at all — measured, it gets worse. Change the JVM, or change the execution
+environment.
+
+**Ask the JVM you are about to build with, not the version string.** "It is javac 17" is not
+the question; "can this JVM write a jar" is.
 
 ## What the project must contain
 
