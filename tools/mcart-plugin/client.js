@@ -717,9 +717,20 @@ const itemUrls = {}
  * 宿主那一侧不用管：它的贴图缓存键是 `path@mtime:size`，文件一变就自然失效。
  */
 function forgetTextures() {
+  // 像素级：解码好的贴图、标记失败的贴图、烘好的物品图标、按名字烘的方块图标。
   for (const key of Object.keys(decoded)) delete decoded[key]
   for (const key of Object.keys(failedTex)) delete failedTex[key]
   for (const key of Object.keys(itemUrls)) delete itemUrls[key]
+  // **按名字记的图标**也必须丢：`icons`/`iconTried` 是"这个方块/物品的图标烘过了"
+  // 的账本（左边菜单那些格子就是它）。只丢像素缓存的话，3D 会换新图、菜单图标还是旧的
+  // ——用户实测："刷新完全没看到新贴图"，而屏幕左边正是那些图标。
+  for (const key of Object.keys(icons)) delete icons[key]
+  for (const key of Object.keys(iconTried)) delete iconTried[key]
+  // 配方（路径、动画帧）也一起丢：外部重生成可能换了文件名或帧数，留着会指向旧文件。
+  for (const key of Object.keys(itemRecipes)) delete itemRecipes[key]
+  // **故意不丢 `imageNodes`**：那些是 ref 回调登记进来的 <img> 节点，React 不会为同一个
+  // 元素再跑一次 ref —— 清掉它们会让解码循环永远等不到 complete。它们在下次渲染时会
+  // 带上新的 src（贴图 URL 变了，React 会更新属性）。
 }
 // The hotbar's slot canvases, keyed like `itemRecipes`.  Module scope for the
 // same reason: the draw effect needs them across renders without a state update

@@ -416,10 +416,20 @@ async function main() {
   // Node 里没有，所以"缓存有没有丢"没法在这条门禁里跑出来。钉住的是那三件事：
   // 清空函数存在且清三张表、刷新按钮调它、换项目也调它。
   console.log('--- 刷新/换项目会丢像素缓存（源码形状检查）')
-  check('有 forgetTextures()，而且清的是 decoded / failedTex / itemUrls 三张表',
+  // **六张表**都要清：三张像素级的（decoded/failedTex/itemUrls）+ 三张按名字记的
+  // （icons/iconTried/itemRecipes —— 左边菜单的方块图标、物品浏览器、配方）。
+  // 只清前三个的时候用户实测过："3D 换了、菜单图标还是旧的"。
+  const clearedTables = ['decoded', 'failedTex', 'itemUrls', 'icons', 'iconTried', 'itemRecipes']
+  check('有 forgetTextures()，而且六张缓存表都清（像素级 3 张 + 按名字记的 3 张）',
     /function forgetTextures\(\)/.test(faulted) &&
-    /delete decoded\[key\]/.test(faulted) && /delete failedTex\[key\]/.test(faulted) &&
-    /delete itemUrls\[key\]/.test(faulted))
+    clearedTables.every((name) => new RegExp('delete ' + name + '\\[key\\]').test(faulted)),
+    clearedTables.filter((name) => !new RegExp('delete ' + name + '\\[key\\]').test(faulted)).join('、') + ' 没清')
+  // 注意范围：源码别处有一处正当的 `delete imageNodes[key]`（打开新资产时清节点），
+  // 所以要**只看 forgetTextures 的函数体**，别把那一处当成违规。
+  const forgetBody = (faulted.match(/function forgetTextures\(\) \{[\s\S]*?\n\}/) || [''])[0]
+  check('forgetTextures 里**没有**清 imageNodes（ref 登记的 <img>，清了会让解码永远等不到 complete）',
+    forgetBody !== '' && !/delete imageNodes\[/.test(forgetBody),
+    forgetBody === '' ? '函数体都没匹配到（门禁要跟着改）' : '函数体里清了 imageNodes')
   check('刷新按钮先丢缓存再强制重扫（否则 have 里还留着旧 id，宿主永远不会再送）',
     /onClick: \(\) => \{ forgetTextures\(\); scan\(root, true, null\) \}/.test(faulted),
     '（刷新按钮没接上 forgetTextures）')
