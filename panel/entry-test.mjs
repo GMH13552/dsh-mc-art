@@ -42,12 +42,40 @@ const ctx = {
 const host = await import(join(HERE, 'lib', 'index.js'))
 check('模块导出了 name / inject / apply',
   host.name === 'mcart-panel' && Array.isArray(host.inject) && typeof host.apply === 'function')
+/** 每个 ctx 的 effect disposer 都收着，好在测试里"卸载"某个实例。 */
+function makeCtx(bucket) {
+  return {
+    get: (name) => (name === 'webServer' ? webServer : undefined),
+    inject: (names, callback) => callback({ webServer: webServer }),
+    effect: (fn) => { const stop = fn(); if (typeof stop === 'function') bucket.push(stop); return () => {} },
+    on: () => () => {},
+    provide: () => () => {},
+  }
+}
+const dA = [], dB = []
 let hostFailed = null
-try { await host.apply(ctx) } catch (error) { hostFailed = error }
+try { await host.apply(makeCtx(dA)) } catch (error) { hostFailed = error }
 check('apply(ctx) 不炸', hostFailed === null, hostFailed === null ? '' : String(hostFailed && hostFailed.message))
 check('注册了派发路由 /api/mcart/call',
   routes.length === 1 && routes[0].path === '/api/mcart/call' && routes[0].kind === 'exact',
   JSON.stringify(routes.map((r) => r.path)))
+
+// 热重启：同一个进程里宿主那一行会被重新 apply。老实例卸载会把它那张表逐条删空，
+// 而路由可能还活着 —— 老代码把 route 捕获在具体的表上，于是任何调用都回"宿主没有这个方法"
+// （用户实测：热重启才触发，彻底退出反而正常）。现在路由只注册一次、派发"当前那张表"。
+try { await host.apply(makeCtx(dB)) } catch (error) { /* 第二次 apply 不该抛 */ }
+check('热重启后不会重复注册路由', routes.length === 1, routes.length + ' 条')
+for (const stop of dA) { try { stop() } catch (error) {  } }   // 卸载老实例
+/** callRoute 回的是 {status, text} 信封，这里把 body 解出来。 */
+const bodyOf = (reply) => { try { return JSON.parse(reply.text) } catch (error) { return { text: reply.text } } }
+const afterUnmount = bodyOf(await callRoute({ name: 'atlas.scan', args: { root: '/tmp' } }))
+check('老实例卸载后，路由仍然派发到当前那张表（不是空表）',
+  typeof afterUnmount.error !== 'string' || afterUnmount.error.indexOf('宿主没有这个方法') < 0,
+  JSON.stringify(afterUnmount).slice(0, 120))
+const unknownReply = bodyOf(await callRoute({ name: 'atlas.no_such_method', args: {} }))
+check('不认识的报错里带着"谁在应答"（版本 + 方法数）',
+  typeof unknownReply.error === 'string' && unknownReply.error.indexOf('dsh-mc-art-panel@') > 0 &&
+  unknownReply.error.indexOf('个方法') > 0, String(unknownReply.error).slice(0, 140))
 
 /** 用假 req/res 调一次派发路由，把 JSON 响应读回来。 */
 function callRoute(body) {

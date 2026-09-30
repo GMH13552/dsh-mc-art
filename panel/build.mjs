@@ -76,15 +76,28 @@ export function hostModule(hostSource) {
   return `// 生成物：由 panel/build.mjs 从 tools/mcart-plugin/host.js 生成 —— 不要手改。
 // 改行为请改那份源码，然后 \`node panel/build.mjs\`（verify-build.mjs 会挡住漂移）。
 const SOURCE = ${JSON.stringify(hostSource)}
+const VERSION = ${JSON.stringify(JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).version)}
 
 export const name = 'mcart-panel'
 // 宿主半自己用 ctx.get(...) 取 fs / sessions / shell / webServer，不硬依赖任何服务。
 export const inject = []
 
+// 当前那张 handler 表与"路由是否已经注册过"都放在模块级。
+//
+// 为什么必须这样：宿主那一行在**热重启**时会被重新 apply 一次，而老实例卸载会把它那张表
+// 逐条 delete 干净（每个 handle 的 disposer 都这么干）。如果路由捕获的是"某一次 apply 的
+// 表"，就会出现：路由还活着、表已经空了 → 任何调用都回"宿主没有这个方法"（用户实测，
+// 热重启才触发；彻底退出应用反而不触发）。所以路由只注册一次，派发时读**当前**这张表。
+// （注意：这段是模板字符串里的生成代码，注释里不能出现反引号 —— 它会截断模板。）
+let liveHandlers = null
+let routeReady = false
+
 export function apply(ctx) {
   // 动态插件里有 harness.handle；真包里没有，所以这里做一个同形状的垫片：
   // 收成一张表，再由下面那条路由统一派发。host.js 一行都不用改。
   const handlers = {}
+  liveHandlers = handlers
+  ctx.effect(() => () => { if (liveHandlers === handlers) liveHandlers = null })
   const harness = {
     handle(method, handler) {
       handlers[method] = handler
@@ -100,6 +113,8 @@ export function apply(ctx) {
   // 一条路由，全部信道。客户端那边 host.call(name, args) 走的就是它。
   const MAX_BYTES = 16 * 1024 * 1024
   ctx.inject(['webServer'], (httpCtx) => {
+    if (routeReady) return
+    routeReady = true
     httpCtx.webServer.register({
       kind: 'exact',
       path: '/api/mcart/call',
@@ -128,9 +143,15 @@ export function apply(ctx) {
             return
           }
           const name = typeof request.name === 'string' ? request.name : ''
-          const handler = handlers[name]
+          const table = liveHandlers
+          const handler = table === null ? undefined : table[name]
           if (typeof handler !== 'function') {
-            send(404, { error: '宿主没有这个方法：' + name })
+            // 报错里带上"谁在应答"：版本 + 已注册多少方法。没有这两样，这种问题只能靠猜
+            // （"宿主没有这个方法"到底是旧实例、空表，还是名字真的写错了）。
+            const count = table === null ? 0 : Object.keys(table).length
+            send(404, { error: '宿主没有这个方法：' + name +
+              '（宿主 dsh-mc-art-panel@' + VERSION + '，已注册 ' + count + ' 个方法' +
+              (table === null ? '，宿主已卸载' : '') + '）' })
             return
           }
           try {
