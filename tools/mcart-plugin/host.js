@@ -413,9 +413,14 @@ function releaseUnused(referenceBlocks, keep, referenceTextures, referenceAnimat
 
 return {
   apply(ctx) {
-    const fs = ctx.get('fs')
-    const sessions = ctx.get('sessions')
-    const shell = ctx.get('shell')
+    // ⚠️ 这三个服务**不能在这里缓存**。宿主半和别的行谁先挂载不由我们决定：冷启动时
+    // `ctx.get('shell')` 可能还是 undefined，缓存下来就永久是"没有这个服务"
+    // —— 桌面端实测就是这个症状：面板写着「宿主没有 shell 服务，请在下面的输入框里直接填路径」，
+    // 而同一份包在别的启动顺序里一切正常（和客户端"重启回左栏"是同一个毛病）。
+    // 每次用的时候现取，代价是一次属性查找。
+    const fsOf = () => ctx.get('fs')
+    const sessionsOf = () => ctx.get('sessions')
+    const shellOf = () => ctx.get('shell')
     const errors = []
     let preloads = new Map()
     let langs = new Map()
@@ -463,30 +468,30 @@ return {
     }
 
     async function listDir(path) {
-      if (fs === undefined) return []
+      if (fsOf() === undefined) return []
       try {
-        const target = await fs.resolve(path)
-        const info = await fs.stat(target)
+        const target = await fsOf().resolve(path)
+        const info = await fsOf().stat(target)
         if (info === undefined || info.type !== 'directory') return []
-        return await fs.listDir(target)
+        return await fsOf().listDir(target)
       } catch (error) { return [] }
     }
 
     async function readJson(path) {
-      if (fs === undefined) return undefined
+      if (fsOf() === undefined) return undefined
       try {
-        const target = await fs.resolve(path)
-        const info = await fs.stat(target)
+        const target = await fsOf().resolve(path)
+        const info = await fsOf().stat(target)
         if (info === undefined || info.type !== 'file') return undefined
-        return JSON.parse(await fs.readText(target))
+        return JSON.parse(await fsOf().readText(target))
       } catch (error) { return undefined }
     }
 
     async function statOf(path) {
-      if (fs === undefined) return undefined
+      if (fsOf() === undefined) return undefined
       try {
-        const target = await fs.resolve(path)
-        return await fs.stat(target)
+        const target = await fsOf().resolve(path)
+        return await fsOf().stat(target)
       } catch (error) { return undefined }
     }
 
@@ -527,8 +532,8 @@ return {
       const key = path + '@' + String(info.version) + ':' + String(info.size)
       if (textureCache[key] !== undefined) return textureCache[key]
       try {
-        const target = await fs.resolve(path)
-        const bytes = await fs.readBytes(target, undefined, 8 * 1024 * 1024)
+        const target = await fsOf().resolve(path)
+        const bytes = await fsOf().readBytes(target, undefined, 8 * 1024 * 1024)
         const url = 'data:image/png;base64,' + toBase64(bytes)
         textureCache[key] = url
         return url
@@ -1831,15 +1836,15 @@ return {
     }
 
     async function runShell(command, timeoutMs, sandboxPolicy, maxBytes) {
-      if (shell === undefined) return { exitCode: null, text: '', err: 'no shell service' }
+      if (shellOf() === undefined) return { exitCode: null, text: '', err: 'no shell service' }
       // The cap is per call, not a constant: a namespace listing is genuinely
       // ~190 KB (AoA3 alone is 1403 blocks), and the 64 KB default truncated it
       // into invalid JSON.  A silently cut payload is worse than a slow one.
       const request = { command: command, timeoutMs: timeoutMs === undefined ? 20000 : timeoutMs,
         stdoutMaxBytes: maxBytes === undefined ? 64 * 1024 : maxBytes }
       if (sandboxPolicy !== undefined) request.sandboxPolicy = sandboxPolicy
-      const spec = shell.resolve(request)
-      const result = await shell.run(spec)
+      const spec = shellOf().resolve(request)
+      const result = await shellOf().run(spec)
       return { exitCode: result.exitCode, text: result.stdout.text, err: result.stderr.text }
     }
 
@@ -1908,7 +1913,7 @@ return {
      * 引号规则来回揉的通道。
      *
      * 所以：base64 当**文本**用 fs 服务写进一个暂存文件（同一条 sandbox 策略，
-     * 且 fs.writeText 对长度没意见），shell 只负责"把这个文件解成字节"。
+     * 且 fsOf().writeText 对长度没意见），shell 只负责"把这个文件解成字节"。
      * 没有 fs 服务时才退回把 payload 拼进命令的老办法（那时数据也小）。
      */
     async function writeDecodedFile(target, base64, workspaceRoot, timeoutMs) {
@@ -1935,11 +1940,11 @@ return {
     }
 
     async function runDialog(command, sandboxPolicy) {
-      if (shell === undefined) return ''
+      if (shellOf() === undefined) return ''
       const request = { command: command, stdoutMaxBytes: 64 * 1024 }
       if (sandboxPolicy !== undefined) request.sandboxPolicy = sandboxPolicy
-      const spec = shell.resolve(request)
-      const process = await shell.start(spec)
+      const spec = shellOf().resolve(request)
+      const process = await shellOf().start(spec)
       await process.done
       return String(process.readOutput().delta)
     }
@@ -1963,10 +1968,10 @@ return {
     async function writeTextFile(path, text, workspaceRoot) {
       const policy = policyFor(workspaceRoot)
       let fsDetail = null
-      if (fs !== undefined) {
+      if (fsOf() !== undefined) {
         try {
-          const target = await fs.resolve(path)
-          await fs.writeText(target, text, undefined, undefined, policy)
+          const target = await fsOf().resolve(path)
+          await fsOf().writeText(target, text, undefined, undefined, policy)
           return { ok: true, via: 'fs' }
         } catch (error) {
           fsDetail = String(error && error.message ? error.message : error)
@@ -1974,7 +1979,7 @@ return {
       } else {
         fsDetail = 'no fs service'
       }
-      if (shell !== undefined) {
+      if (shellOf() !== undefined) {
         const dialect = await currentShell(workspaceRoot)
         const result = await runShell(dialect.writeInline(path, base64OfString(text)), 20000, policy)
         if (result.exitCode === 0) return { ok: true, via: 'shell' }
@@ -1987,7 +1992,7 @@ return {
     ctx.effect(() => harness.handle('atlas.pickDirectory', async (args) => {
       const request = args || {}
       const start = typeof request.start === 'string' ? request.start : ''
-      if (shell === undefined) return { supported: false, detail: '宿主没有 shell 服务，' }
+      if (shellOf() === undefined) return { supported: false, detail: '宿主没有 shell 服务，' }
       try {
         if (await available('powershell.exe')) {
           const winStart = await convertPath('-w', start)
@@ -2146,7 +2151,7 @@ return {
           // This is a brush, not a general file writer.
           return { error: '这张贴图不在这个项目的资源包里，拒绝写：' + target }
         }
-        if (shell === undefined) return { error: '宿主没有 shell 服务，写不了二进制文件' }
+        if (shellOf() === undefined) return { error: '宿主没有 shell 服务，写不了二进制文件' }
         // Write beside the original, check it, and only then move it into place.
         // Writing straight over the texture meant a bad encode destroyed the
         // sprite *before* anyone noticed it was not a PNG.
@@ -2169,7 +2174,7 @@ return {
         const staged = await statOf(temp)
         if (staged === undefined || staged.type !== 'file') return await discard('写完之后读不到临时文件')
         if (staged.size === undefined || staged.size === 0) return await discard('写出来的是个空文件')
-        const bytes = await fs.readBytes(await fs.resolve(temp), undefined, 8 * 1024 * 1024)
+        const bytes = await fsOf().readBytes(await fsOf().resolve(temp), undefined, 8 * 1024 * 1024)
         for (let i = 0; i < PNG_MAGIC.length; i++) {
           if (bytes[i] !== PNG_MAGIC[i]) {
             return await discard('写出来的不是 PNG（开头 ' + Array.prototype.slice.call(bytes, 0, 8).join(',') + '）')
@@ -2371,7 +2376,7 @@ return {
       const request = args || {}
       try {
         const id = typeof request.sessionId === 'string' ? request.sessionId : ''
-        const session = (sessions === undefined || id === '') ? undefined : sessions.get(id)
+        const session = (sessionsOf() === undefined || id === '') ? undefined : sessionsOf().get(id)
         if (session === undefined) return { cwd: null }
         const cwd = session.header.cwd
         return { cwd: typeof cwd === 'string' ? cwd : null }

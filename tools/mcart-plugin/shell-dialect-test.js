@@ -104,6 +104,11 @@ function buildHost(record) {
       return {}
     },
   }
+  // `shellFromStart:false` 模拟"宿主半比 shell 那行先挂载"：apply 那一刻服务还没有，
+  // 之后才出现。桌面端实测的症状就是这个（面板说"宿主没有 shell 服务"）。
+  let shellLive = record.shellFromStart !== false
+  /** 测试用：让"晚到的 shell 服务"真的出现。 */
+  record.arriveShell = () => { shellLive = true }
   const shellService = {
     resolve(spec) { return spec },
     async run(spec) {
@@ -122,7 +127,11 @@ function buildHost(record) {
   }
   const handlers = {}
   const ctx = {
-    get: (name) => (name === 'fs' ? fsService : name === 'shell' ? shellService : undefined),
+    get: (name) => {
+      if (name === 'fs') return fsService
+      if (name === 'shell') return shellLive ? shellService : undefined
+      return undefined
+    },
     effect: (fn) => fn(),
   }
   globalThis.harness = { handle: (name, fn) => { handlers[name] = fn } }
@@ -134,6 +143,7 @@ function buildHost(record) {
 ;(async () => {
   console.log('--- A. 装成 Windows PowerShell，检查宿主发出的命令')
   const record = { commands: [], fsWrites: [], executed: [] }
+  const shellLiveLater = { commands: [], fsWrites: [], executed: [], shellFromStart: false }
   buildFixture()
   const handlers = buildHost(record)
   const saved = await handlers['atlas.saveTexture']({
@@ -172,6 +182,17 @@ function buildHost(record) {
     check('临时文件与暂存文件都没留下',
       !nodeFs.existsSync(texture + '.mcart-tmp') && !nodeFs.existsSync(texture + '.mcart-tmp.mcart-b64'))
   }
+
+  // ── 服务晚到：宿主半不能把 shell 缓存在 apply 那一刻 ────────────────────────
+  console.log('--- C. shell 服务晚到（宿主半比它先挂载）')
+  const lateHandlers = buildHost(shellLiveLater)
+  // buildHost 里 apply 已经跑完（那时 get('shell') 是 undefined）；现在服务出现了。
+  shellLiveLater.arriveShell()
+  const lateSaved = await lateHandlers['atlas.saveTexture']({
+    root: WORK_WIN, project: PROJECT, path: TEXTURE_WIN, base64: PNG_BASE64,
+  })
+  check('服务晚到也能写贴图（缓存住就会说"宿主没有 shell 服务"）',
+    lateSaved && lateSaved.saved === true, JSON.stringify(lateSaved))
 
   nodeFs.rmSync(WORK, { recursive: true, force: true })
   console.log(failures === 0 ? '全部通过' : failures + ' 项失败')
