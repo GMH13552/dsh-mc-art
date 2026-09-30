@@ -42,6 +42,10 @@ function makeJar(path, namespace) {
   }
   put('assets/' + namespace + '/textures/block/x.png', Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
   put('assets/' + namespace + '/lang/en_us.json', Buffer.from('{"block.' + namespace + '.x":"X"}\n'))
+  // 中文名：Windows 上 Python 的 stdio 默认是 GBK，而宿主按 UTF-8 解 —— 名字会变乱码。
+  // 实测症状：面板自己的字正常，只有"读出来的名字"是 `����ʯ`。
+  put('assets/' + namespace + '/lang/zh_cn.json',
+    Buffer.from('{"block.' + namespace + '.x":"星陨石"}\n', 'utf8'))
   put('assets/' + namespace + '/models/block/x.json', Buffer.from('{"parent":"block/cube_all"}\n'))
   // blockstates 是**必需**的：抽取器按它数方块，而面板只认 blocks>0 的命名空间。
   // 少这一样，一个"看着没问题"的 jar 会让整条链回空 —— 第一版夹具就是这么骗过我一次。
@@ -120,13 +124,24 @@ async function main() {
   // 这条链要**执行** Python，所以门禁得给它一个能跑的 shell（0.1.x/0.2.0-rc 两代都行的那套）。
   const shell = require('./run.js').shellService
   const source = require('fs').readFileSync(process.env.MCART_HOST || nodePath.join(__dirname, 'host.js'), 'utf8')
-  const patched = source.replace("        push(pkg + '/python/' + base)",
+  let patched = source.replace("        push(pkg + '/python/' + base)",
     "        /* --fault: 掐掉包自带的那条候选 */")
+  if (process.argv.includes('--fault-utf8')) {
+    // 还原编码修复：去掉宿主的 -X utf8，并要求脚本里的 reconfigure 也被去掉（模拟旧版本）
+    const before = patched
+    patched = patched.replace("const argv = [pythonExe, '-X', 'utf8', scanner]", "const argv = [pythonExe, scanner]")
+    patched = patched.replace("const result = await runShell(python + ' -X utf8 ' + dialect.word(scanner) +",
+      "const result = await runShell(python + ' ' + dialect.word(scanner) +")
+    if (patched === before) {
+      console.log('  FAIL --fault-utf8 没生效：宿主里找不到 -X utf8（门禁要跟着改）')
+      process.exit(1)
+    }
+  }
   if (patched === source) {
     console.log("  FAIL 故障注入没生效：找不到 pkg + '/python/' 那条候选（门禁要跟着改）")
     process.exit(1)
   }
-  if (FAULT) {
+  if (FAULT || process.argv.includes('--fault-utf8')) {
     const path = nodePath.join(WORK, 'fault-host.js')
     nodeFs.writeFileSync(path, patched)
     process.env.MCART_HOST = path
@@ -189,6 +204,47 @@ async function main() {
     namespaces && Array.isArray(namespaces.namespaces) &&
     namespaces.namespaces.some((item) => item.name === 'probemod' && item.blocks > 0),
     JSON.stringify(namespaces).slice(0, 300))
+
+  // 名字（中文）必须原样穿过 Python → 宿主 → JSON 这条链
+  const scannedNames = await handlers['atlas.refBlocks']({ root: WORK, project: 'proj', namespace: 'probemod' })
+  check('中文名原样回来（Python 的 stdio 不是 UTF-8 时就会变乱码）',
+    scannedNames && Array.isArray(scannedNames.blocks) &&
+    scannedNames.blocks.some((item) => item.name === '星陨石'),
+    JSON.stringify((scannedNames && scannedNames.blocks) || []).slice(0, 200))
+
+  // 把子进程的 stdio 强制成区域编码（模拟他们的中文 Windows：GBK），要求仍然正确。
+  // 宿主那边有 -X utf8，脚本那边 reconfigure 成 UTF-8 —— 两层任一在就够。
+  // 前提证明（不靠改仓库里的文件）：同一段探针，不加 -X utf8 时**确实**会乱码。
+  // 没有这一条，上面那条断言可能是空的（"无论怎样都过"）。
+  const probe = 'import json;print(json.dumps({"n":"星陨石"},ensure_ascii=False))'
+  const rawOut = require('child_process').execFileSync(pythonForTest(), ['-c', probe],
+    { env: Object.assign({}, process.env, { PYTHONIOENCODING: 'gbk' }) }).toString('utf8')
+  const pinnedOut = require('child_process').execFileSync(pythonForTest(), ['-X', 'utf8', '-c', probe],
+    { env: Object.assign({}, process.env, { PYTHONIOENCODING: 'gbk' }) }).toString('utf8')
+  check('前提：区域编码（gbk）下、不加 -X utf8 时中文确实会乱码（所以这条检查有意义）',
+    rawOut.indexOf('星陨石') < 0, rawOut.trim().slice(0, 60))
+  // 注意这里**会失败**才是事实：`-X utf8` 被环境里的 `PYTHONIOENCODING` 盖过。
+  // 所以真正救场的是脚本自己 `sys.stdout.reconfigure(encoding='utf-8')`（谁也盖不过），
+  // 宿主的 `-X utf8` 只是"顺手把别的 Python 程序也摆正"的第二层。两条都留着，
+  // 但要知道哪一条是关键的 —— 这个断言就是写下来的那句话。
+  check('前提：只有 -X utf8 时仍会被 PYTHONIOENCODING 盖过（所以关键的修复在脚本里）',
+    pinnedOut.indexOf('星陨石') < 0, pinnedOut.trim().slice(0, 60))
+  const reconfigured = require('child_process').execFileSync(pythonForTest(),
+    ['-c', 'import sys;sys.stdout.reconfigure(encoding="utf-8")\n' + probe],
+    { env: Object.assign({}, process.env, { PYTHONIOENCODING: 'gbk' }) }).toString('utf8')
+  check('前提：脚本自己 reconfigure 成 utf-8 之后，同一段探针就正确了（这是关键那一层）',
+    reconfigured.indexOf('星陨石') >= 0, reconfigured.trim().slice(0, 60))
+
+  process.env.PYTHONIOENCODING = 'gbk'
+  const forcedHandlers = (FAULT ? require('./run.js') : mod).buildHandlers({
+    nodeFs: (FAULT ? require('./run.js') : mod).localFsShim, shell: shell,
+    moduleDir: FAULT ? nodePath.join(WORK, 'nosuch', 'lib') : nodePath.join(PANEL, 'lib') })
+  const forcedNames = await forcedHandlers['atlas.refBlocks']({ root: WORK, project: 'proj', namespace: 'probemod' })
+  delete process.env.PYTHONIOENCODING
+  check('即使子进程 stdio 被设成 gbk（中文 Windows 的默认），中文名也原样回来',
+    forcedNames && Array.isArray(forcedNames.blocks) &&
+    forcedNames.blocks.some((item) => item.name === '星陨石'),
+    JSON.stringify((forcedNames && forcedNames.blocks) || []).slice(0, 200))
 
   const blocks = await handlers['atlas.refBlocks']({ root: WORK, project: 'proj', namespace: 'probemod' })
   check('块列表也读得出来（抽取器那条链）',

@@ -1036,7 +1036,10 @@ return {
       // 有 subprocess 就**按 argv 起**：没有 shell、没有引号、没有方言问题
       // （Windows 的路径里有空格时，这一条比拼命令行可靠得多）。
       if (pythonVia === 'subprocess' && pythonExe !== '') {
-        const argv = [pythonExe, scanner].concat(tokens === undefined ? [] : tokens)
+        // `-X utf8`：Windows 上 Python 的 stdio 默认是系统区域编码（GBK），
+        // 而我们按 UTF-8 解它的输出 —— 中文名字会变成 `����ʯ`（用户实测）。
+        // 脚本自己也把 stdout 钉成 UTF-8（reconfigure），这里是第二层。
+        const argv = [pythonExe, '-X', 'utf8', scanner].concat(tokens === undefined ? [] : tokens)
         const done = await runProcess(argv, { cwd: workspaceRoot, maxBytes: maxBytes === undefined ? 8 * 1024 * 1024 : maxBytes })
         if (done !== null) {
           if (done.exitCode !== 0) {
@@ -1052,8 +1055,8 @@ return {
       }
       const dialect = await currentShell(workspaceRoot)
       const argument = (tokens === undefined ? [] : tokens).map((token) => dialect.word(token)).join(' ')
-      const result = await runShell(python + ' ' + dialect.word(scanner) + (argument === '' ? '' : ' ' + argument),
-        timeoutMs, policyFor(workspaceRoot), maxBytes)
+      const result = await runShell(python + ' -X utf8 ' + dialect.word(scanner) +
+        (argument === '' ? '' : ' ' + argument), timeoutMs, policyFor(workspaceRoot), maxBytes)
       if (result.exitCode !== 0) {
         const detail = beforeStderr(result.err === undefined || result.err === null ? '' : result.err)
         return { error: '扫描脚本退出码 ' + result.exitCode + (detail === '' ? '，没有任何错误输出' : '：' + detail) }

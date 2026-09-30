@@ -52,6 +52,25 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # not re-derived here, so the two can never disagree about what a reference is.
 from mcart_scan_refs import is_jar, jars_in, subdirs  # noqa: E402
 
+
+def _pin_utf8_stdio():
+    """把 stdout/stderr 钉成 UTF-8。
+
+    为什么必须：Windows 上 Python 的 stdio 用**系统区域编码**（中文机器上是 GBK），
+    而 DSH 宿主按 UTF-8 解子进程输出 —— 于是这里 print 出去的中文（方块/物品名，
+    来自 lang 文件与 jar）到面板上就变成 `����ʯ`。实测症状很有辨识度：**面板自己的字
+    正常，只有"读出来的名字"是乱码**。
+    `python -X utf8` 也能解决，但环境里的 `PYTHONIOENCODING` 会盖过它；
+    `reconfigure` 谁也盖不过，所以两层都上（宿主那边也加 -X utf8）。
+    旧 Python 没有 reconfigure，包在 try 里。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 # A texture may hide in any of these; 1.12.2 used `blocks`/`items`, 1.13+ uses
 # `block`/`item`, and mods use both.
 TEXTURE_DIRS = ("blocks", "block", "items", "item", "entity", "particle",
@@ -2655,4 +2674,5 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    print(json.dumps(main(sys.argv[1:]), ensure_ascii=False))
+    _pin_utf8_stdio()
+print(json.dumps(main(sys.argv[1:]), ensure_ascii=False))

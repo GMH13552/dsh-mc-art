@@ -26,6 +26,25 @@ import os
 import sys
 import zipfile
 
+
+def _pin_utf8_stdio():
+    """把 stdout/stderr 钉成 UTF-8。
+
+    为什么必须：Windows 上 Python 的 stdio 用**系统区域编码**（中文机器上是 GBK），
+    而 DSH 宿主按 UTF-8 解子进程输出 —— 于是这里 print 出去的中文（方块/物品名，
+    来自 lang 文件与 jar）到面板上就变成 `����ʯ`。实测症状很有辨识度：**面板自己的字
+    正常，只有"读出来的名字"是乱码**。
+    `python -X utf8` 也能解决，但环境里的 `PYTHONIOENCODING` 会盖过它；
+    `reconfigure` 谁也盖不过，所以两层都上（宿主那边也加 -X utf8）。
+    旧 Python 没有 reconfigure，包在 try 里。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 # Anything that is not a player-facing asset archive.
 JAR_SKIP = ("-sources", "-javadoc", "-dev", "-api", "-natives", "-slim")
 
@@ -194,6 +213,7 @@ def detect():
     return {"candidates": out}
 
 
+_pin_utf8_stdio()
 if __name__ == "__main__":
     arguments = sys.argv[1:]
     if not arguments:
