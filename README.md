@@ -181,7 +181,10 @@ node install.mjs     # 或 sh install.sh / install.bat：装 skill + 模式 + �
 ```bash
 dsh plugin --profile web add dsh-mc-art-panel
 # （桌面端 profile 通常叫 desktop：--profile desktop）
-# 国内想走镜像：加 --registry=https://registry.npmmirror.com/（已同步，实测）
+# 国内想走镜像：加 --registry=https://registry.npmmirror.com/
+#   ⚠️ 镜像是**只读同步**、而且会滞后（实测 0.1.25 发布后十几分钟镜像上还没有）：
+#   装之前先 `npm view dsh-mc-art-panel version --registry=https://registry.npmmirror.com/`
+#   看它到底追到哪一版；没追上就用下面的 release tarball（那条是即时的）。
 # 不想依赖 npm：dsh plugin --profile web add \
 #   https://github.com/GMH13552/dsh-mc-art/releases/latest/download/dsh-mc-art-panel.tgz
 # 重启 DSH → 右侧栏出现「MC 资产」
@@ -189,7 +192,7 @@ dsh plugin --profile web add dsh-mc-art-panel
 
 | 怎么给 | 别人怎么装 | 备注 |
 |---|---|---|
-| **npm 包名**（现在走这条） | 插件对话框里填 `dsh-mc-art-panel`，或上面那条命令 | 实测：装完 bundles 里有它、组合里有 `- id: mcart-panel`；npmmirror 已同步 |
+| **npm 包名**（现在走这条） | 插件对话框里填 `dsh-mc-art-panel`，或上面那条命令 | 实测：装完 bundles 里有它、组合里有 `- id: mcart-panel`；npmmirror 会滞后，别按它判断有没有新版 |
 | Release tarball | 上面注释里那条 URL | 不需要 npm 账号；文件名不带版本号 + `releases/latest/download/` = 命令永久有效 |
 | 本地目录 | `dsh plugin --profile web add /path/to/dsh-mc-art/panel` | 克隆了仓库的人 / 改面板源码时用 |
 
