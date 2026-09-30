@@ -1,0 +1,223 @@
+# 两个 skill 里**允许出现**的记号（白名单）。判据是倒过来的：不在这里的就要红。
+#
+# 为什么倒过来：以前是"已知私有词"黑名单，它只能抓到**已经发现过**的泄漏。
+# 实际漏出去的 `blood_sheep`、`crystal_bow_*`、`aoa3` 没一个在黑名单上 —— 新项目的
+# 新名词永远会漏。改成白名单之后，**新名词默认失败**，而加一条白名单是一次显式决定
+# （"这是原版/API/格式词"），正是这个泄漏需要的审查动作。
+#
+# 约定：示例一律写成占位符（`examplemod` / `example_*` / `ModelExample*` / `<...>`），
+# 不由白名单管 —— 它们自带 `example` 前缀，门禁直接放行。
+#
+# 一行一个。`#` 后面写理由。理由分四类：
+#   vanilla  = 原版 Minecraft 的资产/类/字段名
+#   api      = Minecraft/Forge/NeoForge/Java 的 API 名
+#   format   = 文件格式、JSON 字段、目录名、命令行开关
+#   engine   = mc-art 引擎自己的 CLI/API/字段名（它随包发，公开代码）
+#   tool     = 本仓库的工具/脚本名
+
+# ── vanilla（原版资产与类）────────────────────────────────────────────────
+acacia_button      # vanilla block id（中文名那条教训里的例子）
+anvil_undamaged    # vanilla blockstate 变体名
+bow_pulling_1      # vanilla item 模型后缀
+bow_standby        # vanilla item 模型
+cube_all           # vanilla block model（unqualified parent 那条教训）
+cube_column        # vanilla block model
+lava_still         # vanilla 贴图名（动画/帧） 
+log_top            # vanilla 贴图名
+oak_log            # vanilla block id
+oak_log_horizontal # vanilla blockstate
+sea_lantern        # vanilla block id
+sheep_fur          # vanilla 实体贴图名（"原版会留死像素"那条）
+sheep_skin         # mc-art 里指原版羊皮布局的分类名
+water_still        # vanilla 贴图名
+zh_cn              # 语言文件名
+en_us              # 语言文件名
+ModelSheep1        # vanilla 实体模型类名
+ModelSheep2        # vanilla 实体模型类名
+RendererLivingEntity # vanilla 渲染基类
+RotatedPillarBlock # vanilla 方块类（柱状方块）
+BlockItem          # vanilla 物品类
+BlockPos           # vanilla 坐标类
+BlockState         # vanilla 方块状态类
+MultiMC            # 启动器名（参考目录那节）
+CurseForge         # 启动器名
+JarSource          # mc-art 从 jar 取资产的 source 类型（engine）
+
+# ── api（Minecraft / Forge / Java）────────────────────────────────────────
+GameTest           # Mojang 的 GameTest 框架名
+GameTestServer     # 判定用的那个服务端
+GameTestHelper     # GameTest 的断言 API
+GameTestHolder     # Forge 的 GameTest 注解
+GameRegistry       # 1.12.2 的注册 API（版本矩阵）
+EventBusSubscriber # Forge 注解
+SubscribeEvent     # Forge 注解
+RegisterGameTestsEvent # Forge 事件
+LogTestReporter    # GameTest 的日志报告器
+TransformerProcessor   # ForgeGradle 的 AT 处理器（报错栈里出现的）
+ZipFileSystem      # jdk.zipfs 的类（JDK 只读那条坑）
+ReadOnlyFileSystemException # 那个坑的异常名
+ReadOnly           # JDK 里的 ReadOnly 异常族（文档里简称）
+SetRotationPoint   # 1.12.2 模型 API
+PrefixGameTestTemplate # Forge 注解
+TexturedQuad       # 渲染 API
+StructureManager   # 结构 API
+StructureUtils     # 结构工具类
+NotPresent         # 常量名（1.12.2 判定）
+DataVersion        # 存档数据版本字段
+AppData            # %APPDATA%（Windows 路径）
+JavaVirtualMachines # macOS 的 JDK 目录
+DeepSeek           # 运行时名（DSH）
+PascalCase         # 命名法名称
+IoU                # 指标名
+ForgeGradle        # 构建插件名
+NeoForge           # 加载器名
+MinecraftAsset     # mc-art 的资产类型（engine）
+EntityUV           # mc-art 的类型（engine）
+JvmWriteSelfTest   # 本仓库的自检源码名（tool）
+
+# ── format（格式/字段/开关/目录）──────────────────────────────────────────
+pack_format              # pack.mcmeta 字段
+resource_pack_format     # 同上（资源包那份）
+data_pack_format         # 同上（数据包那份）
+world_version            # 版本字段名
+gui_light                # vanilla 模型字段
+http_proxy               # 环境变量（Gradle 不读它那条教训）
+forge_gradle             # ForgeGradle 的缓存目录名
+minecraft_repo           # ForgeGradle 缓存目录名
+minecraft_user_repo      # ForgeGradle 缓存目录名
+mine_a                   # CLI 示例里的文件名（measure 的输入）
+mine_b                   # 同上
+mine_c                   # 同上
+
+# ── engine（mc-art 的 CLI/API/字段，随包发的公开代码）────────────────────
+mc_art                   # 引擎/CLI 名
+appearance_only          # analysis 模式
+atlas_view               # 预览模式
+build_pack               # CLI 子命令
+new_silhouette           # 编辑模式名
+local_silhouette_edit    # 编辑模式名
+preserve_silhouette      # 计划字段
+pixel_map                # 计划字段
+pixel_style              # 计划字段
+part_id                  # 契约字段
+part_reference_sampling   # 计划字段
+part_reference_sources    # 计划字段
+reference_sampling       # 计划字段
+reference_strategy       # 计划字段
+load_project_settings    # project_settings 的入口函数
+project_settings         # 引擎读设置的模块/函数
+review_family            # scripts 里的评审脚本
+shade_axis               # 计划字段
+shape_edit_mode          # 编辑模式名
+test_ingame              # CLI 子命令
+test_modjava             # 自检名
+texture_audit            # 输出文件名
+vanilla_model            # 引擎模块（原版模型分类）
+visual_identity          # 计划字段
+near_agreement           # 指标字段
+part_reference_sampling  # （重复项无害）
+
+# ── tool（本仓库的脚本/门禁名）───────────────────────────────────────────
+check_jdk                # skills/mc-mod/scripts/check_jdk.py
+mcmod_gametest           # 判定脚本
+# ── 第二轮补进白名单（都用 grep 看过上下文，理由见组注释）──────────────
+# vanilla：原版资产/贴图/类名（时钟 2 帧、唱片 11/13、马/羊/牛/史莱姆模型与渲染层…）
+destroy_stage_0                    # vanilla
+horse_black                        # vanilla
+log_oak_top                        # vanilla
+gold_helmet                        # vanilla
+iron_helmet                        # vanilla
+leather_helmet                     # vanilla
+bow_pulling_0                      # vanilla
+bow_body                           # vanilla
+pulling_1                          # vanilla
+clock_00                           # vanilla
+clock_01                           # vanilla
+record_11                          # vanilla
+record_13                          # vanilla
+ModelBase                          # vanilla
+ModelBiped                         # vanilla
+ModelBox                           # vanilla
+ModelCoratee                       # vanilla
+ModelCow                           # vanilla
+ModelQuadruped                     # vanilla
+ModelRenderer                      # vanilla
+ModelSlime                         # vanilla
+RenderHelper                       # vanilla
+RenderSheep                        # vanilla
+LayerSlimeGel                      # vanilla
+
+# api：Java/Python 的异常类与字节码名（mc-art 的注释在解释 JVM 行为）
+AttributeError                     # api
+TypeError                          # api
+ZipFile                            # api
+aload_0                            # api
+
+# engine：mc-art 自己的类/字段/CLI（随包发的公开代码）与 family:source 语法里的族名
+AppearanceSpec                     # engine
+AssetRoot                          # engine
+BlockLog                           # engine
+BoxSpec                            # engine
+GroupCatalogue                     # engine
+IndexEntry                         # engine
+ReferenceIndex                     # engine
+analyze_png                        # engine
+blade_front                        # engine
+block_multi                        # engine
+boxes_for_texture                  # engine
+cache_hit                          # engine
+cluster_only                       # engine
+colour_tolerance                   # engine
+compile_geometry                   # engine
+cut_face_opening                   # engine
+entity_uv                          # engine
+family_member                      # engine
+fill_head                          # engine
+generated_roots                    # engine
+head_base                          # engine
+layout_from_boxes                  # engine
+list_layouts                       # engine
+max_frames                         # engine
+minimum_margin                     # engine
+model_authored                     # engine
+model_decides                      # engine
+motif_policy                       # engine
+paint_only                         # engine
+part_3                             # engine
+plan_from_file                     # engine
+reference_locked                   # engine
+reference_part_map                 # engine
+region_bounds                      # engine
+region_rules                       # engine
+remap_palette_to_anchor            # engine
+render_views                       # engine
+requires_silhouette_change         # engine
+run_quality_loop                   # engine
+shape_policy                       # engine
+target_color                       # engine
+target_model_uv                    # engine
+texture_path                       # engine
+texture_width                      # engine
+transparent_inside                 # engine
+uv_fill                            # engine
+verify_texture                     # engine
+time                               # engine
+fit                                # engine
+render                             # engine
+layer                              # engine
+log                                # engine
+node                               # engine
+bow                                # engine
+namespace                          # engine
+forge                              # engine
+
+# format：Gradle 坐标与 CLI 示例里的输入输出名
+minecraftforge                     # format
+mean_delta                         # format
+selected_round                     # format
+out_dir                            # format
+gen_a                              # format
+gen_b                              # format
+src_a                              # format
+src_b                              # format
+asset_groups                       # format

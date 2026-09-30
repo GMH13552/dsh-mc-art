@@ -38,9 +38,20 @@ function createReact() {
   let dirty = false
   return {
     api: {
-      createElement: (type, props, ...children) => ({
-        type: type, props: props || {}, children: children.flat(Infinity).filter((child) => child !== null && child !== undefined && child !== false),
-      }),
+      Component: class Component {
+        constructor(props) { this.props = props || {}; this.state = this.state || {} }
+        setState(next) { this.state = Object.assign({}, this.state, typeof next === 'function' ? next(this.state) : next) }
+      },
+      // **和真 React 一样**：只有一个孩子时 `props.children` 就是那个孩子本身，
+      // 不是数组。差别在这里会咬人：渲染边界 render() 返回 `this.props.children`，
+      // 拿到数组就没人再往下渲染了（面板会渲染成空 —— 正是"白屏"那个症状）。
+      createElement: (type, props, ...children) => {
+        const kids = children.flat(Infinity).filter((child) => child !== null && child !== undefined && child !== false)
+        const merged = Object.assign({}, props || {})
+        if (kids.length > 0) merged.children = kids.length === 1 ? kids[0] : kids
+        return { type: type, props: merged,
+          children: kids }
+      },
       useState: (initial) => {
         const at = cursor++
         if (!(at in store)) store[at] = typeof initial === 'function' ? initial() : initial
@@ -108,20 +119,52 @@ function makeHost(hostCalls) {
 
 async function mount(component, props, host, react) {
   let tree = null
-  // 槽里注册的通常是 `() => <Atlas …/>` 这种包装：它自己不用 hook，真正的组件是里层。
-  // 假 React 没有"调用函数组件"的机制，所以这里手工穿一层（穿到不是函数为止）。
-  function resolve(element) {
+  /**
+   * 沿"组件链"下降：槽里注册的包装 → 渲染边界（类组件）→ Atlas（函数组件），
+   * 直到遇到宿主元素（div 之类）为止。**不递归调用树里的其他函数组件** ——
+   * 假 React 没有 React 那套"每个组件自己的 hook 状态"，递归调用会把 hook 顺序搞乱。
+   *
+   * 链上函数组件抛出的异常，交给栈里最近的类边界（`getDerivedStateFromError`），
+   * 这就是"渲染炸了不能白屏"要验证的那条路径。
+   */
+  function renderChain(element, stack) {
     let node = element
-    for (let depth = 0; depth < 4 && node !== null && typeof node === 'object' && typeof node.type === 'function'; depth++) {
-      node = node.type(node.props)
+    for (let depth = 0; depth < 8; depth++) {
+      if (node === null || node === undefined || typeof node !== 'object' || typeof node.type !== 'function') return node
+      const type = node.type
+      const props = node.props || {}
+      const isClass = type.prototype !== undefined && typeof type.prototype.render === 'function'
+      if (isClass) {
+        const instance = new type(props)
+        instance.props = props
+        if (instance.state === undefined || instance.state === null) instance.state = {}
+        stack.push(instance)
+        node = instance.render()
+        continue
+      }
+      try {
+        node = type(props)
+      } catch (error) {
+        let boundaryAt = -1
+        for (let at = stack.length - 1; at >= 0; at--) {
+          const ctor = stack[at].constructor || {}
+          if (typeof ctor.getDerivedStateFromError === 'function') { boundaryAt = at; break }
+        }
+        if (boundaryAt < 0) throw error
+        const instance = stack[boundaryAt]
+        instance.state = instance.constructor.getDerivedStateFromError(error)
+        stack.length = boundaryAt + 1
+        node = instance.render()
+      }
     }
     return node
   }
+
   async function settle(limit) {
     let quiet = 0
     for (let pass = 0; pass < (limit === undefined ? 60 : limit); pass++) {
       react.beginPass()
-      tree = resolve(component(props))
+      tree = renderChain(component(props), [])
       const ran = react.flushEffects()
       // 抽干 effect 里发出的 host.call：它们大多要两三个 tick 才有结果，
       // 而"这一遍没跑 effect"不等于"界面稳定了"（promise 还没回来）。
@@ -212,8 +255,8 @@ function buildPanel(source, host, reactApi) {
     timer: { interval: () => () => {}, timeout: async () => {} },
   }
   const styles = { insert: () => () => {}, remove: () => {} }
-  const plugin = new Function('React', 'host', 'styles', 'console', source)(
-    reactApi, host, styles, console)
+  const plugin = new Function('React', 'host', 'styles', 'console', 'PANEL_VERSION', source)(
+    reactApi, host, styles, console, '0.0.0-test')
   plugin.apply(ctx)
   const main = seen.filter((item) => item.settings.name === 'main')[0]
   if (main === undefined) throw new Error('客户端没有注册 main 槽：' + seen.map((i) => i.settings.name).join(','))
@@ -281,6 +324,19 @@ async function main() {
     check('点"用这个路径"真的把路径写进了设置',
       wrote !== undefined && wrote.args && wrote.args.directory === 'D:\\games\\.minecraft',
       JSON.stringify(wrote && wrote.args))
+  }
+
+  // ── 渲染炸了不许白屏：边界必须把错误画出来 ────────────────────────────────
+  console.log('--- 渲染异常：边界要把话画出来（而不是一片空白）')
+  globalThis.__MCART_FORCE_RENDER_ERROR__ = true
+  try {
+    const boom = await mount(component, { sessionId: 'ui-test' }, host, createReact())
+    check('渲染抛异常时，屏幕上出现错误文字（不是空白）',
+      boom.text().indexOf('面板渲染失败') >= 0 && boom.text().indexOf('注入的渲染错误') >= 0,
+      boom.text().slice(0, 160) || '（空白）')
+    check('并且带着可报的版本号', boom.text().indexOf('0.0.0-test') >= 0, boom.text().slice(0, 200))
+  } finally {
+    globalThis.__MCART_FORCE_RENDER_ERROR__ = false
   }
 
   console.log(failures === 0 ? '全部通过' : failures + ' 项失败')

@@ -165,10 +165,12 @@ if (FAULT) {
 let loaded = null
 const registered = []
 const React = {
-  createElement: () => null,
+  createElement: (type, props, ...children) => ({ type: type, props: props || {}, children: children }),
   useState: (initial) => [initial, () => {}],
   useEffect: () => {}, useRef: () => ({ current: null }),
   useMemo: (fn) => fn(), useCallback: (fn) => fn(),
+  // 渲染边界用的是类组件：真 React 有 Component，桩不给就等于没测那条路。
+  Component: class Component { constructor(props) { this.props = props || {} } },
 }
 const window = { __ModuleLoader__: { load: (spec) => { loaded = spec } } }
 // 客户端 bundle 期望的 require：真页面里它给的是同一个 React 实例与各服务包。
@@ -224,6 +226,8 @@ function clientRun(options) {
   return {
     seen,
     result,
+    /** 让 tab 服务在迁移回调跑之前消失（真实竞态）。 */
+    dropTabs() { tabsPresent = false },
     /** 右侧栏服务"晚到"了：服务出现后触发回调，面板应当从左边搬过去。 */
     arriveLate() {
       tabsPresent = true
@@ -267,6 +271,27 @@ check('服务晚到之后，搬到右侧栏且撤掉左栏那份',
   !lateRun.seen.some((key) => key.startsWith('main:')), lateRun.seen.join(' '))
 
 // 真注入：把宿主入口那层垫片去掉（模拟"直接当动态插件跑"），派发路由就不该存在。
+// ── 「刷新之后右边栏一片空白」的不变量 ──────────────────────────────────────
+//
+// 用户实测：跑构建的过程中点刷新，右边栏变空白。空白＝**一个落点都没注册上**，
+// 而迁移代码原来是"先撤左栏、再发现服务不在就 return"（placement 还写死成 right，
+// 再也不重试）。这一组把四种壳都过一遍，要求：**任何情况下都至少有一个落点**。
+for (const options of [{ services: true }, { tabs: true, slotEntries: ['sidebar.right.pane.tab'] },
+  { slotEntries: ['sidebar.right.pane.tab'] }, {}]) {
+  const seen = clientRun(options).seen
+  check('任何一种壳下都至少有一个落点（不会两处都空）：' + JSON.stringify(options),
+    seen.length > 0, seen.join(' ') || '（一个都没有 —— 这就是白屏）')
+}
+// 竞态：apply 时 tab 服务在（于是选了右栏），等迁移回调真的跑时服务**已经不在了**
+// —— 老代码这时已经撤掉左栏、placement 也写死成 right，于是两处都空（白屏）。
+// 新代码要求：还能挂（pane 槽在）就挂上去，绝不两处都空。
+const race = clientRun({ services: true, slotEntries: ['sidebar.right.pane.tab'], dropTabsAfterApply: true })
+race.dropTabs()
+race.arriveLate()
+check('tab 服务在迁移前消失时：面板留在能点开的地方（不消失、也不挂成点不开的 pane）',
+  race.seen.some((key) => key.startsWith('main:') || key.startsWith('sidebar.panellist:') ||
+    key.startsWith('sidebar.right.pane.tab:')), race.seen.join(' ') || '（空白）')
+
 const withoutShim = readFileSync(join(HERE, 'lib', 'index.js'), 'utf8')
   .replace('const harness = {', 'const harness = null && {')
 const injectedRoutes = []

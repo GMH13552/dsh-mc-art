@@ -56,6 +56,8 @@ export function isJunk(path) {
 }
 
 export const PACKAGE_NAME = JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).name
+/** 版本：渲染边界会把它画进错误信息里，于是"白屏"永远带着可报的版本号。 */
+export const PACKAGE_VERSION = JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).version
 if (typeof PACKAGE_NAME !== 'string' || PACKAGE_NAME === '') {
   throw new Error('panel/package.json 里没有有效的 name，客户端 bundle 不知道该注册成什么 id')
 }
@@ -288,7 +290,8 @@ window.__ModuleLoader__.load({
       },
     }
 
-    var plugin = new Function('React', 'host', 'styles', 'console', SOURCE)(React, host, styles, console)
+    var plugin = new Function('React', 'host', 'styles', 'console', 'PANEL_VERSION', SOURCE)(
+      React, host, styles, console, ${JSON.stringify(JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).version)})
     if (plugin === null || typeof plugin !== 'object' || typeof plugin.apply !== 'function') {
       throw new Error('mcart 客户端源码没有返回一个带 apply 的插件')
     }

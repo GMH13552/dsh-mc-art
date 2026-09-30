@@ -34,8 +34,8 @@ return {
     // for itself.  `Function` compiles in GLOBAL scope, so the wrapper's
     // bindings are not inherited -- every one of them has to be a parameter, or
     // the loaded half sees a bare `styles is not defined`.
-    const inner = new Function('React', 'host', 'styles', 'console',
-      reply.text)(React, host, styles, console)
+    const inner = new Function('React', 'host', 'styles', 'console', 'PANEL_VERSION',
+      reply.text)(React, host, styles, console, 'dev')
     if (inner === null || typeof inner !== 'object' || typeof inner.apply !== 'function') {
       throw new Error('mcart 客户端源码没有返回一个带 apply 的插件')
     }

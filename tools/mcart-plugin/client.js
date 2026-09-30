@@ -949,7 +949,49 @@ return {
     const inRightColumn = tabsReady !== undefined &&
       (sidebarRightReady !== undefined || slotHasEntries('sidebar.right.pane.tab'))
 
+    /**
+     * 面板**不允许白屏**。
+     *
+     * 渲染时抛异常，React 会把整棵子树卸掉 —— 屏幕上什么都不剩，也没有任何提示，
+     * 用户只能报"一片空白"。这个边界把错误本身画出来（带包名与版本），于是
+     * "空白"这种状态永远带着一句话，能直接贴给我。
+     */
+    // `React.Component` **不是每个壳都保证有的**：缺了它，`class X extends undefined` 会在
+    // 模块求值时就抛 —— 一个为了"别白屏"而加的东西，反过来把整个面板炸掉。所以先问一句，
+    // 没有就退化成"直接渲染孩子"（没有边界，但至少能用）。
+    const canUseBoundary = typeof React.Component === 'function'
+    const PanelBoundary = canUseBoundary
+      ? class PanelBoundary extends React.Component {
+        constructor(props) {
+          super(props)
+          this.state = { error: null }
+        }
+        static getDerivedStateFromError(error) {
+          return { error: error }
+        }
+        componentDidCatch(error) {
+          try { console.error('[mcart] 面板渲染失败', error) } catch (ignored) { /* 没有 console 也不能再炸 */ }
+        }
+        render() {
+          if (this.state.error === null || this.state.error === undefined) return this.props.children
+          const message = this.state.error !== null && this.state.error.message !== undefined
+            ? this.state.error.message : this.state.error
+          return React.createElement('div', { className: 'mcart-root' },
+            React.createElement('div', { className: 'mcart-err' },
+              '面板渲染失败：' + String(message)),
+            React.createElement('div', { className: 'mcart-hint' },
+              '刷新一次；如果仍是这一句，把它连同"MC 资产"面板发给我 —— 版本：' + String(PANEL_VERSION)),
+          )
+        }
+      }
+      : function PanelBoundary(props) { return props.children }
+
     function Atlas(props) {
+      // 故障注入的缝：门禁把它置真，用来证明"渲染抛异常时边界真的会画出那句话"
+      // （生产里这面旗永远是 undefined）。
+      if (typeof globalThis !== 'undefined' && globalThis.__MCART_FORCE_RENDER_ERROR__ === true) {
+        throw new Error('注入的渲染错误')
+      }
       const sessionId = props.sessionId === undefined ? '' : String(props.sessionId)
       const indexPair = React.useState(null)
       const failurePair = React.useState(null)
@@ -3599,7 +3641,7 @@ return {
       const keep = []
       slots.inject('main', () => {
         const stop = slots.register({ name: 'main', key: 'mcarts' },
-          () => React.createElement(Atlas, { sessionId: '' }))
+          () => React.createElement(PanelBoundary, null, React.createElement(Atlas, { sessionId: '' })))
         keep.push(stop)
         return stop
       })
@@ -3613,14 +3655,25 @@ return {
     }
     function placeRight() {
       if (placement === 'right') return
+      // **先确认能不能挂上，再撤左栏。**
+      //
+      // 原来这里是：先 `placement = 'right'`、先把左栏那份撤掉，然后才发现
+      // `sidebarRightTabs` 不在、直接 return —— 于是**两处都没有**，右边栏一片空白，
+      // 而且 placement 已经写成 'right'，再也不会重试。用户实测就是"刷新之后右边栏
+      // 一片空白"。（`slotHasEntries` 让 inRightColumn 为真、而服务恰好不在时就会走到。）
+      //
+      // 现在：没有 tab 服务、也没有 pane 槽时**什么都不动**（保留左栏那份能用的）；
+      // 只要还能挂（服务在，或槽在），就挂上去，然后才撤左栏。
+      const rightTabs = ctx.get('sidebarRightTabs')
+      // 拿不准就**什么都别动**：左栏那份至少点得开。只挂 pane、不挂 tab 是一种更糟的
+      // 失败 —— 面板画在右栏里，但没有任何标签能点开它（用户报的就是"右侧栏打不开"）。
+      if (rightTabs === undefined) return
       if (placement === 'left') {
         // 搬到右栏：先把左栏那份撤掉，免得同一个面板在两处都在。
         for (const stop of leftStops) { try { stop() } catch (error) {  } }
         leftStops.length = 0
       }
       placement = 'right'
-      const rightTabs = ctx.get('sidebarRightTabs')
-      if (rightTabs === undefined) return
       ctx.effect(() => rightTabs.register({
         id: TAB_ID,
         kind: TAB_ID,
@@ -3633,9 +3686,15 @@ return {
           description: () => '在右侧栏里看这个项目的方块 / 实体 / 群系 / 多方块结构',
         }],
       }))
+      registerPane()
+    }
+
+    /** 把面板挂进右栏的 pane 槽（tab 服务在不在都要挂：槽里有壳就行）。 */
+    function registerPane() {
       slots.inject('sidebar.right.pane.tab', () => slots.register(
         { name: 'sidebar.right.pane.tab', key: TAB_ID },
-        (props) => React.createElement(Atlas, { sessionId: props.sessionId }),
+        (props) => React.createElement(PanelBoundary, null,
+          React.createElement(Atlas, { sessionId: props.sessionId })),
       ))
       slots.inject('sidebar.right.pane.tab.title', () => slots.register(
         { name: 'sidebar.right.pane.tab.title', key: TAB_ID },

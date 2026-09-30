@@ -18,7 +18,7 @@ invisible.
   "schema": "mc-art.atlas/1",
   "namespace": "examplemod",
   "pack": "pack",
-  "entities":   [ { "id": "blood_sheep", "layers": [ … ], "refs": [ … ] } ],
+  "entities":   [ { "id": "example_sheep", "layers": [ … ], "refs": [ … ] } ],
   "biomes":     [ { "id": "example_biome", "cells": [ { "block": "example_soil", "at": [-3, 0, -3] } ] } ],
   "structures": [ { "id": "…", "cells": [ … ] } ]
 }
@@ -48,7 +48,7 @@ as written.
     "directory": "/mnt/c/…/versions/1.18.2-Forge_40.2.0",
     "includeGenerated": true,
     "includeMods": true,
-    "mods": { "minecraft": true, "aoa3": true, … }
+    "mods": { "minecraft": true, "examplemod": true, … }
   }
 }
 ```
