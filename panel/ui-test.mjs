@@ -23,6 +23,9 @@ import { fileURLToPath } from 'node:url'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SOURCE_PATH = join(HERE, '..', 'tools', 'mcart-plugin', 'client.js')
 const FAULT = process.argv.includes('--fault')
+// 第二个故障模式：把"JSON 丢字段"那处的守卫还原成旧的 `=== null` 写法
+// （用户实测的崩溃：`Cannot read properties of undefined (reading 'textureIds')`）。
+const FAULT_JSON = process.argv.includes('--fault-json')
 
 let failures = 0
 function check(label, ok, detail) {
@@ -196,6 +199,13 @@ async function mount(component, props, host, react) {
       await button.props.onClick()
       await settle()
     },
+    /** 按"文字包含"点按钮：菜单里那一行是 `标题id` 连在一起的，精确匹配会找不到。 */
+    async clickLabel(fragment) {
+      const button = buttons().filter((node) => textOf(node).indexOf(fragment) >= 0)[0]
+      if (button === undefined) throw new Error('屏幕上没有文字包含「' + fragment + '」的按钮。现在有：' + buttons().map(textOf).join(' / '))
+      await button.props.onClick()
+      await settle()
+    },
     /** 直接调某个按钮的 onClick（返回值也拿到，便于断言 promise）。 */
     buttonProps(label) {
       const button = buttons().filter((node) => textOf(node) === label)[0]
@@ -224,7 +234,8 @@ function makeHandlers(options) {
     if (name === 'atlas.scan') {
       return { rootSpecified: true, root: (args || {}).root, cached: false, errors: [],
         projects: [{ id: PROJECT.id, title: PROJECT.title, namespace: PROJECT.namespace, root: (args || {}).root,
-          items: { biome: [], structure: [], entity: [], block: [] } }] }
+          // 有物品可选：下面那条"recipe 缺失"的用例要从菜单点进去
+          items: { biome: [], structure: [], entity: [], block: [{ id: 'example_block', title: '示例方块' }] } }] }
     }
     if (name === 'atlas.settings') return Object.assign({}, settings, savedSettings === null ? {} : { directory: savedSettings })
     if (name === 'atlas.saveSettings') { savedSettings = (args || {}).directory; return { saved: true, file: settings.file, path: settings.path, via: 'fs' } }
@@ -265,12 +276,20 @@ function buildPanel(source, host, reactApi) {
 
 async function main() {
   const source = readFileSync(SOURCE_PATH, 'utf8')
-  const faulted = FAULT
-    ? source.replace(/rows\.push\(React\.createElement\('div', \{ className: 'mcart-bar', key: 'dirinput' \}[\s\S]*?\)\)\n/, '')
-    : source
-  if (FAULT && faulted === source) {
-    console.log('  FAIL --fault 没生效：源码里找不到设置卡的手输框那一段（门禁要跟着改）')
-    process.exit(1)
+  let faulted = source
+  if (FAULT_JSON) {
+    faulted = source.replace('const ids = idsOf(asset.recipe)',
+      "const ids = asset.recipe === null ? [] : (asset.recipe.textureIds || [])")
+    if (faulted === source) {
+      console.log('  FAIL --fault-json 没生效：找不到 idsOf(asset.recipe) 那一处（门禁要跟着改）')
+      process.exit(1)
+    }
+  } else if (FAULT) {
+    faulted = source.replace(/rows\.push\(React\.createElement\('div', \{ className: 'mcart-bar', key: 'dirinput' \}[\s\S]*?\)\)\n/, '')
+    if (faulted === source) {
+      console.log('  FAIL --fault 没生效：源码里找不到设置卡的手输框那一段（门禁要跟着改）')
+      process.exit(1)
+    }
   }
 
   console.log('--- 设置卡：手输路径 + 可见提示 + 检出的候选目录')
@@ -330,7 +349,7 @@ async function main() {
   console.log('--- 渲染异常：边界要把话画出来（而不是一片空白）')
   globalThis.__MCART_FORCE_RENDER_ERROR__ = true
   try {
-    const boom = await mount(component, { sessionId: 'ui-test' }, host, createReact())
+    const boom = await mount(component, { sessionId: 'ui-test' }, host, react)
     check('渲染抛异常时，屏幕上出现错误文字（不是空白）',
       boom.text().indexOf('面板渲染失败') >= 0 && boom.text().indexOf('注入的渲染错误') >= 0,
       boom.text().slice(0, 160) || '（空白）')
@@ -338,6 +357,48 @@ async function main() {
   } finally {
     globalThis.__MCART_FORCE_RENDER_ERROR__ = false
   }
+
+  // ── 用户实测那次崩溃的前提：选中一个物品，但它的 recipe 不在 ──────────────────
+  //
+  // 宿主与面板走 JSON，`undefined` 字段会被丢掉 —— 于是"没有这个物品的配方"到客户端
+  // 就是 `undefined`，而旧代码只写了 `=== null` 守卫：
+  //   `asset.recipe === null ? [] : asset.recipe.textureIds`  → 当场抛
+  //   "Cannot read properties of undefined (reading 'textureIds')" → 白屏。
+  // 这里复现它，要求：**面板照常渲染**（出现边界那句话就算失败）。
+  console.log('--- 物品的配方缺失（JSON 丢字段那种）：不许白屏')
+  globalThis.__MCART_FORCE_RENDER_ERROR__ = false
+  calls.length = 0
+  // 注意：**必须复用同一个假 React 实例** —— 组件的 hook 是绑在它上面的，
+  // 换一个新实例等于状态分家（第一次换实例时表现是"这次挂载一个 host 调用都没有"）。
+  const itemUi = await mount(component, { sessionId: 'ui-test' }, host, react)
+  if (itemUi.buttonProps('用本会话目录') !== undefined) await itemUi.click('用本会话目录')
+  if (process.env.UI_DEBUG === '1') {
+    console.log('  [debug] 物品用例屏上：' + itemUi.text().slice(0, 200) + ' || 按钮：' + itemUi.buttons().join(' / '))
+    console.log('  [debug] 这次挂载的 host 调用：' + calls.map((call) => call.name).join(', '))
+  }
+  // 菜单里的物品按钮：点了它会去取 3D/图标，而它的 recipe 不存在
+  const clicked = await itemUi.clickLabel('示例方块').then(() => true).catch(() => false)
+  check('能点开一个"配方缺失"的物品（菜单里有它）', clicked === true, itemUi.buttons().join(' / '))
+  const itemText = itemUi.text()
+  check('配方缺失时面板照常渲染（不是白屏、也不该走边界）',
+    itemText.indexOf('面板渲染失败') < 0 && itemText.length > 0, itemText.slice(0, 160) || '（空白）')
+
+  // ── 形状不变量：每一次读 `.textureIds` 都必须是"总取值" ─────────────────────
+  //
+  // 用户实测的崩溃是 `Cannot read properties of undefined (reading 'textureIds')`：
+  // 宿主与面板走 JSON，**`undefined` 字段会被丢掉**，所以"少一个字段"是常态，
+  // 而代码里大量守卫只写了 `=== null`（107 处）。与其逐个补，不如把这条钉死：
+  // 发出去的客户端里，任何 `.textureIds` 的读取要么走 idsOf()，要么先 Array.isArray，
+  // 要么是在归一化构造里（`textureIds: idsOf(...)`）。
+  const rawReads = faulted.split('\n').filter((line) => /\.textureIds\b/.test(line)).filter((line) => {
+    if (line.indexOf('idsOf(') >= 0) return false
+    if (line.indexOf('Array.isArray') >= 0) return false
+    if (/textureIds:\s*idsOf\(/.test(line)) return false
+    if (/^\s*(\*|\/\/)/.test(line)) return false
+    return true
+  })
+  check('客户端里没有"裸读 .textureIds"的地方（JSON 丢字段不会白屏）',
+    rawReads.length === 0, rawReads.map((line) => line.trim().slice(0, 90)).join(' ｜ '))
 
   console.log(failures === 0 ? '全部通过' : failures + ' 项失败')
   process.exit(failures === 0 ? 0 : 1)

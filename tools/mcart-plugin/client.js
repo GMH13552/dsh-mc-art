@@ -774,6 +774,50 @@ const HUD_SLOTS = 9
  * the normal state of a generated item), so a key-exists test turned every flat
  * item into "取不到" -- a tool, a sword, a project's own sprite.
  */
+/**
+ * 缺失判定与"总取值"。
+ *
+ * 为什么需要：面板和宿主之间走 JSON，而 **JSON 会把 `undefined` 的字段整条丢掉**。
+ * 于是宿主那边的"没有这个字段"到客户端就是 `undefined`，而代码里大量守卫只写了
+ * `=== null`（107 处）。用户实测的崩溃就是这么来的：
+ *   `const ids = asset.recipe === null ? [] : (asset.recipe.textureIds || [])`
+ * `recipe` 不在时是 `undefined`，`=== null` 放它过去 → 读 `.textureIds` 当场抛
+ * `Cannot read properties of undefined (reading 'textureIds')`（面板白屏）。
+ *
+ * 所以形状取值一律走这里：缺失（null/undefined）与非数组都给空数组，永不抛。
+ */
+const isAbsent = (value) => value === null || value === undefined
+const idsOf = (value) => (isAbsent(value) || !Array.isArray(value.textureIds) ? [] : value.textureIds)
+const objectOf = (value) => (isAbsent(value) || typeof value !== 'object' ? {} : value)
+const arrayOf = (value) => (Array.isArray(value) ? value : [])
+
+/**
+ * 把宿主回来的场景**归一化**再存进 state。
+ *
+ * 为什么在"存"这一侧做：JSON 会丢掉 `undefined` 字段，所以"少一个字段"是常态而不是
+ * 异常。以前是把 payload 原样存进 `scene`，之后每个读它的人都得自己防 —— 漏一处就是
+ * 一次白屏（用户实测 `asset.recipe` 那处就是这么炸的）。现在存之前补齐：数组字段一律
+ * 是数组，对象字段一律是对象，可空的保持 null。
+ */
+const sceneOf = (payload) => ({
+  kind: payload.kind,
+  id: payload.id,
+  title: payload.title,
+  project: payload.project,
+  quads: arrayOf(payload.quads),
+  textureIds: idsOf(payload),
+  textures: objectOf(payload.textures),
+  animations: objectOf(payload.animations),
+  cells: isAbsent(payload.cells) ? null : payload.cells,
+  faceStep: payload.faceStep,
+  refs: arrayOf(payload.refs),
+  ref: isAbsent(payload.ref) ? null : payload.ref,
+  palette: arrayOf(payload.palette),
+  box: isAbsent(payload.box) ? null : payload.box,
+  errors: arrayOf(payload.errors),
+  preview: payload.preview === true,
+})
+
 function failureOf(reply) {
   if (reply === null || reply === undefined) return '没有返回结果'
   if (reply.error === undefined || reply.error === null) return null
@@ -1135,7 +1179,7 @@ return {
           if (result.error !== undefined) { setFailure(result.error); setScene(null); return }
           setFailure(null)
           for (const key of Object.keys(imageNodes)) delete imageNodes[key]
-          setScene(result)
+          setScene(sceneOf(result))
         }).catch((error) => { setBusy(false); setFailure(String(error && error.message ? error.message : error)) })
       }
 
@@ -1474,16 +1518,16 @@ return {
         if (scene === null && item === null) return
         // The ghost brings its own textures, and they need decoding before the
         // overlay can draw them.
-        const needed = (scene === null ? [] : (scene.textureIds || [])).slice()
+        const needed = idsOf(scene).slice()
         // What the MODEL is waiting for.  The icon textures below go into the
         // same decode list but must never hold the model back: a mod icon whose
         // texture is missing from the jar would freeze the 3D view entirely.
         const waiting = needed.slice()
         if (ghost !== null && Array.isArray(ghost.textureIds)) {
-          for (const id of ghost.textureIds) if (needed.indexOf(id) < 0) needed.push(id)
+          for (const id of idsOf(ghost)) if (needed.indexOf(id) < 0) needed.push(id)
         }
         for (const recipe of iconRecipesInUse()) {
-          for (const id of (recipe.textureIds || [])) if (needed.indexOf(id) < 0) needed.push(id)
+          for (const id of idsOf(recipe)) if (needed.indexOf(id) < 0) needed.push(id)
         }
         let changed = false
         if (scratch !== null) {
@@ -1625,7 +1669,7 @@ return {
           const recipe = itemRecipes[key]
           if (recipe === undefined || recipe === null || recipe.shape === 'none') continue
           let ready = true
-          for (const id of (recipe.textureIds || [])) {
+          for (const id of idsOf(recipe)) {
             if (decoded[id] === undefined && failedTex[id] !== true) { ready = false; break }
           }
           if (!ready) continue
@@ -1931,10 +1975,10 @@ return {
           }
           lastDrawKey = ''
           setFailure(null)
-          setScene({ kind: 'block', id: reference, title: entry.name || entry.id,
-            quads: result.quads, textureIds: result.textureIds, textures: result.textures,
-            animations: result.animations || {}, cells: null, palette: [], errors: [],
-            box: boxOfQuads(result.quads), preview: true })
+          setScene(sceneOf({ kind: 'block', id: reference, title: entry.name || entry.id,
+            quads: result.quads, textureIds: idsOf(result), textures: result.textures,
+            animations: result.animations, cells: null, palette: [], errors: [],
+            box: boxOfQuads(arrayOf(result.quads)), preview: true }))
           setVoxel(null)
           setHover(null)
           setGhost(null)
@@ -2233,7 +2277,7 @@ return {
           // The draw guard keys on quad count, and swapping one block for
           // another keeps the count the same -- so it is invalidated by hand.
           lastDrawKey = ''
-          setScene(result)
+          setScene(sceneOf(result))
           releaseRefs()
         }).catch((error) => {
           setVoxel(Object.assign({}, state, { busy: false, msg: '预览失败：' + String(error && error.message ? error.message : error) }))
@@ -2759,7 +2803,7 @@ return {
           // host resolved from the texture handle.
           setVoxel(null)
           const ids = asset.recipe === null ? []
-            : (asset.recipe.textureIds || []).filter((id) => decoded[id] !== undefined)
+            : idsOf(asset.recipe).filter((id) => decoded[id] !== undefined)
           if (ids.length === 0) {
             setEdit(null)
             setItemMsg(asset.title + ' 还没有解码成功的贴图，改不了')
@@ -2778,7 +2822,7 @@ return {
           return
         }
         setVoxel(null)
-        const ids = (scene.textureIds || []).filter((id) => decoded[id] !== undefined)
+        const ids = idsOf(scene).filter((id) => decoded[id] !== undefined)
         if (ids.length === 0) {
           setEdit(null)
           setEditMsg('这个资产没有解码成功的贴图，改不了')
@@ -3316,8 +3360,8 @@ return {
       const stage = []
       // Filled in below, appended AFTER the canvas -- see the note there.
       const animRows = []
-      if (scene !== null) {
-        const ids = scene.textureIds || []
+      if (!isAbsent(scene)) {
+        const ids = idsOf(scene)
         const okCount = ids.filter((id) => decoded[id] !== undefined).length
         const bad = ids.filter((id) => failedTex[id] === true).length
         stage.push(React.createElement('div', { className: 'mcart-bar', key: 'row' },
@@ -3363,7 +3407,7 @@ return {
             + ' · 判定 ' + (tex === undefined ? '等解码' : (strip === null ? '不是条带 ← 会糊' : '单帧 ' + strip))
             + ' · 现在抽第 ' + String(row) + ' 行'))
         }
-        for (const id of (scene === null ? [] : (scene.textureIds || []))) {
+        for (const id of idsOf(scene)) {
           if (animIndex[id] !== undefined) continue
           const tex = decoded[id]
           if (tex === undefined) continue
@@ -3383,13 +3427,21 @@ return {
       // The icon of whatever is selected, which is also what the bar's selected
       // slot draws.  Two things need it before the viewport is built: the poster
       // (below) and the notes (after it).
-      const pickedRecipe = hudOn === '' || item === null ? null : itemRecipes[itemKey(item.namespace, hudOn)]
+      // **这里必须收成 null**：`itemRecipes[key]` 在"配方还没取到"时是 `undefined`
+      // （JSON 丢字段、或那次运行里资源正在被写），而下游每一处守卫写的都是 `=== null`。
+      // 用户实测的崩溃链就是这一条：
+      //   pickedRecipe === undefined → itemAsset() 返回的 recipe 是 undefined
+      //   → `asset.recipe === null ? … : asset.recipe.textureIds` 放它过去
+      //   → Cannot read properties of undefined (reading 'textureIds') → 面板白屏。
+      // 与其在每一处读的地方各补一次，不如在这里就只说两种状态：有配方 / 没有(null)。
+      const pickedRecipe = hudOn === '' || item === null
+        ? null : (itemRecipes[itemKey(item.namespace, hudOn)] || null)
       // The row a block gets, for an asset that has no scene: the same two
       // buttons, because an item is an asset too.
       if (scene === null) {
         const asset = itemAsset()
         if (asset !== null) {
-          const ids = asset.recipe === null ? [] : (asset.recipe.textureIds || [])
+          const ids = idsOf(asset.recipe)
           const okCount = ids.filter((id) => decoded[id] !== undefined).length
           stage.push(React.createElement('div', { className: 'mcart-bar', key: 'itemrow' },
             React.createElement('span', { className: 'mcart-note' },
