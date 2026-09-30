@@ -21,7 +21,7 @@ const fsService = {
   },
   async readText(p) { return nodeFs.readFileSync(p, 'utf8') },
   async readBytes(p) { return new Uint8Array(nodeFs.readFileSync(p)) },
-  async writeText(p, text) { nodeFs.writeFileSync(p, text); return {} },
+  async writeText(p, text) { nodeFs.mkdirSync(nodePath.dirname(p), { recursive: true }); nodeFs.writeFileSync(p, text); return {} },
 }
 
 const shellService = {
@@ -69,21 +69,37 @@ function jsonProblem(value, path, depth) {
   return null
 }
 
-const handlers = {}
-const ctx = { get: (n) => (n === 'fs' ? fsService : n === 'shell' ? shellService : undefined), effect: (fn) => fn() }
-globalThis.harness = {
-  handle: (name, fn) => {
-    handlers[name] = async (args) => {
-      const out = await fn(args)
-      const bad = jsonProblem(out, name + ' 的返回值', 0)
-      if (bad !== null) throw new Error('宿主返回值不是可无损 JSON 的数据：' + bad)
-      return out
-    }
-  },
+// 谁能看见哪些服务，由调用方决定——因为"服务缺席"是这台机器上真出现过的状态，
+// 门禁必须能把它造出来（`--fault` 靠的就是这个）。默认：fs + shell 都在，
+// **不发** node 垫片 —— 老门禁因此仍然是严的：shell 那条路错了就红，
+// 不会有一层垫片替它兜住、把红变成绿。
+function buildHandlers(options) {
+  const opts = options || {}
+  const handlers = {}
+  const services = { fs: opts.fs, shell: opts.shell, directoryPickerController: opts.picker }
+  const ctx = {
+    get: (n) => (Object.prototype.hasOwnProperty.call(services, n) ? services[n] : undefined),
+    effect: (fn) => fn(),
+  }
+  globalThis.harness = {
+    handle: (name, fn) => {
+      handlers[name] = async (args) => {
+        const out = await fn(args)
+        const bad = jsonProblem(out, name + ' 的返回值', 0)
+        if (bad !== null) throw new Error('宿主返回值不是可无损 JSON 的数据：' + bad)
+        return out
+      }
+    },
+  }
+  const plugin = new Function('harness', 'console', 'TextEncoder', 'btoa', 'atob', 'nodeFs', body)(
+    globalThis.harness, console, TextEncoder, btoa, atob, opts.nodeFs === undefined ? undefined : opts.nodeFs)
+  plugin.apply(ctx)
+  return handlers
 }
-const plugin = new Function(body)()
-plugin.apply(ctx)
-module.exports = { handlers }
+
+const handlers = buildHandlers({ fs: fsService, shell: shellService })
+module.exports = { handlers, buildHandlers, fsService, shellService,
+  localFsShim: require('./local-fs-shim.js').makeLocalFs() }
 
 if (require.main === module) {
   ;(async () => {

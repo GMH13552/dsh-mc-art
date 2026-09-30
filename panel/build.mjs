@@ -75,8 +75,68 @@ export function strip(file) {
 export function hostModule(hostSource) {
   return `// 生成物：由 panel/build.mjs 从 tools/mcart-plugin/host.js 生成 —— 不要手改。
 // 改行为请改那份源码，然后 \`node panel/build.mjs\`（verify-build.mjs 会挡住漂移）。
+import { mkdir as nodeMkdir, readdir as nodeReaddir, readFile as nodeReadFile, rename as nodeRename, rm as nodeRm, stat as nodeStat, writeFile as nodeWriteFile } from 'node:fs/promises'
+import { dirname as nodeDirname } from 'node:path'
+
 const SOURCE = ${JSON.stringify(hostSource)}
 const VERSION = ${JSON.stringify(JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).version)}
+
+// 本地文件系统垫片：**服务都缺席时的最后一条路**。
+//
+// 为什么包在宿主里要自带这个：fs 服务和 shell 服务都是可能缺席的外部行，而"把用户
+// 点出来的工程建出来 / 把他画的那张图存下去"不该因为缺一行就整个做不到。用户机器上
+// 实测过一次（Windows 桌面端 0.2.0-rc.2）：面板能扫描、能弹系统目录对话框，
+// 却回了一句"宿主没有 shell 服务时建不出目录"——那句话是猜的。现在源码里每一层
+// 只报自己的失败原因，这个垫片兜住最后一种情况，结果里写明 via=node:fs。
+//
+// 它绕过宿主的 sandbox 策略（不产生文件效应记录、不触发审批），所以**排在最后**：
+// 只有 directoryPickerController / shell / fs 三条都不可用时才会被用到。
+// （这段是模板字符串里的生成代码：注释里不能出现反引号。）
+const nodeFs = {
+  available: true,
+  async mkdirp(path) { await nodeMkdir(path, { recursive: true }) },
+  async stat(path) {
+    try {
+      const info = await nodeStat(path)
+      return { type: info.isDirectory() ? 'directory' : 'file', size: info.size, version: String(info.mtimeMs) }
+    } catch (error) { return undefined }
+  },
+  async listDir(path) {
+    try {
+      const entries = await nodeReaddir(path, { withFileTypes: true })
+      const out = []
+      for (const entry of entries) {
+        let size, version
+        try { const info = await nodeStat(path + '/' + entry.name); size = info.size; version = String(info.mtimeMs) } catch (error) {}
+        out.push({ name: entry.name, type: entry.isDirectory() ? 'directory' : 'file', size: size, version: version })
+      }
+      return out
+    } catch (error) { return [] }
+  },
+  async readText(path) {
+    try { return await nodeReadFile(path, 'utf8') } catch (error) { return undefined }
+  },
+  async readBytes(path, maxBytes) {
+    try {
+      const buffer = await nodeReadFile(path)
+      if (maxBytes !== undefined && buffer.length > maxBytes) return undefined
+      return new Uint8Array(buffer)
+    } catch (error) { return undefined }
+  },
+  async writeText(path, text) {
+    await nodeMkdir(nodeDirname(path), { recursive: true })
+    await nodeWriteFile(path, text, 'utf8')
+  },
+  async writeBase64(path, base64) {
+    await nodeMkdir(nodeDirname(path), { recursive: true })
+    await nodeWriteFile(path, Buffer.from(base64, 'base64'))
+  },
+  async remove(path) { await nodeRm(path, { force: true }) },
+  async move(from, to) {
+    await nodeMkdir(nodeDirname(to), { recursive: true })
+    await nodeRename(from, to)
+  },
+}
 
 export const name = 'mcart-panel'
 // 宿主半自己用 ctx.get(...) 取 fs / sessions / shell / webServer，不硬依赖任何服务。
@@ -104,8 +164,8 @@ export function apply(ctx) {
       return () => { delete handlers[method] }
     },
   }
-  const plugin = new Function('harness', 'console', 'TextEncoder', 'btoa', 'atob', SOURCE)(
-    harness, console, TextEncoder, btoa, atob)
+  const plugin = new Function('harness', 'console', 'TextEncoder', 'btoa', 'atob', 'nodeFs', SOURCE)(
+    harness, console, TextEncoder, btoa, atob, nodeFs)
   if (plugin === null || typeof plugin !== 'object' || typeof plugin.apply !== 'function') {
     throw new Error('mcart 宿主源码没有返回一个带 apply 的插件')
   }

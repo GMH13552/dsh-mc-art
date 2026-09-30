@@ -12,11 +12,16 @@
  */
 const nodeFs = require('fs')
 const nodePath = require('path')
-const { handlers } = require('./run.js')
+const { handlers, buildHandlers, localFsShim } = require('./run.js')
+const fsService = require('./run.js').fsService
 
 const REPO = nodePath.resolve(__dirname, '..', '..')
 const WORK = nodePath.join(REPO, 'tools', 'mcart-plugin', '.project-fixture')
+// 「服务缺席」那一组的场地：和上面分开，免得互相看见对方的项目。
+const WORK2 = nodePath.join(REPO, 'tools', 'mcart-plugin', '.project-fixture-nosvc')
 const FAULT = process.argv.includes('--fault')
+// 1×1 的 PNG（只在门禁里当字节用）。
+const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
 
 let failures = 0
 function check(label, ok, detail) {
@@ -72,7 +77,88 @@ async function main() {
   const badNs = await handlers['atlas.createProject']({ root: WORK, id: 'okid', namespace: 'Bad-Name' })
   check('非法命名空间被拒', badNs && typeof badNs.error === 'string', JSON.stringify(badNs))
 
+  // ── 服务缺席：用户机器上真出现过的状态 ────────────────────────────────────
+  //
+  // 桌面端实测：面板能扫描、能弹系统目录对话框，但"建目录"只回一句
+  //「宿主没有 shell 服务时建不出目录」——而那句话是**猜的**（ensureDir 只看了
+  // exitCode，既没查服务在不在，也没把 shell 自己的报错带回来）。所以这一组把
+  // "谁缺席"变成能造出来的状态，逐条盯住：每件写入都有退路，四条路全断时必须
+  // 说清是哪四条。造不出来 = 这段门禁自己先红。
+  nodeFs.rmSync(WORK2, { recursive: true, force: true })
+  nodeFs.mkdirSync(WORK2, { recursive: true })
+
+  // (a) 只有 fs 服务（最像用户那台）：没有 shell、没有目录选择器。
+  const fsOnly = buildHandlers({ fs: fsService })
+  const a = await fsOnly['atlas.createProject']({ root: WORK2, id: 'fsonly' })
+  check('只有 fs 服务时也能建出项目', a && a.created === true, JSON.stringify(a))
+  check('空目录是写 .gitkeep 占位建出来的（shell 不在）',
+    a && a.placeholder === true && String(a.via).indexOf('fs') >= 0, JSON.stringify(a && a.via))
+  check('骨架目录真的落在盘上',
+    nodeFs.existsSync(nodePath.join(WORK2, 'fsonly', 'pack', 'assets', 'fsonly', 'lang')),
+    nodePath.join(WORK2, 'fsonly'))
+
+  // (b) 一个服务都没有，只有 node 垫片：这是真 mkdir，不留占位文件。
+  const shimOnly = buildHandlers({ nodeFs: localFsShim })
+  const b = await shimOnly['atlas.createProject']({ root: WORK2, id: 'shimonly' })
+  check('连 fs 服务都没有时，node 垫片把项目建出来', b && b.created === true, JSON.stringify(b))
+  check('这条路是真 mkdir（不留 .gitkeep）',
+    b && String(b.via).indexOf('node:fs') >= 0 && b.placeholder !== true, JSON.stringify(b && b.via))
+  check('目录在、且没有占位文件',
+    nodeFs.existsSync(nodePath.join(WORK2, 'shimonly', 'pack', 'assets', 'shimonly', 'blockstates')) &&
+    !nodeFs.existsSync(nodePath.join(WORK2, 'shimonly', 'pack', 'assets', 'shimonly', 'lang', '.gitkeep')),
+    nodePath.join(WORK2, 'shimonly'))
+  const scannedShim = (await shimOnly['atlas.scan']({ root: WORK2 })).projects
+  check('没有 fs 服务时扫描也认得出来（读也走垫片）',
+    scannedShim.some((p) => p.id === 'shimonly'), JSON.stringify(scannedShim.map((p) => p.id)))
+  const listedShim = await shimOnly['atlas.projects']({ path: WORK2 })
+  check('没有 fs 服务也能列目录找项目',
+    listedShim && (listedShim.projects || []).length >= 1, JSON.stringify(listedShim))
+  const env = await shimOnly['atlas.env']({})
+  check('atlas.env 如实报告缺了哪些服务',
+    env && env.services.fs === false && env.services.shell === false && env.services.localFs === true,
+    JSON.stringify(env && env.services))
+  const saved = await shimOnly['atlas.saveTexture']({ root: WORK2, project: 'shimonly',
+    path: WORK2 + '/shimonly/pack/assets/shimonly/textures/block/t.png', base64: PNG_BASE64 })
+  check('没有 shell 服务也能写贴图字节', saved && saved.saved === true, JSON.stringify(saved))
+  check('贴图字节真的写对了（PNG 魔数）',
+    nodeFs.existsSync(nodePath.join(WORK2, 'shimonly', 'pack', 'assets', 'shimonly', 'textures', 'block', 't.png')) &&
+    nodeFs.readFileSync(nodePath.join(WORK2, 'shimonly', 'pack', 'assets', 'shimonly', 'textures', 'block', 't.png'))
+      .slice(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])), '')
+
+  // (c) 目录走宿主那个"新建文件夹"API（directoryPickerController）：这是 harness 自己
+  //     的建目录入口（目录选择器用的就是它），所以它排在第一条。它**非递归**、已存在
+  //     会抛 EEXIST —— 用它当桩，正好也测住两件事：先建父目录的顺序，以及
+  //     "中间层不在骨架清单里"（textures/block 这种）时它会自己先把父目录补出来。
+  //     文件（atlas）另算：这个 API 只建目录，所以这一组仍然配着 fs 服务。
+  const pickerCalls = []
+  const pickerOnly = buildHandlers({ fs: fsService, picker: {
+    async createDirectory(parent, name) {
+      pickerCalls.push(parent + '|' + name)
+      const target = parent + '/' + name
+      if (nodeFs.existsSync(target)) throw new Error('directory-exists: ' + target)
+      nodeFs.mkdirSync(target)
+      return target
+    },
+  } })
+  const d = await pickerOnly['atlas.createProject']({ root: WORK2, id: 'pickeronly' })
+  check('有目录选择器 API 时也能建出项目', d && d.created === true, JSON.stringify(d))
+  check('目录真的走了 directoryPickerController（不是被后面的路兜住的）',
+    d && String(d.via).indexOf('directoryPickerController') >= 0, JSON.stringify(d && d.via))
+  check('第一个调用就是项目目录自己，且名字永远是单段',
+    pickerCalls.length >= 8 && pickerCalls[0].indexOf('|pickeronly') > 0 &&
+    pickerCalls.every((call) => call.split('|')[1].indexOf('/') < 0),
+    JSON.stringify(pickerCalls.slice(0, 3)) + ' …共 ' + pickerCalls.length + ' 次')
+
+  // (d) 四条路全断：失败信息必须逐个点名，而不是含糊一句"没有 shell 服务"。
+  const nothing = buildHandlers({})
+  const c = await nothing['atlas.createProject']({ root: WORK2, id: 'nowhere' })
+  check('一个服务都没有时确实失败', c && typeof c.error === 'string', JSON.stringify(c))
+  const why = String(c && c.error)
+  check('失败信息逐个列出试过的四条路',
+    ['directoryPickerController', 'shell', 'fs', 'node:fs'].every((key) => why.indexOf(key) >= 0), why)
+
   nodeFs.rmSync(WORK, { recursive: true, force: true })
+  nodeFs.rmSync(WORK2, { recursive: true, force: true })
   console.log(failures === 0 ? '全部通过' : failures + ' 项失败')
   process.exit(failures === 0 ? 0 : 1)
 }

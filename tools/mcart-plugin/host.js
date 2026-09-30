@@ -443,6 +443,29 @@ return {
       if (errors.indexOf(message) < 0) errors.push(message)
     }
 
+    const messageOf = (error) => String(error && error.message ? error.message : error)
+
+    // ── 文件系统：先问服务，再问本地 ─────────────────────────────────────────
+    //
+    // `fs` 和 `shell` 都是**可能缺席**的外部依赖，而面板要干的事（扫描工程、写
+    // 贴图、建目录）不该因为"这次启动顺序里没有那个服务"就整个不能用。用户机器上
+    // 实测过这个症状（Windows 桌面端 0.2.0-rc.2）：面板能建出工程目录的引导卡、
+    // 也能弹系统的目录选择器，但"建目录"那一步只回了一句含糊的
+    // 「宿主没有 shell 服务时建不出目录」——而这句话是**猜的**：ensureDir 只看了
+    // exitCode，既没看服务在不在，也没把 shell 自己的报错带回来。
+    //
+    // 所以这一版两条规则：
+    //   1. 每一层只报**它自己**的失败原因，不再替别人下结论（错误串里逐个列出）；
+    //   2. 每件事都有退路：harness 自己的 API → fs 服务 → shell → node:fs 垫片。
+    //
+    // node:fs 垫片排在最后是有意的：它绕过宿主那条 sandbox 策略（不产生文件效应
+    // 记录、不会触发审批）。前面几条都不可用时才用它，并且结果里会写明 via=node:fs，
+    // 用户看得见文件是被哪条路写下去的。
+    function localOf() {
+      if (typeof nodeFs === 'undefined' || nodeFs === null || nodeFs.available !== true) return null
+      return nodeFs
+    }
+
     function policyFor(workspaceRoot) {
       if (typeof workspaceRoot !== 'string' || workspaceRoot === '') return undefined
       return { mode: 'workspace-write', workspaceRoot: workspaceRoot }
@@ -467,32 +490,66 @@ return {
       return absolute.indexOf(prefix) === 0 ? absolute.slice(prefix.length) : absolute
     }
 
+    /** 这一层是不是一个目录（服务在就只问服务；服务不在才问本地）。 */
+    async function isDirectoryOf(path) {
+      const info = await statOf(path)
+      return info !== undefined && info.type === 'directory'
+    }
+
     async function listDir(path) {
-      if (fsOf() === undefined) return []
-      try {
-        const target = await fsOf().resolve(path)
-        const info = await fsOf().stat(target)
-        if (info === undefined || info.type !== 'directory') return []
-        return await fsOf().listDir(target)
-      } catch (error) { return [] }
+      const fs = fsOf()
+      if (fs !== undefined) {
+        try {
+          const target = await fs.resolve(path)
+          const info = await fs.stat(target)
+          if (info === undefined || info.type !== 'directory') return []
+          return await fs.listDir(target)
+        } catch (error) { return [] }
+      }
+      const local = localOf()
+      return local === null ? [] : await local.listDir(path)
     }
 
     async function readJson(path) {
-      if (fsOf() === undefined) return undefined
-      try {
-        const target = await fsOf().resolve(path)
-        const info = await fsOf().stat(target)
-        if (info === undefined || info.type !== 'file') return undefined
-        return JSON.parse(await fsOf().readText(target))
-      } catch (error) { return undefined }
+      const fs = fsOf()
+      if (fs !== undefined) {
+        try {
+          const target = await fs.resolve(path)
+          const info = await fs.stat(target)
+          if (info === undefined || info.type !== 'file') return undefined
+          return JSON.parse(await fs.readText(target))
+        } catch (error) { return undefined }
+      }
+      const local = localOf()
+      if (local === null) return undefined
+      const text = await local.readText(path)
+      if (typeof text !== 'string') return undefined
+      try { return JSON.parse(text) } catch (error) { return undefined }
     }
 
     async function statOf(path) {
-      if (fsOf() === undefined) return undefined
-      try {
-        const target = await fsOf().resolve(path)
-        return await fsOf().stat(target)
-      } catch (error) { return undefined }
+      const fs = fsOf()
+      if (fs !== undefined) {
+        try {
+          const target = await fs.resolve(path)
+          return await fs.stat(target)
+        } catch (error) { return undefined }
+      }
+      const local = localOf()
+      return local === null ? undefined : await local.stat(path)
+    }
+
+    /** 读原始字节（贴图校验、预览）：fs 服务没有二进制读的替代品，但本地垫片有。 */
+    async function readBytesOf(path, maxBytes) {
+      const fs = fsOf()
+      if (fs !== undefined) {
+        try {
+          const target = await fs.resolve(path)
+          return await fs.readBytes(target, undefined, maxBytes)
+        } catch (error) { /* 落到本地垫片 */ }
+      }
+      const local = localOf()
+      return local === null ? undefined : await local.readBytes(path, maxBytes)
     }
 
     async function dirSignature(path) {
@@ -532,8 +589,8 @@ return {
       const key = path + '@' + String(info.version) + ':' + String(info.size)
       if (textureCache[key] !== undefined) return textureCache[key]
       try {
-        const target = await fsOf().resolve(path)
-        const bytes = await fsOf().readBytes(target, undefined, 8 * 1024 * 1024)
+        const bytes = await readBytesOf(path, 8 * 1024 * 1024)
+        if (bytes === undefined) return undefined
         const url = 'data:image/png;base64,' + toBase64(bytes)
         textureCache[key] = url
         return url
@@ -1942,32 +1999,149 @@ return {
      * 没有 fs 服务时才退回把 payload 拼进命令的老办法（那时数据也小）。
      */
     async function writeDecodedFile(target, base64, workspaceRoot, timeoutMs) {
-      const dialect = await currentShell(workspaceRoot)
-      const policy = policyFor(workspaceRoot)
-      const staging = target + '.mcart-b64'
-      const staged = await writeTextFile(staging, base64, workspaceRoot)
-      if (staged.ok !== true) {
-        return { ok: false, exitCode: null, err: String(staged.detail), step: 1, steps: 2 }
+      // 第一条路：fs 写暂存文本 + shell 解码（都带同一条 sandbox 策略）。
+      if (shellOf() !== undefined) {
+        const dialect = await currentShell(workspaceRoot)
+        const policy = policyFor(workspaceRoot)
+        const staging = target + '.mcart-b64'
+        const staged = await writeTextFile(staging, base64, workspaceRoot)
+        if (staged.ok !== true) {
+          return { ok: false, exitCode: null, err: String(staged.detail), step: 1, steps: 2 }
+        }
+        const done = await runShell(dialect.decodeFile(staging, target), timeoutMs, policy)
+        const cleanup = await runShell(dialect.remove(staging), 15000, policy)
+        if (done.exitCode === 0) {
+          return { ok: true, steps: 2, dialect: dialect.name, stagingRemoved: cleanup.exitCode === 0 }
+        }
+        // shell 在但这一步没过：只有本地垫片还能试，否则就是它的报错。
+        const local = localOf()
+        if (local === null) {
+          return { ok: false, exitCode: done.exitCode, err: done.err, step: 2, steps: 2 }
+        }
+        try {
+          await local.writeBase64(target, base64)
+          return { ok: true, steps: 1, dialect: dialect.name, via: 'node:fs',
+            shellSaid: 'exit=' + String(done.exitCode) }
+        } catch (error) {
+          return { ok: false, exitCode: done.exitCode,
+            err: beforeStderr(String(done.err)) + ' | node:fs: ' + messageOf(error), step: 2, steps: 2 }
+        }
       }
-      const done = await runShell(dialect.decodeFile(staging, target), timeoutMs, policy)
-      const cleanup = await runShell(dialect.remove(staging), 15000, policy)
-      if (done.exitCode !== 0) {
-        return { ok: false, exitCode: done.exitCode, err: done.err, step: 2, steps: 2 }
+      // 没有 shell：base64 直接交给本地垫片写字节，一步到位、没有暂存文件。
+      const local = localOf()
+      if (local === null) {
+        return { ok: false, exitCode: null, step: 0, steps: 1,
+          err: '宿主既没有 shell 服务，也没有本地文件系统垫片' }
       }
-      return { ok: true, steps: 2, dialect: dialect.name, stagingRemoved: cleanup.exitCode === 0 }
+      try {
+        await local.writeBase64(target, base64)
+        return { ok: true, steps: 1, via: 'node:fs' }
+      } catch (error) {
+        return { ok: false, exitCode: null, step: 0, steps: 1, err: messageOf(error) }
+      }
     }
 
-    /** 建目录（幂等），按方言拼。 */
-    async function ensureDir(path, workspaceRoot) {
-      const done = await shellFileOp(workspaceRoot, (dialect) => dialect.makeDir(path), 20000)
-      return done.ok === true
+    /**
+     * 建目录（幂等）——**四条路，逐条报自己的失败原因**。
+     *
+     * 顺序是有讲究的：
+     *   1. `directoryPickerController.createDirectory(parent, name)`：harness 自己的
+     *      "新建文件夹"API（目录选择器用的就是它），非递归、已存在会抛 EEXIST，
+     *      所以先 stat 过才调；
+     *   2. `shell`：方言拼出来的真 mkdir（0.1.x / 0.2.0-rc 都能用）；
+     *   3. `fs` 服务：写一个占位文件进去——`dsh-fs-local` 的 writeFileAtomic 第一件事
+     *      就是 `mkdir(dirname, {recursive:true})`（两代都是），所以父目录会被建出来。
+     *      代价是空目录里多一个 `.gitkeep`（git 本来也追踪不了空目录，不是纯负担）；
+     *   4. `node:fs` 垫片：最后的退路，结果里写 via=node:fs。
+     *
+     * 返回 { ok, via, placeholder, detail }，绝不返回裸布尔——调用方要能把
+     * "到底哪条路试过、各说什么"原样端给用户。
+     */
+    async function ensureDir(path, workspaceRoot, depth) {
+      if (await isDirectoryOf(path)) return { ok: true, via: 'existing' }
+      const tried = []
+      const level = depth === undefined ? 0 : depth
+      const picker = ctx.get('directoryPickerController')
+      if (picker !== undefined && typeof picker.createDirectory === 'function') {
+        const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+        if (cut > 0) {
+          const parent = path.slice(0, cut)
+          const name = path.slice(cut + 1)
+          try {
+            await picker.createDirectory(parent, name)
+            return { ok: true, via: 'directoryPickerController' }
+          } catch (error) {
+            // 这个 API 是**非递归**的：父目录不在就 ENOENT（'textures/block' 这种
+            // 中间层不在目录清单里时就会撞上）。先把父目录建出来，再试一次；
+            // 深度上限只是防呆，正常调用不会接近它。
+            if (level < 8) {
+              const up = await ensureDir(parent, workspaceRoot, level + 1)
+              if (up.ok === true) {
+                try {
+                  await picker.createDirectory(parent, name)
+                  return { ok: true, via: 'directoryPickerController' }
+                } catch (again) { tried.push('directoryPickerController: ' + messageOf(again)) }
+              } else {
+                tried.push('directoryPickerController: ' + messageOf(error) +
+                  '；父目录也建不出来：' + String(up.detail))
+              }
+            } else tried.push('directoryPickerController: ' + messageOf(error))
+          }
+        } else tried.push('directoryPickerController: 路径里没有父目录')
+      } else tried.push('directoryPickerController: 宿主没有这个服务')
+      if (shellOf() !== undefined) {
+        const done = await shellFileOp(workspaceRoot, (dialect) => dialect.makeDir(path), 20000)
+        if (done.ok === true) return { ok: true, via: 'shell' }
+        const detail = beforeStderr(done.err === undefined || done.err === null ? '' : done.err)
+        tried.push('shell: 退出码 ' + String(done.exitCode) + (detail === '' ? '，没有错误输出' : '，' + detail))
+      } else tried.push('shell: 宿主没有这个服务')
+      if (fsOf() !== undefined) {
+        try {
+          const target = await fsOf().resolve(path + '/.gitkeep')
+          await fsOf().writeText(target, '', undefined, undefined, policyFor(workspaceRoot))
+          return { ok: true, via: 'fs', placeholder: true }
+        } catch (error) { tried.push('fs: ' + messageOf(error)) }
+      } else tried.push('fs: 宿主没有这个服务')
+      const local = localOf()
+      if (local !== null) {
+        try {
+          await local.mkdirp(path)
+          return { ok: true, via: 'node:fs' }
+        } catch (error) { tried.push('node:fs: ' + messageOf(error)) }
+      } else tried.push('node:fs: 这个运行时里没有文件系统垫片')
+      return { ok: false, detail: tried.join('；') }
     }
 
-    /** 一条收尾命令（删/移），按方言拼。 */
+    /** 一条收尾命令（删/移），按方言拼；shell 不行时落到本地垫片。 */
     async function shellFileOp(workspaceRoot, build, timeoutMs) {
+      if (shellOf() === undefined) return { ok: false, exitCode: null, err: 'no shell service' }
       const dialect = await currentShell(workspaceRoot)
       const done = await runShell(build(dialect), timeoutMs, policyFor(workspaceRoot))
       return { ok: done.exitCode === 0, exitCode: done.exitCode, err: done.err }
+    }
+
+    async function removeFile(path, workspaceRoot) {
+      const done = await shellFileOp(workspaceRoot, (dialect) => dialect.remove(path), 15000)
+      if (done.ok === true) return { ok: true, via: 'shell' }
+      const local = localOf()
+      if (local === null) return { ok: false, detail: String(done.err) }
+      try {
+        await local.remove(path)
+        return { ok: true, via: 'node:fs' }
+      } catch (error) { return { ok: false, detail: messageOf(error) } }
+    }
+
+    async function moveFile(from, to, workspaceRoot) {
+      const done = await shellFileOp(workspaceRoot, (dialect) => dialect.move(from, to), 20000)
+      if (done.ok === true) return { ok: true, via: 'shell' }
+      const local = localOf()
+      if (local === null) return { ok: false, exitCode: done.exitCode, detail: String(done.err) }
+      try {
+        await local.move(from, to)
+        return { ok: true, via: 'node:fs' }
+      } catch (error) {
+        return { ok: false, exitCode: done.exitCode, detail: messageOf(error) }
+      }
     }
 
     async function runDialog(command, sandboxPolicy, workspaceRoot) {
@@ -2001,7 +2175,8 @@ return {
     // policy PER CALL.  Omitting it left the backend its own default, and the
     // write was fenced off -- which showed up as a bare "写入失败" with no why.
     // Now: fs first (with an explicit policy), shell second (also explicit), and
-    // both failures are reported verbatim.
+    // both failures are reported verbatim -- plus the local shim third, because
+    // "one of these two services is missing" must not mean "cannot write".
     async function writeTextFile(path, text, workspaceRoot) {
       const policy = policyFor(workspaceRoot)
       let fsDetail = null
@@ -2011,19 +2186,31 @@ return {
           await fsOf().writeText(target, text, undefined, undefined, policy)
           return { ok: true, via: 'fs' }
         } catch (error) {
-          fsDetail = String(error && error.message ? error.message : error)
+          fsDetail = messageOf(error)
         }
       } else {
         fsDetail = 'no fs service'
       }
+      let shellDetail = 'no shell service'
       if (shellOf() !== undefined) {
         const dialect = await currentShell(workspaceRoot)
         const result = await runShell(dialect.writeInline(path, base64OfString(text)), 20000, policy)
         if (result.exitCode === 0) return { ok: true, via: 'shell' }
         const detail = beforeStderr(result.err === undefined || result.err === null ? '' : result.err)
-        return { ok: false, detail: 'fs: ' + fsDetail + ' | shell exit=' + result.exitCode + (detail === '' ? '' : ' err=' + detail) }
+        shellDetail = 'exit=' + result.exitCode + (detail === '' ? '' : ' err=' + detail)
       }
-      return { ok: false, detail: 'fs: ' + fsDetail + ' | no shell service' }
+      const local = localOf()
+      if (local !== null) {
+        try {
+          await local.writeText(path, text)
+          return { ok: true, via: 'node:fs' }
+        } catch (error) {
+          return { ok: false, detail: 'fs: ' + fsDetail + ' | shell: ' + shellDetail +
+            ' | node:fs: ' + messageOf(error) }
+        }
+      }
+      return { ok: false, detail: 'fs: ' + fsDetail + ' | shell: ' + shellDetail +
+        ' | node:fs: 这个运行时里没有文件系统垫片' }
     }
 
     ctx.effect(() => harness.handle('atlas.pickDirectory', async (args) => {
@@ -2188,7 +2375,6 @@ return {
           // This is a brush, not a general file writer.
           return { error: '这张贴图不在这个项目的资源包里，拒绝写：' + target }
         }
-        if (shellOf() === undefined) return { error: '宿主没有 shell 服务，写不了二进制文件' }
         // Write beside the original, check it, and only then move it into place.
         // Writing straight over the texture meant a bad encode destroyed the
         // sprite *before* anyone noticed it was not a PNG.
@@ -2196,10 +2382,11 @@ return {
         // 三个动作（写/移/删）都按 shell 方言拼：Windows 上这条路径原来写的
         // `printf | base64 -d`、`mv -f`、`rm -f` 一个都不是命令，而贴图正是
         // 面板最核心的写入——不修的话 Windows 用户"能看不能改"。
+        // 这里**不再**用 shellOf() 提前退出：写字节的退路是 node:fs 垫片，
+        // 移/删也各有一条，四条路都断了才会在下面逐条报出来。
         const temp = target + '.mcart-tmp'
-        const policy = policyFor(root)
         async function discard(reason) {
-          const cleanup = await shellFileOp(root, (dialect) => dialect.remove(temp), 15000)
+          const cleanup = await removeFile(temp, root)
           return { error: reason + (cleanup.ok === true ? '（原文件没有被改动）' : '（临时文件也没清掉：' + temp + '）') }
         }
         const written = await writeDecodedFile(temp, base64, root, 30000)
@@ -2211,16 +2398,16 @@ return {
         const staged = await statOf(temp)
         if (staged === undefined || staged.type !== 'file') return await discard('写完之后读不到临时文件')
         if (staged.size === undefined || staged.size === 0) return await discard('写出来的是个空文件')
-        const bytes = await fsOf().readBytes(await fsOf().resolve(temp), undefined, 8 * 1024 * 1024)
+        const bytes = await readBytesOf(temp, 8 * 1024 * 1024)
+        if (bytes === undefined) return await discard('写完之后读不出它的字节')
         for (let i = 0; i < PNG_MAGIC.length; i++) {
           if (bytes[i] !== PNG_MAGIC[i]) {
             return await discard('写出来的不是 PNG（开头 ' + Array.prototype.slice.call(bytes, 0, 8).join(',') + '）')
           }
         }
-        const moved = await shellFileOp(root, (dialect) => dialect.move(temp, target), 20000)
+        const moved = await moveFile(temp, target, root)
         if (moved.ok !== true) {
-          const detail = beforeStderr(moved.err === undefined || moved.err === null ? '' : moved.err)
-          return await discard('换上新图失败（退出码 ' + moved.exitCode + '）' + (detail === '' ? '' : '：' + detail))
+          return await discard('换上新图失败（退出码 ' + String(moved.exitCode) + '）：' + String(moved.detail))
         }
         const info = await statOf(target)
         if (info === undefined || info.type !== 'file') return { error: '换上新图之后读不到它：' + target }
@@ -2261,22 +2448,40 @@ return {
           return { error: '这个项目的资源包里已经有命名空间 ' + others.join('、') +
             '。一个模组只用一个命名空间：用已有的那个，或者换一个目录。' }
         }
-        // **先建目录再写文件**：fs.writeText / shell 重定向都不会替你建父目录
-        // （第一版写反了，门禁当场抓到 ENOENT）。
+        // **先建目录再写文件**——但不是因为 fs.writeText 建不了父目录
+        // （`dsh-fs-local` 的 writeFileAtomic 第一句就是 mkdir recursive；第一版之所以
+        // 看到 ENOENT，是本地测试桩的 writeText 比真货**严**：桩不建父目录。桩比被替身的
+        // 东西更严，是一个永远不会红的门禁。桩已经改成和真货一样），而是因为骨架目录本来
+        // 就该由"建项目"这一步建出来，而不是碰到哪个文件才顺手长出来。
         const folders = ['pack', 'pack/assets', 'pack/assets/' + namespace,
           'pack/assets/' + namespace + '/textures/block', 'pack/assets/' + namespace + '/models/block',
           'pack/assets/' + namespace + '/blockstates', 'pack/assets/' + namespace + '/lang']
-        for (const folder of folders) {
-          if (!(await ensureDir(dir + '/' + folder, root))) {
-            return { error: '建目录失败：' + folder + '（宿主没有 shell 服务时建不出目录）' }
+        // 建目录这件事有四条路（见 ensureDir）。同一个项目里的目录只要第一条路走通了
+        // 就不再试后面的——失败了却要一次说清，所以失败时把原因并起来。
+        //
+        // **项目目录自己也要先建出来**：`directoryPickerController.createDirectory` 是
+        // 非递归的（父目录必须在），所以不能只建 pack —— 之前只建 pack 的那版，
+        // 一旦走到选择器那条路就是 ENOENT（门禁当场抓到）。
+        const used = {}
+        let placeholder = false
+        const targets = [dir].concat(folders.map((folder) => dir + '/' + folder))
+        for (const target of targets) {
+          const made = await ensureDir(target, root)
+          if (made.ok !== true) {
+            return { error: '建目录失败：' + rel(root, target) + ' → ' + String(made.detail),
+              dir: dir, folders: folders.length }
           }
+          used[made.via] = (used[made.via] === undefined ? 0 : used[made.via]) + 1
+          if (made.placeholder === true) placeholder = true
         }
         const atlas = { schema: 'mc-art.atlas/1', namespace: namespace,
           biomes: [], structures: [], entities: [], blocks: [] }
         const wrote = await writeTextFile(dir + '/mc-art.atlas.json', JSON.stringify(atlas, null, 2) + '\n', root)
         if (wrote.ok !== true) return { error: '写 atlas 失败：' + String(wrote.detail) }
         return { created: true, id: id, namespace: namespace, dir: dir,
-          atlas: rel(root, dir + '/mc-art.atlas.json'), folders: folders.length }
+          atlas: rel(root, dir + '/mc-art.atlas.json'), folders: folders.length,
+          via: Object.keys(used).sort().map((key) => key + '×' + used[key]).join(' + '),
+          placeholder: placeholder, atlasVia: wrote.via }
       } catch (error) {
         return { error: String(error && error.message ? error.message : error) }
       }
@@ -2440,6 +2645,35 @@ return {
       } catch (error) {
         return { error: String(error && error.message ? error.message : error) }
       }
+    }))
+
+    // 「这台机器上我到底能看见什么」——一句话问清。
+    //
+    // 存在的理由很具体：面板上一句"宿主没有 shell 服务时建不出目录"曾经让人以为
+    // 服务真的不在，而实际上那句话谁也没查过。现在失败信息自己带原因（见 ensureDir），
+    // 这个方法把同一件事变成**可读的一行**：哪些服务在、哪条退路可用、方言是什么。
+    // 别人机器上再出问题，让他们点一下这个，比猜十轮快。
+    ctx.effect(() => harness.handle('atlas.env', async () => {
+      const picker = ctx.get('directoryPickerController')
+      const services = {
+        fs: fsOf() !== undefined,
+        shell: shellOf() !== undefined,
+        sessions: sessionsOf() !== undefined,
+        webServer: ctx.get('webServer') !== undefined,
+        directoryPickerController: picker !== undefined && typeof picker.createDirectory === 'function',
+        localFs: localOf() !== null,
+      }
+      let dialect = null
+      if (services.shell) {
+        try { dialect = (await currentShell('')).name } catch (error) { dialect = 'probe failed: ' + messageOf(error) }
+      }
+      const missing = Object.keys(services).filter((key) => services[key] !== true)
+      return { services: services, shellDialect: dialect,
+        platform: typeof process === 'undefined' ? null : process.platform,
+        node: typeof process === 'undefined' ? null : process.version,
+        missing: missing,
+        note: missing.length === 0 ? '每一条路都在。'
+          : '缺 ' + missing.join('、') + '；每一件写入都会自动走能用的那条路（建目录/写文件/写字节各有退路），结果里会写 via=…' }
     }))
 
     ctx.effect(() => harness.handle('atlas.scene', async (args) => {

@@ -7,7 +7,8 @@
  * 客户端 bundle 在被页面加载时会不会抛。这两件事都能在 Node 里用桩验证——
  * 手法和仓库里其它门禁一致：喂真实的包、注入故障、要求检查报错。
  */
-import { readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -106,6 +107,28 @@ const notPost = await new Promise((resolve) => {
   routes[0].handler(req, { writeHead: (c) => resolve(c), end: () => {} })
 })
 check('GET 被拒（只收 POST）', notPost === 405, String(notPost))
+
+// ── 生成物那条"最后一条路"：一个服务都没有时，本地文件系统垫片得真的写得下去 ──
+//
+// 这个 ctx 只发 webServer，所以 fs / shell / directoryPickerController **都不在**——
+// 正是用户那台机器上报出来的状态。走的是**发布出去的那份 lib/index.js**（不是源码、
+// 也不是测试桩），所以它证明的是："别的机器上服务缺席时，这个包自己还能建工程。"
+const sandbox = mkdtempSync(join(tmpdir(), 'mcart-entry-'))
+const madeViaRoute = bodyOf(await callRoute({ name: 'atlas.createProject',
+  args: { root: sandbox.replace(/\\/g, '/'), id: 'entryproj' } }))
+check('一个服务都没有时，发布出去的那份宿主也能建出工程',
+  madeViaRoute && madeViaRoute.created === true, JSON.stringify(madeViaRoute).slice(0, 200))
+check('走的是本地文件系统垫片（并且是真 mkdir，不留占位）',
+  String(madeViaRoute && madeViaRoute.via).indexOf('node:fs') >= 0 && madeViaRoute.placeholder !== true,
+  String(madeViaRoute && madeViaRoute.via))
+check('骨架真的落在盘上',
+  existsSync(join(sandbox, 'entryproj', 'pack', 'assets', 'entryproj', 'lang')),
+  join(sandbox, 'entryproj'))
+const envReply = bodyOf(await callRoute({ name: 'atlas.env', args: {} }))
+check('atlas.env 如实报告服务全缺、但垫片在',
+  envReply && envReply.services && envReply.services.fs === false && envReply.services.shell === false &&
+  envReply.services.localFs === true, JSON.stringify(envReply && envReply.services))
+rmSync(sandbox, { recursive: true, force: true })
 
 // ── 客户端入口 ──────────────────────────────────────────────────────────────
 console.log('--- 客户端入口（lib/client.js，__ModuleLoader__ 形式）')
@@ -242,6 +265,29 @@ try {
 check('注入"宿主垫片没了"：当场炸（说明这个垫片是必需的，不是装饰）',
   injectedFailed !== null && /harness|handle/.test(String(injectedFailed.message)),
   injectedFailed === null ? '居然没炸' : String(injectedFailed.message).slice(0, 80))
+
+// 本地文件系统垫片的**两份实现在 API 上必须一致**。
+//
+// 发布物那一份内联在 lib/index.js 里（build.mjs 生成，因为包不能再依赖仓库里的
+// tools/），测试那一份在 tools/mcart-plugin/local-fs-shim.js。两份漂移过一次就够呛：
+// 用户机器上"服务缺席"时走的正是这条最后的路，而门禁用的是另一份实现 ——
+// 那会变成"测试里过、用户那儿不过"，也就是这次踩的坑（本地桩比真货严）。
+const shimMethods = readFileSync(join(HERE, '..', 'tools', 'mcart-plugin', 'local-fs-shim.js'), 'utf8')
+const generated = readFileSync(join(HERE, 'lib', 'index.js'), 'utf8')
+const shimBody = generated.slice(generated.indexOf('const nodeFs = {'), generated.indexOf('export const name'))
+check('生成物里有本地文件系统垫片', shimBody.length > 200, shimBody.length + ' 字符')
+check('生成物把 node:fs 和 node:path 绑进来了（垫片靠它们）',
+  generated.includes("from 'node:fs/promises'") && generated.includes("from 'node:path'"))
+check('生成物把垫片当参数交给宿主源码（不是全局共享）',
+  generated.includes("'nodeFs', SOURCE") || generated.includes("'atob', 'nodeFs', SOURCE"))
+check('垫片两份都声明了 available: true（宿主源码靠它判断"这条退路在不在"）',
+  /available:\s*true/.test(shimBody) && /available:\s*true/.test(shimMethods))
+for (const method of ['mkdirp', 'stat', 'listDir', 'readText', 'readBytes', 'writeText', 'writeBase64', 'remove', 'move']) {
+  check('垫片两份都有 ' + method + '()',
+    new RegExp('(async )?' + method + '\\(').test(shimBody) && new RegExp('(async )?' + method + '\\(').test(shimMethods),
+    '生成物=' + new RegExp('(async )?' + method + '\\(').test(shimBody) +
+    ' 测试那份=' + new RegExp('(async )?' + method + '\\(').test(shimMethods))
+}
 
 console.log(failures === 0 ? '全部通过' : failures + ' 项失败')
 process.exit(failures === 0 ? 0 : 1)

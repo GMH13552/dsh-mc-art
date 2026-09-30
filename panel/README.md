@@ -136,6 +136,37 @@ shell 只做"把这个文件解成字节"这一件事——命令行里永远只
 捕获宿主真正发出的命令，然后**逐条交给真的 Windows PowerShell 执行**，最后比对贴图字节；
 `--fault` 让探针谎报 POSIX，要求门禁变红（实测：正常 12 项全绿，谎报 8 项红）。
 
+## 宿主服务缺席时，面板自己还有退路
+
+`fs` 和 `shell` 都是**组合里可能不在**的行。用户在 Windows 桌面端（0.2.0-rc.2）实测到过：
+面板能扫描、能弹系统目录对话框，点"在这里新建项目"却回一句
+「建目录失败：pack（宿主没有 shell 服务时建不出目录）」——而那句话是**猜的**
+（`ensureDir` 只看了 exitCode，既没查服务在不在，也没把 shell 自己的报错带回来）。
+
+现在每一件事都有退路，且**走哪条路会写在结果里**（面板会提示「目录用 … 建的」）：
+
+| 要做的 | 第一条 | 第二条 | 第三条 | 最后一条 |
+|---|---|---|---|---|
+| 建目录 | `directoryPickerController.createDirectory`（harness 自己的"新建文件夹"API，非递归，缺父目录时先补父目录） | `shell`（按方言 `mkdir -p` / `[IO.Directory]::CreateDirectory`） | `fs.writeText(<目录>/.gitkeep)` —— `dsh-fs-local` 的 writer 第一件事就是 `mkdir recursive`，代价是空目录里多个 `.gitkeep` | `node:fs` 垫片 |
+| 写文本 | `fs.writeText`（带显式 sandbox 策略） | `shell` 重定向 | `node:fs` 垫片 | — |
+| 写字节（贴图） | `fs` 落 base64 暂存 + `shell` 解码 | `node:fs` 垫片直接写字节 | — | — |
+| 移 / 删 | `shell` 方言 | `node:fs` 垫片 | — | — |
+| 读（扫描/预览） | `fs` 服务 | `node:fs` 垫片 | — | — |
+
+`node:fs` 垫片在**宿主入口里自带**（`build.mjs` 生成 `lib/index.js` 时内联，改不了发布包的行为
+也不依赖仓库里的 `tools/`）。它排在最后是有意的：它绕过宿主的 sandbox 策略（不产生文件效应记录、
+不触发审批），只有前面几条都不可用时才用，结果里会写明 `via=node:fs`。
+
+四条路全断时，错误里会**逐个点名**每一条说了什么，而不是含糊一句"没有 shell 服务"。
+想知道这台机器上到底有什么，问一句 `atlas.env`：它回 `{fs, shell, sessions, webServer,
+directoryPickerController, localFs}` 的在场情况、shell 方言、platform 与 node 版本。
+
+门禁：`node tools/mcart-plugin/project-test.js` 用 `buildHandlers()` 把"谁缺席"造成四种状态
+（只有 fs / 只有垫片 / 只有目录选择器 / 什么都没有），并逐条断言结果与 `via`；
+把任意一条退路掐掉（变异测试做过：掐垫片 → 8 项红；掐 fs 那条 → 3 项红；去掉"先建项目目录" → 3 项红），
+门禁必须变红。`node panel/entry-test.mjs` 另外用**发布出去的那份 `lib/index.js`**、
+在"一个服务都没有"的 ctx 上真建一个工程，证明垫片随着包发得出去。
+
 ## 门禁
 
 ```bash

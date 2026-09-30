@@ -3154,6 +3154,21 @@ return {
         return React.createElement('div', { className: 'mcart-card', key: 'guide' }, rows)
       }
 
+      // 「这台宿主上我到底能看见什么」——失败时附在错误后面。
+      // 建目录/写文件/写字节各有好几条路（宿主服务 → 服务 → node 垫片），
+      // 而一句"宿主没有 X 服务"曾经把人带偏过：那句话谁也没查过。所以失败时直接问一句。
+      function describeEnv() {
+        return host.call('atlas.env', {}).then((env) => {
+          if (env === null || env === undefined || env.services === undefined) return ''
+          const names = Object.keys(env.services)
+          const on = names.filter((key) => env.services[key] === true)
+          const off = names.filter((key) => env.services[key] !== true)
+          return '（宿主可用：' + (on.length === 0 ? '无' : on.join('、')) +
+            '；缺：' + (off.length === 0 ? '无' : off.join('、')) +
+            '；shell 方言：' + String(env.shellDialect === null || env.shellDialect === undefined ? '问不到' : env.shellDialect) + '）'
+        }).catch(() => '')
+      }
+
       function createProject() {
         const id = String(newId).trim()
         if (!/^[a-z0-9_]{2,32}$/.test(id)) return
@@ -3163,8 +3178,19 @@ return {
         host.call('atlas.createProject', { root: here, id: id }).then((result) => {
           setBusy(false)
           if (result === null || result === undefined) { setFailure('新建项目没有返回任何东西'); return }
-          if (failureOf(result) !== null) { setFailure(String(failureOf(result))); return }
+          const bad = failureOf(result)
+          if (bad !== null) {
+            setFailure(String(bad))
+            describeEnv().then((text) => { if (text !== '') setFailure(String(bad) + ' ' + text) })
+            return
+          }
           setEmptyRoot(null)
+          // 建目录走了哪条路要说出来：`.gitkeep` 占位和 node 垫片都是"服务不在"的
+          // 后果，用户有权知道自己的工程是怎么被写下去的（也方便别人报问题时一句话说清）。
+          if (typeof result.via === 'string') {
+            setNotice('工程建好了：' + id + '（目录用 ' + result.via + ' 建的' +
+              (result.placeholder === true ? '，空目录里留了 .gitkeep 占位' : '') + '）')
+          }
           scan(here, true, id)
         }).catch((error) => { setBusy(false); setFailure(String(error && error.message ? error.message : error)) })
       }
