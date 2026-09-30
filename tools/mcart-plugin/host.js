@@ -1835,6 +1835,27 @@ return {
         refs: refs, ref: refs[0], palette: palette, box: boxOfQuads(quads), errors: errors.slice(0, 8) }
     }
 
+    // 这个 shell 服务的**执行方法叫什么**，两代不一样：
+    //   0.1.x（本仓库开发用的那套）：`resolve(request)` + `run(spec)`（交互式还有 `start(spec)`）
+    //   0.2.0-rc.x（Windows 桌面端）：`resolve(request)` + `execute(spec)`，**没有 run/start**
+    // 实测报错就是 `shellOf(...).run is not a function`。形状子集是兼容的（都回
+    // {exitCode, stdout:{text}, stderr:{text}}），所以这里只做方法名探测。
+    async function shellExec(spec) {
+      const service = shellOf()
+      if (service === undefined) return { exitCode: null, text: '', err: 'no shell service' }
+      if (typeof service.run === 'function') return await service.run(spec)
+      if (typeof service.execute === 'function') return await service.execute(spec)
+      return { exitCode: null, text: '', err: '这个 shell 服务既没有 run() 也没有 execute()：' +
+        Object.keys(service).join(',') }
+    }
+
+    /** 把两代的结果形状收成同一种（stdout/stderr 可能是 {text} 也可能是字符串）。 */
+    function shellText(value) {
+      if (value === undefined || value === null) return ''
+      if (typeof value === 'string') return value
+      return value.text === undefined ? String(value) : String(value.text)
+    }
+
     async function runShell(command, timeoutMs, sandboxPolicy, maxBytes) {
       if (shellOf() === undefined) return { exitCode: null, text: '', err: 'no shell service' }
       // The cap is per call, not a constant: a namespace listing is genuinely
@@ -1844,8 +1865,9 @@ return {
         stdoutMaxBytes: maxBytes === undefined ? 64 * 1024 : maxBytes }
       if (sandboxPolicy !== undefined) request.sandboxPolicy = sandboxPolicy
       const spec = shellOf().resolve(request)
-      const result = await shellOf().run(spec)
-      return { exitCode: result.exitCode, text: result.stdout.text, err: result.stderr.text }
+      const result = await shellExec(spec)
+      return { exitCode: result.exitCode === undefined ? null : result.exitCode,
+        text: shellText(result.stdout), err: shellText(result.stderr) }
     }
 
     async function available(tool) {
@@ -1948,14 +1970,20 @@ return {
       return { ok: done.exitCode === 0, exitCode: done.exitCode, err: done.err }
     }
 
-    async function runDialog(command, sandboxPolicy) {
+    async function runDialog(command, sandboxPolicy, workspaceRoot) {
       if (shellOf() === undefined) return ''
       const request = { command: command, stdoutMaxBytes: 64 * 1024 }
       if (sandboxPolicy !== undefined) request.sandboxPolicy = sandboxPolicy
       const spec = shellOf().resolve(request)
-      const process = await shellOf().start(spec)
-      await process.done
-      return String(process.readOutput().delta)
+      // 交互式（要边跑边读输出，比如弹系统目录对话框）只有 0.1.x 那代有 `start`；
+      // 0.2.0-rc 只有 `execute`，那就等它跑完再收输出 —— 目录对话框本来也是"选完才返回"。
+      if (typeof shellOf().start === 'function') {
+        const process = await shellOf().start(spec)
+        await process.done
+        return String(process.readOutput().delta)
+      }
+      const done = await shellExec(spec)
+      return shellText(done.stdout)
     }
 
     async function convertPath(flag, value) {

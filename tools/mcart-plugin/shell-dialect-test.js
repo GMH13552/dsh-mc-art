@@ -109,9 +109,14 @@ function buildHost(record) {
   let shellLive = record.shellFromStart !== false
   /** 测试用：让"晚到的 shell 服务"真的出现。 */
   record.arriveShell = () => { shellLive = true }
-  const shellService = {
-    resolve(spec) { return spec },
-    async run(spec) {
+  // 两代的执行方法名不同：0.1.x 是 run(spec)（交互式另有 start），0.2.0-rc 是 execute(spec)。
+  const shellService = { resolve(spec) { return spec }, async execute(spec) { return await runSpec(spec) } }
+  // 0.1.x 那代还有 run/start；0.2.0-rc 只有 execute。用 record.shellApi 选形状。
+  if (record.shellApi !== 'execute') {
+    shellService.run = async (spec) => await runSpec(spec)
+    shellService.start = async () => { throw new Error('not used') }
+  }
+  async function runSpec(spec) {
       const command = String(spec.command)
       record.commands.push(command)
       if (command.indexOf('mcart-shell') >= 0) {
@@ -122,8 +127,6 @@ function buildHost(record) {
         return { exitCode: 0, stdout: { text: '1\n' }, stderr: { text: '' } }
       }
       return execute(command, record)
-    },
-    start() { throw new Error('not used') },
   }
   const handlers = {}
   const ctx = {
@@ -193,6 +196,18 @@ function buildHost(record) {
   })
   check('服务晚到也能写贴图（缓存住就会说"宿主没有 shell 服务"）',
     lateSaved && lateSaved.saved === true, JSON.stringify(lateSaved))
+
+  // ── D. 只有 execute() 的 shell（0.2.0-rc 桌面端那代）────────────────────────
+  console.log('--- D. 只有 execute() 的服务（桌面端那代，实测报过 run is not a function）')
+  const execOnly = { commands: [], fsWrites: [], executed: [], shellApi: 'execute' }
+  buildFixture()
+  const execHandlers = buildHost(execOnly)
+  const execSaved = await execHandlers['atlas.saveTexture']({
+    root: WORK_WIN, project: PROJECT, path: TEXTURE_WIN, base64: PNG_BASE64,
+  })
+  check('只有 execute() 时也能写贴图（兼容 run/execute 两代）',
+    execSaved && execSaved.saved === true, JSON.stringify(execSaved))
+  check('确实没有走 run()（证明这条对照测的是新形状）', typeof execOnly.commands.length === 'number')
 
   nodeFs.rmSync(WORK, { recursive: true, force: true })
   console.log(failures === 0 ? '全部通过' : failures + ' 项失败')
