@@ -28,6 +28,8 @@ const FAULT = process.argv.includes('--fault')
 const FAULT_JSON = process.argv.includes('--fault-json')
 // 第三个故障模式：把"刷新时丢像素缓存"那一句删掉（用户实测："改完纹理点刷新看不到新的"）。
 const FAULT_REFRESH = process.argv.includes('--fault-refresh')
+// 第四个故障模式：清缓存但**不踢纪元**（用户实测："刷新完了之后 2D 贴图没有了"）。
+const FAULT_EPOCH = process.argv.includes('--fault-epoch')
 
 let failures = 0
 function check(label, ok, detail) {
@@ -287,10 +289,19 @@ async function main() {
       process.exit(1)
     }
   } else if (FAULT_REFRESH) {
-    faulted = source.replace('onClick: () => { forgetTextures(); scan(root, true, null) }',
+    faulted = source.replace('onClick: () => { forgetTextures(); setTexEpoch(texEpoch + 1); scan(root, true, null) }',
       'onClick: () => scan(root, true, null)')
     if (faulted === source) {
       console.log('  FAIL --fault-refresh 没生效：找不到刷新按钮里那句 forgetTextures()（门禁要跟着改）')
+      process.exit(1)
+    }
+  } else if (FAULT_EPOCH) {
+    // 只删纪元那一脚，缓存照旧清 —— 用户实测的那个回归就是这个形状：
+    // 表清空了，可没人再把它填回来（物品浏览器/九宫格/左边菜单全空白）。
+    faulted = source.replace('forgetTextures(); setTexEpoch(texEpoch + 1); scan(root, true, null)',
+      'forgetTextures(); scan(root, true, null)')
+    if (faulted === source) {
+      console.log('  FAIL --fault-epoch 没生效：找不到刷新按钮里那句 setTexEpoch（门禁要跟着改）')
       process.exit(1)
     }
   } else if (FAULT) {
@@ -431,10 +442,32 @@ async function main() {
     forgetBody !== '' && !/delete imageNodes\[/.test(forgetBody),
     forgetBody === '' ? '函数体都没匹配到（门禁要跟着改）' : '函数体里清了 imageNodes')
   check('刷新按钮先丢缓存再强制重扫（否则 have 里还留着旧 id，宿主永远不会再送）',
-    /onClick: \(\) => \{ forgetTextures\(\); scan\(root, true, null\) \}/.test(faulted),
+    /onClick: \(\) => \{ forgetTextures\(\); setTexEpoch\(texEpoch \+ 1\); scan\(root, true, null\) \}/.test(faulted),
     '（刷新按钮没接上 forgetTextures）')
   check('换项目时也丢（同名贴图跨项目会串味）',
-    /if \(lastProject !== target\.project\) forgetTextures\(\)/.test(faulted))
+    /if \(lastProject !== target\.project\) \{ forgetTextures\(\); setTexEpoch\(texEpoch \+ 1\) \}/.test(faulted))
+
+  // ── 清空之后必须有人把它填回来（用户实测："刷新完了之后 2D 贴图没有了"）─────────
+  //
+  // 上一轮只做了"清"，没做"再取"：`itemRecipes`（物品浏览器 + 九宫格）和 `icons`
+  // （左边菜单的方块图标）都是被 effect 填的，而那两个 effect 的依赖里**没有**刷新
+  // 会改的东西（依赖是"命名空间|页|筛选|形态|家族|条目数"和"资产|筛选|页"）——
+  // 表清空了、依赖没变、effect 不重跑，于是屏幕上就是一片空白。
+  // 机制是一个纪元号（texEpoch），所以这里断言的是"纪元在依赖里"，不是某个变量名巧合。
+  console.log('--- 清了缓存必须再取（源码形状检查，同上一段理由）')
+  const itemEffect = (faulted.match(/\}, \[item === null \? '' : \[[\s\S]*?\]\)/) || [''])[0]
+  check('物品配方的 effect 依赖里有纪元（不然清完 itemRecipes 没人再取：浏览器和九宫格空白）',
+    itemEffect !== '' && /texEpoch\]/.test(itemEffect), itemEffect === '' ? '没匹配到那个 effect 的依赖数组' : itemEffect.slice(0, 90))
+  const iconEffect = (faulted.match(/\}, \[voxel === null \? '' : \(voxel\.source[\s\S]*?iconTick[^\]]*\]\)/) || [''])[0]
+  check('方块图标的 effect 依赖里有纪元（不然左边菜单的图标清完不回来）',
+    iconEffect !== '' && /texEpoch/.test(iconEffect), iconEffect === '' ? '没匹配到那个 effect 的依赖数组' : iconEffect.slice(0, 90))
+  check('刷新会踢纪元、换项目也会踢', [/setTexEpoch\(texEpoch \+ 1\); scan\(root, true, null\)/,
+    /\{ forgetTextures\(\); setTexEpoch\(texEpoch \+ 1\) \}/].every((re) => re.test(faulted)))
+  check('取不到图标时屏幕上有话（静默失败 = 图标凭空消失，没人知道为什么）',
+    /itemFetchError = '取不到物品图标：' \+ failed/.test(faulted)
+    && /itemFetchError === '' \? '点一格就放到上面的 3D 里看' : itemFetchError/.test(faulted))
+  check('图标"问过了"的账在请求失败时会退回来（一次抖动不该让图标永久不出现）',
+    /for \(const name of batch\) delete iconTried\[name\]/.test(faulted))
 
   console.log(failures === 0 ? '全部通过' : failures + ' 项失败')
   process.exit(failures === 0 ? 0 : 1)

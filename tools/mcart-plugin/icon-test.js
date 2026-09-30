@@ -206,8 +206,14 @@ function loadClient(patches) {
   const failureAt = source.indexOf('function failureOf(')
   const commentAt = source.lastIndexOf('/**', failureAt)
   const commentEnd = commentAt < 0 ? -1 : source.indexOf('*/', commentAt)
-  const counts = source.slice(commentEnd >= 0 && commentEnd < failureAt ? commentAt : failureAt,
-    source.indexOf('function cssColour'))
+  // The total accessors (`isAbsent` / `idsOf`) sit just ABOVE `failureOf`, so a
+  // slice that starts at `failureOf` leaves them out and any assertion about
+  // them would test an undefined name.  Start at the accessor block when it is
+  // there and still before `cssColour`.
+  const accessorAt = source.indexOf('const isAbsent =')
+  const countsStart = accessorAt >= 0 && accessorAt < failureAt
+    ? accessorAt : (commentEnd >= 0 && commentEnd < failureAt ? commentAt : failureAt)
+  const counts = source.slice(countsStart, source.indexOf('function cssColour'))
   const body = 'let animTicks = 0\n' + source.slice(start, end) + counts
   return new Function('document', body + `
     return { renderScene: renderScene, guiItemRotation: guiItemRotation, iconCamera: iconCamera,
@@ -215,7 +221,7 @@ function loadClient(patches) {
       rotateAbout: rotateAbout,
       boxOfQuads: boxOfQuads, animationRow: animationRow,
       stripOf: stripOf, GUI_FACE_SHADE: GUI_FACE_SHADE,
-      countsOf: countsOf, failureOf: failureOf,
+      countsOf: countsOf, failureOf: failureOf, idsOf: idsOf, isAbsent: isAbsent,
       setTicks: function (value) { animTicks = value } }`)(fakeDocument())
 }
 
@@ -452,6 +458,10 @@ function undefinedCalls(source) {
   const declared = {}
   for (const match of code.matchAll(/function\s+([A-Za-z_$][\w$]*)/g)) declared[match[1]] = true
   for (const match of code.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) declared[match[1]] = true
+  // 类方法也是**定义**：`componentDidCatch(error) {` 会被上面那条"调用"正则抓成调用，
+  // 于是渲染边界（PanelBoundary）一加进来这里就假红。constructor/render/生命周期方法
+  // 都属于这一类，所以按"方法简写定义"再收一遍。
+  for (const match of code.matchAll(/(?:^|\n)\s*(?:static\s+)?([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{/g)) declared[match[1]] = true
   for (const match of code.matchAll(/=\s*[A-Za-z_$][\w$]*Pair\[[01]\],\s*([A-Za-z_$][\w$]*)/g)) declared[match[1]] = true
   for (const match of code.matchAll(/function\s+[A-Za-z_$][\w$]*\s*\(([^)]*)\)/g)) {
     for (const part of match[1].split(',')) {
@@ -836,7 +846,25 @@ async function main() {
     && client.indexOf('🎒') < 0)
   check('打开面板会去取这一页的配方', /ensureItemPage\(\)/.test(client)
     && /if \(item === null \|\| item\.facts\.length === 0\) return/.test(client))
-  check('图标的贴图进了要解码的清单', /for \(const recipe of iconRecipesInUse\(\)\) \{\s*\n\s*for \(const id of \(recipe\.textureIds \|\| \[\]\)\)/.test(client))
+  check('图标的贴图进了要解码的清单', /for \(const recipe of iconRecipesInUse\(\)\) \{\s*\n\s*for \(const id of idsOf\(recipe\)\)/.test(client))
+  // 这一条曾经是 `recipe.textureIds || []`：JSON 会丢掉 undefined 字段，宿主那边
+  // 一条没有 textureIds 的配方进来就是 undefined，而 `undefined || []` 只是巧合
+  // 挡住的。现在解码清单必须走总访问器，所以访问器本身要能证明它是全的。
+  check('解码清单的取 id 走的是总访问器，不是裸读字段',
+    client.indexOf('for (const id of idsOf(recipe))') >= 0
+    && client.indexOf('for (const id of (recipe.textureIds || []))') < 0)
+  check('idsOf：字段整个缺失/不是数组都是空清单，不是 undefined',
+    JSON.stringify(api.idsOf({})) === '[]'
+    && JSON.stringify(api.idsOf(null)) === '[]'
+    && JSON.stringify(api.idsOf({ textureIds: 'not-an-array' })) === '[]'
+    && JSON.stringify(api.idsOf({ textureIds: ['a'] })) === '["a"]',
+    JSON.stringify([api.idsOf({}), api.idsOf(null), api.idsOf({ textureIds: 'x' })]))
+  // 前提证明：换成裸读的写法，上面那条立刻不成立（证明它盯着的是真东西）
+  const naiveIds = loadClient([[
+    "const idsOf = (value) => (isAbsent(value) || !Array.isArray(value.textureIds) ? [] : value.textureIds)",
+    "const idsOf = (value) => value.textureIds"]])
+  check('注入"把 idsOf 换成裸读字段"：上面那条立刻不成立',
+    naiveIds.idsOf({}) === undefined, String(naiveIds.idsOf({})))
   check('图标的贴图也进了隐藏 img 列表（不解码就是空白）',
     /Object\.assign\(allTextures, recipe\.textures\)/.test(client))
   check('图标会动的时候时钟才开着', /\|\| hudAnimated/.test(client))

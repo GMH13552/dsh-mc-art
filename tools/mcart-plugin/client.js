@@ -706,6 +706,10 @@ const iconTried = {}
 // (`item/clock` is 64 model swaps, and a mod's item texture may be a strip).
 const itemRecipes = {}
 const itemUrls = {}
+// 取配方失败的那句话。**静默失败在这条路上等于"图标凭空消失"**：`itemRecipes`
+// 拿不到，物品浏览器和九宫格就是一片空白，而屏幕上没有任何东西说为什么。
+// 模块级（不是 hook 状态）是因为它只在渲染时读一次、由 promise 回调写。
+let itemFetchError = ''
 
 /**
  * 丢掉"像素级"缓存：解码好的贴图、标记失败的贴图、烘好的物品图标。
@@ -728,6 +732,7 @@ function forgetTextures() {
   for (const key of Object.keys(iconTried)) delete iconTried[key]
   // 配方（路径、动画帧）也一起丢：外部重生成可能换了文件名或帧数，留着会指向旧文件。
   for (const key of Object.keys(itemRecipes)) delete itemRecipes[key]
+  itemFetchError = ''
   // **故意不丢 `imageNodes`**：那些是 ref 回调登记进来的 <img> 节点，React 不会为同一个
   // 元素再跑一次 ref —— 清掉它们会让解码循环永远等不到 complete。它们在下次渲染时会
   // 带上新的 src（贴图 URL 变了，React 会更新属性）。
@@ -1141,10 +1146,19 @@ return {
       const hoverPair = React.useState(null)
       const ghostPair = React.useState(null)
       const iconTickPair = React.useState(0)
+      // 贴图纪元：`forgetTextures()` 只是把六张表清空，**它不会让任何 effect 重跑**。
+      // 用户实测（"刷新完了之后 2D 贴图没有了"）：清掉 `itemRecipes`/`icons` 之后，
+      // 负责把这两张表填回来的 effect 依赖里没有变的东西 —— 配方那个的依赖是
+      // `命名空间|第几页|九宫格页|筛选|形态|家族|条目数`，图标那个是 `资产|筛选|页`，
+      // 刷新**一个都没变**，于是表清空了却再也没人去取：物品浏览器和那排九格全空白，
+      // 左边菜单的方块图标也全没了。清缓存必须同时踢一脚用它的人，所以把纪元号
+      // 加进这些 effect 的依赖里。缓存是模块级的，纪元是实例级的，两者各司其职。
+      const texEpochPair = React.useState(0)
       const voxel = voxelPair[0], setVoxel = voxelPair[1]
       const hover = hoverPair[0], setHover = hoverPair[1]
       const ghost = ghostPair[0], setGhost = ghostPair[1]
       const iconTick = iconTickPair[0], setIconTick = iconTickPair[1]
+      const texEpoch = texEpochPair[0], setTexEpoch = texEpochPair[1]
       const edit = editPair[0], setEdit = editPair[1]
       const undo = undoPair[0], setUndo = undoPair[1]
       const editTick = editTickPair[0], setEditTick = editTickPair[1]
@@ -1189,7 +1203,7 @@ return {
       function open(target, where) {
         // 换项目就丢像素缓存：缓存按贴图 id 存，而两个项目可以有同名贴图
         // （`examplemod:stone` 换了项目还是那个 id，但文件已经不是同一张）。
-        if (lastProject !== target.project) forgetTextures()
+        if (lastProject !== target.project) { forgetTextures(); setTexEpoch(texEpoch + 1) }
         lastProject = target.project
         setBusy(true)
         setChoice(target)
@@ -1292,17 +1306,13 @@ return {
         if (picking === true) return
         setPicking(true)
         setNotice('正在打开系统的目录选择器…（有的环境弹不出来；弹不出来就在下面的输入框里直接贴路径）')
-        // 对话框这条路**可能永远不返回**：shell 服务跑在非交互窗口站上时，
-        // FolderBrowserDialog 既不显示也不结束，按钮就永久停在"对话框已打开…"，
-        // 用户看到的是"点了没反应、也没有报错"。给它一个上限，超时就把按钮放开、
-        // 并把下一步说清楚（真要等下去的对话框，用户自己会再点一次）。
-        const timer = setTimeout(() => {
-          setPicking(false)
-          setNotice('目录对话框 120 秒没有返回。这条路在你的环境里可能用不了 —— 请把路径直接贴进下面的输入框。')
-        }, 120000)
+        // 对话框这条路**可能永远不返回**（shell 跑在非交互窗口站上时，
+        // FolderBrowserDialog 既不显示也不结束）。但**客户端不许用浏览器计时器**：
+        // 动态插件那条送货路的沙箱里没有 setTimeout/setInterval，碰了整个页签会崩
+        // （`tools/mcart-plugin/anim-test.js` 就是钉这件事的）。所以期限由**宿主**兜：
+        // `atlas.pickDirectory` 自己带 deadline，超时回一个 supported:false + 说明。
         host.call('atlas.pickDirectory', { start: start })
           .then((result) => {
-            clearTimeout(timer)
             setPicking(false)
             if (result === null || result === undefined) { setNotice('目录选择器没有返回结果。'); return }
             if (result.error !== undefined) { setNotice(String(result.error)); return }
@@ -1315,7 +1325,6 @@ return {
             setNotice('目录选择器没有返回路径。')
           })
           .catch((error) => {
-            clearTimeout(timer)
             setPicking(false)
             setNotice('目录选择器失败：' + String(error && error.message ? error.message : error) +
               '　请把路径直接贴进下面的输入框。')
@@ -1687,7 +1696,7 @@ return {
         if (item === null || item.facts.length === 0) return
         ensureItemPage()
       }, [item === null ? '' : [item.namespace, item.page, hudPage, item.filter, item.form,
-        item.family, item.facts.length].join('|')])
+        item.family, item.facts.length].join('|'), texEpoch])
 
       // The grid's thumbnails.  A recipe arrives before its pixels do, so a slot
       // whose textures are still decoding waits for the next tick instead of
@@ -1943,7 +1952,13 @@ return {
         if (missing.length === 0) return
         host.call('atlas.itemIcons', { root: root, project: activeProjectId(),
           source: item.source, namespace: item.namespace, items: missing }).then((result) => {
-          if (failureOf(result) !== null) return
+          const failed = failureOf(result)
+          if (failed !== null) {
+            itemFetchError = '取不到物品图标：' + failed
+            setIconTick(iconTick + 1)
+            return
+          }
+          itemFetchError = ''
           let added = 0
           for (const id of Object.keys(result.items || {})) {
             const recipe = result.items[id]
@@ -1953,7 +1968,10 @@ return {
             added += 1
           }
           if (added > 0) setIconTick(iconTick + 1)
-        }).catch(() => {  })
+        }).catch((error) => {
+          itemFetchError = '取不到物品图标：' + String(error && error.message ? error.message : error)
+          setIconTick(iconTick + 1)
+        })
       }
 
       // Clicking a slot shows it: our own block goes through `open()` like any
@@ -2211,16 +2229,26 @@ return {
             namespace: namespace, blocks: ids })
         }
         request.then((result) => {
-          if (result === null || result === undefined || result.error !== undefined) return
+          // 这一批是先记"问过了"再发请求的（不记的话每次渲染都会重发）。代价是
+          // 请求本身失败时这几个名字会**永久**留在账上，下一轮渲染直接跳过 ——
+          // 一次抖动 = 图标再也不出现，只有刷新/换项目才解得开。所以失败就把名字
+          // 退回来，下一次 iconTick 重问。
+          if (result === null || result === undefined || result.error !== undefined) {
+            for (const name of batch) delete iconTried[name]
+            return
+          }
           let added = 0
           for (const key of Object.keys(result.icons || {})) { icons[key] = result.icons[key]; added += 1 }
           if (added > 0) setIconTick(iconTick + 1)
-        }).catch(() => { /* an icon is decoration */ })
+        }).catch(() => {
+          // an icon is decoration -- but a thrown call must not blacklist the names
+          for (const name of batch) delete iconTried[name]
+        })
       // The asset identity is part of the key: opening a DIFFERENT asset keeps
       // source/filter/page unchanged, so without this the effect never re-ran and
       // the new asset's blocks never got icons -- blank hotbar slots.
       }, [voxel === null ? '' : (voxel.source + '|' + voxel.kind + ':' + voxel.id + '|' + voxel.choices.length),
-        filter, pickGroup, pickFamily, pickPage, iconTick])
+        filter, pickGroup, pickFamily, pickPage, iconTick, texEpoch])
 
       React.useEffect(() => {
         if (voxel === null) { ghostAsk = ''; if (ghost !== null) setGhost(null); return }
@@ -2656,7 +2684,7 @@ return {
           React.createElement('span', { className: 'mcart-sub' },
             item.source === 'project' ? '本项目' : item.namespace),
           React.createElement('span', { className: 'mcart-note mcart-grow' },
-            '点一格就放到上面的 3D 里看'),
+            itemFetchError === '' ? '点一格就放到上面的 3D 里看' : itemFetchError),
           React.createElement('button', { className: 'mcart-btn', type: 'button',
             onClick: () => { setItemOpen(false); setIconPick(null) } }, '收起')))
         // Our own pack first, because that is what this project makes.
@@ -3667,7 +3695,7 @@ return {
           React.createElement('button', { className: 'mcart-btn', type: 'button',
             // 刷新 = "磁盘上可能变了，重新读一遍"：先丢像素缓存，再强制重扫索引。
             // 只重扫索引的话，`have` 里还留着旧贴图的 id，宿主永远不会再送新的字节。
-            onClick: () => { forgetTextures(); scan(root, true, null) } }, '刷新'),
+            onClick: () => { forgetTextures(); setTexEpoch(texEpoch + 1); scan(root, true, null) } }, '刷新'),
         ),
         failure === null ? null : React.createElement('div', { className: 'mcart-err' }, String(failure)),
         React.createElement('div', { className: 'mcart-list' }, menu),

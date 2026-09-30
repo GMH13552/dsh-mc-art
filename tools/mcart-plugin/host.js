@@ -478,6 +478,28 @@ return {
      */
     const subprocessOf = () => ctx.get('subprocess')
 
+    /**
+     * 给"可能永远不返回"的调用兜一个期限。
+     *
+     * 为什么在**宿主**这半边做：客户端不许碰浏览器计时器（动态插件沙箱里没有
+     * setTimeout，碰了整个页签会崩 —— `tools/mcart-plugin/anim-test.js` 钉的就是这条），
+     * 而宿主半有 `ctx.timer`。所以"目录对话框弹不出来、也永不返回"这件事由宿主负责
+     * 回一个 supported:false（而不是让面板的按钮永久停在"对话框已打开…"）。
+     */
+    async function withDeadline(run, ms) {
+      const timer = ctx.get('timer')
+      if (timer === undefined || typeof timer.timeout !== 'function') return await run()
+      let timeout = false
+      const deadline = new Promise((resolve) => {
+        timer.timeout(() => { timeout = true; resolve() }, ms)
+      })
+      const finished = Promise.resolve().then(run).then((value) => ({ value: value }), (error) => ({ error: error }))
+      const winner = await Promise.race([finished, deadline.then(() => ({ deadline: true }))])
+      if (winner.deadline === true) return { deadlineExpired: true }
+      if (winner.error !== undefined) throw winner.error
+      return winner.value
+    }
+
     /** 起一个进程并收输出；`null` = 这个运行时装不下 subprocess 那条路。 */
     async function runProcess(argv, options) {
       const settings = options || {}
@@ -2573,15 +2595,23 @@ return {
           // 优先 argv 起（不需要 shell 服务）。桌面端实测：会话里的 pwsh 工具好用，
           // 但宿主层拿不到 shell 服务 —— 那种情况下这条路是唯一能弹对话框的。
           const encoded = utf16leBase64(lines.join('\n'))
-          let output = ''
-          const argvRun = await runProcess([powerShell, '-NoProfile', '-STA', '-EncodedCommand', encoded],
-            { cwd: start, maxBytes: 64 * 1024, graceMs: 3000 })
-          if (argvRun !== null) output = String(argvRun.text)
-          if (output === '' && shellOf() !== undefined) {
-            const quoting = await currentShell(start)
-            output = await runDialog(quoting.word(powerShell) + ' -NoProfile -STA -EncodedCommand ' + encoded,
-              policyFor(start))
+          const dialog = await withDeadline(async () => {
+            let text = ''
+            const argvRun = await runProcess([powerShell, '-NoProfile', '-STA', '-EncodedCommand', encoded],
+              { cwd: start, maxBytes: 64 * 1024, graceMs: 3000 })
+            if (argvRun !== null) text = String(argvRun.text)
+            if (text === '' && shellOf() !== undefined) {
+              const quoting = await currentShell(start)
+              text = await runDialog(quoting.word(powerShell) + ' -NoProfile -STA -EncodedCommand ' + encoded,
+                policyFor(start))
+            }
+            return text
+          }, 120000)
+          if (dialog !== null && typeof dialog === 'object' && dialog.deadlineExpired === true) {
+            return { supported: false, platform: platformOf() || null,
+              detail: '目录对话框 120 秒没有返回 —— 这条路在你的环境里可能用不了（对话框既不显示也不结束）。' }
           }
+          const output = String(dialog)
           const picked = betweenMarkers(output)
           if (picked === '') return { supported: true, cancelled: true, via: 'windows', exe: powerShell }
           const converted = await convertPath('-u', picked)
