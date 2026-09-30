@@ -26,6 +26,8 @@ const FAULT = process.argv.includes('--fault')
 // 第二个故障模式：把"JSON 丢字段"那处的守卫还原成旧的 `=== null` 写法
 // （用户实测的崩溃：`Cannot read properties of undefined (reading 'textureIds')`）。
 const FAULT_JSON = process.argv.includes('--fault-json')
+// 第三个故障模式：把"刷新时丢像素缓存"那一句删掉（用户实测："改完纹理点刷新看不到新的"）。
+const FAULT_REFRESH = process.argv.includes('--fault-refresh')
 
 let failures = 0
 function check(label, ok, detail) {
@@ -284,6 +286,13 @@ async function main() {
       console.log('  FAIL --fault-json 没生效：找不到 idsOf(asset.recipe) 那一处（门禁要跟着改）')
       process.exit(1)
     }
+  } else if (FAULT_REFRESH) {
+    faulted = source.replace('onClick: () => { forgetTextures(); scan(root, true, null) }',
+      'onClick: () => scan(root, true, null)')
+    if (faulted === source) {
+      console.log('  FAIL --fault-refresh 没生效：找不到刷新按钮里那句 forgetTextures()（门禁要跟着改）')
+      process.exit(1)
+    }
   } else if (FAULT) {
     faulted = source.replace(/rows\.push\(React\.createElement\('div', \{ className: 'mcart-bar', key: 'dirinput' \}[\s\S]*?\)\)\n/, '')
     if (faulted === source) {
@@ -399,6 +408,23 @@ async function main() {
   })
   check('客户端里没有"裸读 .textureIds"的地方（JSON 丢字段不会白屏）',
     rawReads.length === 0, rawReads.map((line) => line.trim().slice(0, 90)).join(' ｜ '))
+
+  // ── 刷新必须丢掉像素缓存（用户实测："agent 改完纹理，点刷新看不到新的"）──────────
+  //
+  // 这是**源码形状**检查，不是行为检查，我把它标清楚：场景请求带 `have:
+  // Object.keys(decoded)`，宿主只送客户端没有的贴图；而解码要真的 canvas（`scratch`），
+  // Node 里没有，所以"缓存有没有丢"没法在这条门禁里跑出来。钉住的是那三件事：
+  // 清空函数存在且清三张表、刷新按钮调它、换项目也调它。
+  console.log('--- 刷新/换项目会丢像素缓存（源码形状检查）')
+  check('有 forgetTextures()，而且清的是 decoded / failedTex / itemUrls 三张表',
+    /function forgetTextures\(\)/.test(faulted) &&
+    /delete decoded\[key\]/.test(faulted) && /delete failedTex\[key\]/.test(faulted) &&
+    /delete itemUrls\[key\]/.test(faulted))
+  check('刷新按钮先丢缓存再强制重扫（否则 have 里还留着旧 id，宿主永远不会再送）',
+    /onClick: \(\) => \{ forgetTextures\(\); scan\(root, true, null\) \}/.test(faulted),
+    '（刷新按钮没接上 forgetTextures）')
+  check('换项目时也丢（同名贴图跨项目会串味）',
+    /if \(lastProject !== target\.project\) forgetTextures\(\)/.test(faulted))
 
   console.log(failures === 0 ? '全部通过' : failures + ' 项失败')
   process.exit(failures === 0 ? 0 : 1)

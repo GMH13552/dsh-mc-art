@@ -680,6 +680,8 @@ const CATEGORIES = [
 
 const TAB_ID = 'mc-art.atlas'
 
+// 最近打开的 project id：换了项目就丢像素缓存（见 forgetTextures）。
+let lastProject = ''
 const decoded = {}
 const failedTex = {}
 const indexes = {}
@@ -704,6 +706,21 @@ const iconTried = {}
 // (`item/clock` is 64 model swaps, and a mod's item texture may be a strip).
 const itemRecipes = {}
 const itemUrls = {}
+
+/**
+ * 丢掉"像素级"缓存：解码好的贴图、标记失败的贴图、烘好的物品图标。
+ *
+ * 为什么必须要它：场景请求带 `have: Object.keys(decoded)` —— 宿主只送客户端**没有的**
+ * 贴图。所以一张图一旦被解码过，**外部改动它就永远看不到**：agent 重新生成纹理、
+ * 别的工具写盘，面板照旧显示旧像素。用户实测："agent 改完之后点刷新没有重新加载新的纹理"。
+ * 换项目 / 换根目录同理（不同项目可能有同名贴图，缓存按 id 是跨项目的）。
+ * 宿主那一侧不用管：它的贴图缓存键是 `path@mtime:size`，文件一变就自然失效。
+ */
+function forgetTextures() {
+  for (const key of Object.keys(decoded)) delete decoded[key]
+  for (const key of Object.keys(failedTex)) delete failedTex[key]
+  for (const key of Object.keys(itemUrls)) delete itemUrls[key]
+}
 // The hotbar's slot canvases, keyed like `itemRecipes`.  Module scope for the
 // same reason: the draw effect needs them across renders without a state update
 // per slot, and a ref callback is what fills them in.
@@ -1159,6 +1176,10 @@ return {
       }
 
       function open(target, where) {
+        // 换项目就丢像素缓存：缓存按贴图 id 存，而两个项目可以有同名贴图
+        // （`examplemod:stone` 换了项目还是那个 id，但文件已经不是同一张）。
+        if (lastProject !== target.project) forgetTextures()
+        lastProject = target.project
         setBusy(true)
         setChoice(target)
         setPreviewItem(null)
@@ -3632,7 +3653,10 @@ return {
           React.createElement('span', { className: 'mcart-path' }, root),
           React.createElement('button', { className: 'mcart-btn', type: 'button',
             onClick: () => { setRoot(''); setIndex(null); setItem(null); setItemOpen(false); setIconPick(null); setPreviewItem(null); setHudPage(1); setScene(null); setSettings(null); setEdit(null); setVoxel(null); setHover(null); setGhost(null) } }, '换项目'),
-          React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: () => scan(root, true, null) }, '刷新'),
+          React.createElement('button', { className: 'mcart-btn', type: 'button',
+            // 刷新 = "磁盘上可能变了，重新读一遍"：先丢像素缓存，再强制重扫索引。
+            // 只重扫索引的话，`have` 里还留着旧贴图的 id，宿主永远不会再送新的字节。
+            onClick: () => { forgetTextures(); scan(root, true, null) } }, '刷新'),
         ),
         failure === null ? null : React.createElement('div', { className: 'mcart-err' }, String(failure)),
         React.createElement('div', { className: 'mcart-list' }, menu),
