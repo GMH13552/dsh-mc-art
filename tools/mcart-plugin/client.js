@@ -1630,7 +1630,7 @@ return {
           out.push({ name: name, title: title || name })
         }
         // Every project under the same root, not just the open one.  The
-        // renderer always could resolve 眼球树 blocks from 血肉之地 -- only this
+        // renderer could already resolve one project's blocks from another's -- only this
         // list refused to offer them, which read as the two being isolated.
         const projects = index === null ? [] : (index.projects || [])
         const current = activeProjectId()
@@ -1645,7 +1645,7 @@ return {
             add(qualified, titleOf[qualified])
           }
         }
-        // A cell may name a block without a namespace -- fleshland's atlas does
+        // A cell may name a block without a namespace -- a project's atlas does
         // -- and the id then has no Chinese name, so the hotbar showed a bare
         // `blood_sac`.  Qualify it against the open project, exactly like the
         // cell renderer does, then look the name up again.
@@ -3131,7 +3131,7 @@ return {
           '项目 id 与命名空间同名，之后不会给它长出第二个命名空间。'))
         rows.push(React.createElement('div', { className: 'mcart-bar', key: 'form' },
           React.createElement('input', {
-            className: 'mcart-input', placeholder: '项目名，例如 fleshland（小写字母/数字/_）',
+            className: 'mcart-input', placeholder: '项目名，例如 my_mod（小写字母/数字/_）',
             value: newId,
             onChange: (event) => setNewId(String(event.target.value)),
             onKeyDown: (event) => { if (event.key === 'Enter' && valid) createProject() },

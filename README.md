@@ -106,7 +106,7 @@ sh install.sh --no-cordis-tools   # 把模式里的 Cordis 工具行关掉（见
 ⚠️ **安装时改一处**：`loader.host.js` 顶部的
 
 ```js
-const MCART_HOME = '/home/gmh/mc-art/tools/mcart-plugin'
+const MCART_HOME = '/你的克隆路径/dsh-mc-art/tools/mcart-plugin'   // 安装器会自动改写这一行
 ```
 
 改成你自己的克隆路径；把它的内容作为 `code.host`、`loader.client.js` 作为 `code.client`

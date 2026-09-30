@@ -2140,7 +2140,7 @@ return {
       try {
         const project = await projectFor(root, projectId)
         if (project === undefined) return { error: '找不到项目：' + projectId }
-        // An ITEM's textures arrive as `ref:` handles (`ref:fleshland:item/blood_crystal`),
+        // An ITEM's textures arrive as `ref:` handles (`ref:<命名空间>:item/<物品>`),
         // because that is how the flat-icon path names them; a block's arrive as
         // paths.  The pen writes FILES, so a handle has to be resolved to the one
         // it stands for -- this is the whole reason "血晶这种物体不能修改贴图".

@@ -16,10 +16,10 @@ invisible.
 ```json
 {
   "schema": "mc-art.atlas/1",
-  "namespace": "fleshland",
+  "namespace": "examplemod",
   "pack": "pack",
   "entities":   [ { "id": "blood_sheep", "layers": [ … ], "refs": [ … ] } ],
-  "biomes":     [ { "id": "fleshland", "cells": [ { "block": "flesh_soil", "at": [-3, 0, -3] } ], "refs": [ … ] } ],
+  "biomes":     [ { "id": "example_biome", "cells": [ { "block": "example_soil", "at": [-3, 0, -3] } ] } ],
   "structures": [ { "id": "…", "cells": [ … ] } ]
 }
 ```

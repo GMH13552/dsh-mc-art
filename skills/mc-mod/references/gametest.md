@@ -27,7 +27,8 @@ Measured (1.18.2 / Forge 40.2.0, this workspace):
 
 ```
 clean    →  [minecraft/GameTestServer]: All 2 required tests passed :)          exit 0
---fault  →  [minecraft/LogTestReporter]: fleshblockplaces failed! 放下去的血肉块不是血肉块 at 1,-59,1 (relative: 1,1,1)
+--fault  →  [minecraft/LogTestReporter]: <测试名> failed! <断言里的那句话> at 1,-59,1 (relative: 1,1,1)
+#   （这行的形状来自一次真实运行；测试名与消息换成了占位符——那是作者自己的示例项目）
             [minecraft/GameTestServer]: 1 required tests failed :(             exit 1
 ```
 
