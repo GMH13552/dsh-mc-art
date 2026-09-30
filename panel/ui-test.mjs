@@ -238,14 +238,32 @@ function makeHandlers(options) {
     if (name === 'atlas.scan') {
       return { rootSpecified: true, root: (args || {}).root, cached: false, errors: [],
         projects: [{ id: PROJECT.id, title: PROJECT.title, namespace: PROJECT.namespace, root: (args || {}).root,
-          // 有物品可选：下面那条"recipe 缺失"的用例要从菜单点进去
-          items: { biome: [], structure: [], entity: [], block: [{ id: 'example_block', title: '示例方块' }] } }] }
+          // 有物品可选：下面那条"recipe 缺失"的用例要从菜单点进去。
+          // `structure` 那条是给"方块图标"行为检查用的：只有结构/群系才会进
+          // `openVoxel()`，而 `voxel` 非空时 `atlas.icons` 那条 effect 才会跑。
+          items: { biome: [], structure: [{ id: 'example_struct', title: '示例结构' }],
+            entity: [], block: [{ id: 'example_block', title: '示例方块' }] } }] }
     }
     if (name === 'atlas.settings') return Object.assign({}, settings, savedSettings === null ? {} : { directory: savedSettings })
     if (name === 'atlas.saveSettings') { savedSettings = (args || {}).directory; return { saved: true, file: settings.file, path: settings.path, via: 'fs' } }
     if (name === 'atlas.pickDirectory') return pickerReply
-    if (name === 'atlas.scene') return { kind: 'block', id: '', quads: [], textureIds: [], textures: {}, animations: {}, cells: null, refs: [], box: null, errors: [] }
+    if (name === 'atlas.scene') {
+      // 结构/群系才会走 `openVoxel()`（它就认这两种），`voxel` 有值之后左边菜单的
+      // 方块图标那条 effect（`atlas.icons`）才会真的跑 —— "刷新清完有没有人再填"
+      // 的行为检查要靠它。别的一律按方块答（quads 空、cells 空）。
+      // 请求里是 `id`（项目资产）或 `block`（引用资产），两个都要看。
+      const asked = String((args || {}).id || (args || {}).block || '')
+      const wantStructure = asked.indexOf('struct') >= 0
+      return { kind: wantStructure ? 'structure' : 'block', id: '', quads: [],
+        textureIds: [], textures: {}, animations: {},
+        cells: wantStructure ? [] : null, refs: [], box: null, errors: [],
+        choices: [{ name: 'example_block', title: '示例方块' }] }
+    }
     if (name === 'atlas.itemIcons' || name === 'atlas.icons' || name === 'atlas.refIcons') return { icons: {}, items: {}, names: {}, failed: [] }
+    // 物品浏览器要"有东西可选"，`ensureItemPage` 才会真的去取配方（它要求 facts 非空）。
+    if (name === 'atlas.refItems') {
+      return { items: [{ id: 'example_item', title: '示例物品' }], version: '1.20.1' }
+    }
     if (name === 'atlas.refNamespaces') return { namespaces: [], directory: '', reason: '没有设置参考目录' }
     return {}
   }
@@ -468,6 +486,56 @@ async function main() {
     && /itemFetchError === '' \? '点一格就放到上面的 3D 里看' : itemFetchError/.test(faulted))
   check('图标"问过了"的账在请求失败时会退回来（一次抖动不该让图标永久不出现）',
     /for \(const name of batch\) delete iconTried\[name\]/.test(faulted))
+
+  // ── 行为检查：刷新之后，补表的那几个 effect 真的**重跑**了吗 ───────────────────
+  //
+  // 上面那几条都是**源码形状**检查（依赖数组里有没有纪元）。形状对了不等于行为对了，
+  // 而用户看到的是行为："刷新完了之后 2D 贴图没有了"。所以这里真的把面板挂起来、
+  // 点「刷新」，数宿主收到了几次 `atlas.itemIcons` —— 配方被清掉之后必须**再问一次**，
+  // 否则物品浏览器的缩略图和那一排九格就是空白，而且不会自己回来。
+  // `--fault-epoch`（清缓存但不踢纪元）下这一条必须红。
+  console.log('--- 刷新之后补表的 effect 真的重跑（行为检查，不是形状）')
+  //
+  // 形状检查（依赖数组里有没有纪元）挡不住"依赖写对了但 effect 因为别的原因不跑"。
+  // 这里把面板真的挂起来、真的点「刷新」，数宿主收到了几次请求：
+  // 配方被清掉之后必须**再问一次**，否则物品浏览器的缩略图和那一排九格就是空白，
+  // 而且不会自己回来。`--fault-epoch`（清缓存但不踢纪元）下这两条必须红。
+  const refreshUi = await mount(component, { sessionId: 'ui-test' }, host, react)
+  if (refreshUi.buttonProps('用本会话目录') !== undefined) await refreshUi.click('用本会话目录')
+  const countOf = (name) => calls.filter((call) => call.name === name).length
+  // 前提：物品卡确实开着（`item` 非空）。`ensureItemPage` 在 `item === null` 时直接
+  // 返回，那样"刷新之后有没有再取一次"就成了空断言 —— 所以先把前提钉住。
+  // （不能拿 `atlas.refItems` 当前提：物品是**前面那几段用例**载入的，而那时调用记录
+  //   已经被 `calls.length = 0` 清过一次，这里看不到。）
+  if (refreshUi.buttonProps('物品列表') !== undefined) await refreshUi.click('物品列表')
+  await refreshUi.settle()
+  check('物品卡开着（前提：item 非空，刷新才会去补配方）',
+    refreshUi.buttonProps('收起') !== undefined,
+    '按钮：' + refreshUi.buttons().join(' / '))
+
+  const recipesBefore = countOf('atlas.itemIcons')
+  await refreshUi.click('刷新')
+  await refreshUi.settle()
+  check('刷新之后配方会再取一次（不然缩略图和九宫格空白，而且不会自己回来）',
+    countOf('atlas.itemIcons') > recipesBefore,
+    '刷新前 ' + recipesBefore + ' 次，刷新后 ' + countOf('atlas.itemIcons') + ' 次')
+
+  // 方块图标那两张表（`icons` / `iconTried`）：`voxel` 有值那条 effect 才会跑，
+  // 而 `voxel` 只有"手动修改一个结构/群系"才会被建起来（见 openVoxel）。
+  const openedStructure = await refreshUi.clickLabel('示例结构').then(() => true).catch(() => false)
+  await refreshUi.settle()
+  const openedEditor = await refreshUi.clickLabel('手动修改').then(() => true).catch(() => false)
+  await refreshUi.settle()
+  const iconsBefore = countOf('atlas.icons')
+  check('打开结构资产并进编辑会去取方块图标（前提：'
+    + (openedStructure ? '' : '没找到结构按钮；') + (openedEditor ? '' : '没找到「手动修改」按钮；')
+    + '）', iconsBefore > 0, '取图标调用次数 = ' + iconsBefore
+    + '，宿主收过的：' + calls.map((call) => call.name).join(','))
+  await refreshUi.click('刷新')
+  await refreshUi.settle()
+  check('刷新之后方块图标会再取一次（不然左边菜单只剩空框）',
+    countOf('atlas.icons') > iconsBefore,
+    '刷新前 ' + iconsBefore + ' 次，刷新后 ' + countOf('atlas.icons') + ' 次')
 
   console.log(failures === 0 ? '全部通过' : failures + ' 项失败')
   process.exit(failures === 0 ? 0 : 1)
