@@ -9,7 +9,7 @@ description: Use when making or extending a Minecraft mod — blocks, items, ent
 the project's contracts, the panel that edits them, the order to do things in, and
 — the part that matters most — **how a mod's claims get checked by the game itself**.
 
-Two rules run through everything here:
+Three rules run through everything here:
 
 1. **One namespace, one truth** — and **one mod, one namespace.** A project is a mod; it owns exactly one namespace, and nothing may grow a second
    one inside it (the panel refuses to create it). For a given asset id there is exactly one file
@@ -17,6 +17,12 @@ Two rules run through everything here:
 2. **A check that cannot fail is not a check.** Every "it works" here names the
    evidence and, where it exists, the fault injection that proves the evidence
    can say NO.
+3. **Art goes through the engine — a hand-written PNG is not a delivery.** Textures come
+   from the `mc-art` loop (sample the reference → author a plan → rasterise → **look at the
+   result**), never from `PIL`/`numpy`/hand-placed pixels. Not style policing: two textures
+   drawn independently end up with unrelated backgrounds and palettes, which is exactly how
+   a set stops looking like one mod. Evidence the loop ran: the plan file, the rendered
+   sheet, and the comparison against the reference (`references/workflow.md` stage 2).
 
 ## What is in this skill
 
@@ -34,7 +40,8 @@ Two rules run through everything here:
 ```
 0. Decide the target          version + loader + java, ONE place, before anything else
 1. Decide what exists         ids, names (zh/en), the presentation of each: block / item / entity / structure / biome
-2. Author the art             with the mc-art skill, against a reference root of the SAME version
+2. Author the art             through the mc-art ENGINE (plan → rasterise → look),
+                              against a reference root of the SAME version — never hand-draw
 3. Write the atlas            the index that says what exists and where its files are
 4. Generate the code/assets   datagen or templates — never hand-write what can be generated
 5. Verify behaviour IN GAME   GameTestServer: it runs, it asserts, it exits with the failure count

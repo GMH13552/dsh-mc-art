@@ -38,18 +38,42 @@ decides which files are needed at all:
 
 **Acceptance:** a list of ids that could be typed into the game and found.
 
-## 2. Author the art — against a reference root of the SAME version
+## 2. Author the art — through the ENGINE, against a reference root of the SAME version
 
-Use the `mc-art` skill. The engine is deterministic: you write a plan, it rasterises,
-you measure. Iterate at seconds per attempt rather than minutes per game launch.
+**Rule: you do not draw textures.** You sample a reference, author a plan, rasterise it, and
+look at the result. A PNG written by `PIL`/`numpy`/a hand-placed pixel loop is **not a
+delivery**, even if it is 16×16 and looks plausible: two textures drawn independently end up
+with unrelated backgrounds and palettes. Measured example: a stone and its ore came out with
+completely different backgrounds because each was drawn on its own instead of sampled from one
+reference.
 
-- The reference root decides the rules (1.12.2 and 1.18.2 differ in model and
-  blockstate shape, and in how a face is UV-mapped).
-- Sample the project's own earlier textures too (`includeGenerated`), or new work
-  drifts toward vanilla and stops looking like the set.
+**Precondition — check it before drawing anything.** The reference root must point at a real
+game installation of the **same version** as the target. Read `<项目>/mc-art.settings.json`
+(`reference.directory`) or ask the panel (⚙ 设置 → 参考目录). If it is unset: **say so and
+stop** — do not "make do" with invented art. The reference decides the rules (1.12.2 vs 1.18.2
+differ in model/blockstate shape and in how a face is UV-mapped), and it is where the palette
+comes from.
 
-**Acceptance:** the rendered sheet next to the reference it was sampled from, plus a
-note of what differs and why.
+**The loop** (`$M` is the `mc-art` skill's CLI; the skill carries the full command surface):
+
+```bash
+$M index-vanilla --root <参考目录>          # 1. SCAN — what logical names exist
+$M evidence <name>                          # 2. LOOK — pull the real PNGs and read them
+#   3. EVIDENCE — literal pixels where precision matters; which frame of a family answers this
+#   4. AUTHOR a plan (your decisions) — e.g. work/stone.plan.json
+$M render --plan work/stone.plan.json --out outputs/stone
+#   5. LOOK at outputs/stone/sprite.png — then go back to 4 until it holds up
+```
+
+- Sample the project's own earlier textures too (`includeGenerated`), or new work drifts toward
+  vanilla and stops looking like the set.
+- **Family consistency is the point.** A stone and its ore share a background and a palette:
+  render them in the same session against the same reference and compare the sheets side by
+  side. If two sheets do not look like siblings, that is two bugs, not two styles.
+
+**Acceptance (all three, or the stage is not done):** the plan file(s) under the project, the
+rendered sheet (`outputs/<name>/sprite.png`), and a note of what differs from the reference and
+why. A PNG with no plan beside it fails this stage by definition.
 
 ## 3. Write the atlas
 
