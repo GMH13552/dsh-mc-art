@@ -1,6 +1,6 @@
 {
   "name": "dsh-mc-art-panel",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "MC 资产面板 + 「MC 模组工作室」模式 + mc-mod skill：3D+物品栏、像素/结构编辑器、@ 提意见、GameTest 判定闭环",
   "type": "module",
   "main": "lib/index.js",

@@ -54,6 +54,24 @@ function buildFixture() {
     Buffer.from('not a real png yet'))
 }
 
+/** `ctx.subprocess` 的桩：只认"起 powershell 弹对话框"那一种调用，回标记串。 */
+function makeSubprocessStub(record) {
+  const reader = (text) => ({ readFrom: () => ({ text: text, nextOffset: 0, lossy: false }) })
+  return {
+    seen: record.seen,
+    async resolveExecutable(name) { return name },
+    spawn(spec) {
+      record.seen.push(spec.argv)
+      const wantsDialog = spec.argv.indexOf('-EncodedCommand') > 0
+      const text = wantsDialog && record.pick !== undefined
+        ? 'MCART_PICK_BEGIN' + record.pick + 'MCART_PICK_END' : ''
+      return { stdin: undefined, stdout: undefined, stderr: undefined, control: undefined,
+        collected: { stdout: reader(text), stderr: reader('') },
+        done: Promise.resolve({ exitCode: 0 }), terminate: () => {}, waitForExit: async () => true }
+    },
+  }
+}
+
 let stepCounter = 0
 /** 把一条命令交给真的 Windows PowerShell 跑（没条件就只记录，返回"模拟成功"）。 */
 function execute(command, record) {
@@ -143,6 +161,7 @@ function buildHost(record) {
     get: (name) => {
       if (name === 'fs') return fsService
       if (name === 'shell') return shellLive ? shellService : undefined
+      if (name === 'subprocess') return record.subprocess
       return undefined
     },
     effect: (fn) => fn(),
@@ -258,6 +277,22 @@ function buildHost(record) {
   const blind = await buildHost(blindRecord)['atlas.pickDirectory']({ start: '' })
   check('对照：平台问不到时也能靠绝对路径兜住（不依赖 platform 或 PATH）',
     blind && (blind.path === pickedDir || blind.cancelled === true), JSON.stringify(blind))
+
+  // ── F. 没有 shell 服务、只有 subprocess（用户桌面端那种宿主）────────────────
+  //
+  // 会话里的 pwsh 工具好用 ≠ 宿主层看得到 shell 服务。桌面端实测：面板里所有探测都回
+  // `exitCode: null`（"找不到 Python"那段里每一项都写 exit=null）。所以对话框也要有
+  // 一条 argv 路：直接起 powershell.exe。
+  console.log('--- F. 没有 shell 服务、只有 subprocess：对话框走 argv')
+  const subRecord = { platform: 'win32', env: { SystemRoot: sysRoot, USERPROFILE: 'C:/Users/probe' },
+    pick: pickedDir, shellFromStart: false, subprocess: makeSubprocessStub({ pick: pickedDir, seen: [] }) }
+  const subHandlers = buildHost(subRecord)
+  const subPicked = await subHandlers['atlas.pickDirectory']({ start: '' })
+  check('没有 shell 服务时靠 subprocess 起了 powershell 并拿回路径',
+    subPicked && subPicked.path === pickedDir, JSON.stringify(subPicked))
+  check('确实用的是 argv 形式（没有把命令拼成一行）',
+    subRecord.subprocess.seen.length === 1 && Array.isArray(subRecord.subprocess.seen[0]) &&
+    subRecord.subprocess.seen[0].indexOf('-EncodedCommand') > 0, JSON.stringify(subRecord.subprocess.seen[0] || []).slice(0, 160))
 
   // 那句错的提示必须从**发出去的产物**里消失 —— 它就是用户"为啥啊"的由来。
   // （看生成物而不是注释源码：源码注释里那句话是解释历史的，保留着没问题。）

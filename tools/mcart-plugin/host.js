@@ -466,6 +466,62 @@ return {
       return nodeFs
     }
 
+    /**
+     * `ctx.subprocess`（宿主层那条与 agent 无关的执行缝）——**面板的主要执行方式**。
+     *
+     * 为什么不能用 `ctx.shell`：用户桌面端实测（0.2.0-rc.2），`pwsh` 工具在**会话层**跑得好好的
+     * （会话日志里 260 次工具调用、0 次 shell 报错），但面板在**宿主层** `ctx.get('shell')`
+     * 是 undefined —— 所有探测都回 `exitCode: null`，于是"找不到 Python"里每一项都写着
+     * `exit=null`，看的人完全不知道是被执行了没成功，还是根本没被执行的。
+     * `subprocess` 不需要 shell：给它 argv，它按绝对路径起进程。桌面版自带的那份 Python
+     * 就是这么能跑起来的（它压根不在 PATH 里）。
+     */
+    const subprocessOf = () => ctx.get('subprocess')
+
+    /** 起一个进程并收输出；`null` = 这个运行时装不下 subprocess 那条路。 */
+    async function runProcess(argv, options) {
+      const settings = options || {}
+      const service = subprocessOf()
+      if (service === undefined || typeof service.spawn !== 'function') return null
+      const maxBytes = settings.maxBytes === undefined ? 1024 * 1024 : settings.maxBytes
+      const collect = { maxBytes: maxBytes }
+      let handle = null
+      try {
+        handle = service.spawn({
+          argv: argv,
+          cwd: settings.cwd === undefined || settings.cwd === '' ? '.' : settings.cwd,
+          stdio: { stdin: 'ignore', stdout: collect, stderr: collect },
+          graceMs: settings.graceMs === undefined ? 5000 : settings.graceMs,
+        })
+      } catch (error) {
+        return { exitCode: null, text: '', err: 'subprocess.spawn 失败：' + messageOf(error), via: 'subprocess' }
+      }
+      let exitCode = null
+      try {
+        const done = await handle.done
+        exitCode = done === undefined || done === null || done.exitCode === undefined ? null : done.exitCode
+      } catch (error) {
+        exitCode = null
+      }
+      const read = (reader) => {
+        try { return reader === undefined ? '' : String(reader.readFrom(0).text) } catch (error) { return '' }
+      }
+      const collected = handle.collected || {}
+      return { exitCode: exitCode, text: read(collected.stdout), err: read(collected.stderr), via: 'subprocess' }
+    }
+
+    /** 让 subprocess 在同一条执行世界里解析一个可执行名（PATH 由它负责）。 */
+    async function resolveExecutable(name) {
+      const service = subprocessOf()
+      if (service === undefined || typeof service.resolveExecutable !== 'function') return null
+      try {
+        const found = await service.resolveExecutable(name)
+        return typeof found === 'string' && found !== '' ? found : null
+      } catch (error) { return null }
+    }
+
+    const isPathLike = (value) => String(value).indexOf('/') >= 0 || String(value).indexOf(BACKSLASH) >= 0
+
     function policyFor(workspaceRoot) {
       if (typeof workspaceRoot !== 'string' || workspaceRoot === '') return undefined
       return { mode: 'workspace-write', workspaceRoot: workspaceRoot }
@@ -853,6 +909,8 @@ return {
     // machine where Python gets installed mid-session recovers on the next call.
     const PYTHON_CANDIDATES = ['python3', 'python', 'py -3']
     let pythonLauncher = ''
+    let pythonExe = ''        // 原样的可执行（subprocess 用 argv，shell 用转义过的 launcher）
+    let pythonVia = null      // 'subprocess' | 'shell' —— 出错时要说清走的哪条
     let pythonWhy = null
 
     /**
@@ -872,6 +930,17 @@ return {
         if (trimmed !== '' && out.indexOf(trimmed) < 0) out.push(trimmed)
       }
       push(envOf('DSH_DESKTOP_PRIMARY_RUNTIME_DIR'))
+      // 桌面端把"运行时目录"当 argv 传给 dsh-desktop-host（它自己也是这么找 python 的）。
+      if (typeof process !== 'undefined' && Array.isArray(process.argv)) {
+        for (const value of process.argv) {
+          if (typeof value === 'string' && /(^|[\\/])runtime[\\/]primary-runtime$/.test(value)) push(value)
+        }
+      }
+      // 宿主进程就是 Electron（ELECTRON_RUN_AS_NODE）：<app>/resources/runtime/primary-runtime。
+      if (typeof process !== 'undefined' && typeof process.execPath === 'string' && process.execPath !== '') {
+        const exeDir = parentOf(process.execPath.split(BACKSLASH).join('/')) || ''
+        if (exeDir !== '') push(exeDir + '/resources/runtime/primary-runtime')
+      }
       const home = envOf('USERPROFILE') || envOf('HOME')
       const dshHome = envOf('DSH_HOME') || (home === '' ? '' : home + '/.dsh')
       if (dshHome !== '') {
@@ -915,14 +984,36 @@ return {
       const dialect = await currentShell(workspaceRoot)
       const tried = []
       for (const candidate of pythonCandidates()) {
-        // 绝对路径里可能有空格（Windows 的 Program Files），必须按方言转义。
-        const launcher = (candidate.indexOf('/') >= 0 ? dialect.word(candidate) : candidate)
-        const probe = await runShell(launcher + ' -c "print(1)"', 20000, policyFor(workspaceRoot), 4096)
+        const pathLike = isPathLike(candidate)
+        // 第一条：subprocess + argv。绝对路径直接用；裸名字先让它解析 PATH。
+        if (pathLike || subprocessOf() !== undefined) {
+          const exe = pathLike ? candidate : await resolveExecutable(candidate)
+          if (exe !== null) {
+            const done = await runProcess([exe, '-c', 'print(1)'], { maxBytes: 4096 })
+            if (done !== null) {
+              if (done.exitCode === 0 && String(done.text).trim() === '1') {
+                pythonExe = exe
+                pythonVia = 'subprocess'
+                pythonLauncher = exe
+                return pythonLauncher
+              }
+              tried.push(candidate + '(subprocess exit=' + String(done.exitCode) +
+                (String(done.err).trim() === '' ? '' : ' ' + String(done.err).trim().slice(0, 60)) + ')')
+              continue
+            }
+          }
+        }
+        // 第二条：shell（老路；服务不在时 exitCode 是 null —— 把这个事实也写进去）
+        const command = (pathLike ? dialect.word(candidate) : candidate) + ' -c "print(1)"'
+        const probe = await runShell(command, 20000, policyFor(workspaceRoot), 4096)
         if (probe.exitCode === 0 && String(probe.text).trim() === '1') {
-          pythonLauncher = launcher
+          pythonExe = candidate
+          pythonVia = 'shell'
+          pythonLauncher = pathLike ? dialect.word(candidate) : candidate
           return pythonLauncher
         }
-        tried.push(candidate + '(exit=' + String(probe.exitCode) + ')')
+        tried.push(candidate + '(shell exit=' + String(probe.exitCode) +
+          (String(probe.err).trim() === '' ? '' : ' ' + String(probe.err).trim().slice(0, 60)) + ')')
       }
       pythonWhy = tried.join('、')
       return null
@@ -941,6 +1032,23 @@ return {
         return { error: '找不到 Python（试过 ' + String(pythonWhy) +
           '）。抽取器是 Python 写的；桌面版自带的那份在 <resources>/runtime/primary-runtime/' +
           'dependencies/python/python.exe，也可以用 MC_ART_PYTHON 指定一个。' }
+      }
+      // 有 subprocess 就**按 argv 起**：没有 shell、没有引号、没有方言问题
+      // （Windows 的路径里有空格时，这一条比拼命令行可靠得多）。
+      if (pythonVia === 'subprocess' && pythonExe !== '') {
+        const argv = [pythonExe, scanner].concat(tokens === undefined ? [] : tokens)
+        const done = await runProcess(argv, { cwd: workspaceRoot, maxBytes: maxBytes === undefined ? 8 * 1024 * 1024 : maxBytes })
+        if (done !== null) {
+          if (done.exitCode !== 0) {
+            const detail = beforeStderr(done.err === undefined || done.err === null ? '' : done.err)
+            return { error: '扫描脚本退出码 ' + done.exitCode + (detail === '' ? '，没有任何错误输出' : '：' + detail) }
+          }
+          try {
+            return JSON.parse(beforeStderr(done.text))
+          } catch (error) {
+            return { error: '扫描脚本的输出不是 JSON：' + String(done.text).slice(0, 200) }
+          }
+        }
       }
       const dialect = await currentShell(workspaceRoot)
       const argument = (tokens === undefined ? [] : tokens).map((token) => dialect.word(token)).join(' ')
@@ -2441,7 +2549,11 @@ return {
     ctx.effect(() => harness.handle('atlas.pickDirectory', async (args) => {
       const request = args || {}
       const start = typeof request.start === 'string' ? request.start : ''
-      if (shellOf() === undefined) return { supported: false, detail: '宿主没有 shell 服务，' }
+      // 不要因为"没有 shell 服务"就放弃：subprocess 一样能起 powershell.exe 弹对话框
+      // （用户桌面端就是这种宿主：会话里的 pwsh 好用，宿主层拿不到 shell 服务）。
+      if (shellOf() === undefined && subprocessOf() === undefined) {
+        return { supported: false, detail: '宿主既没有 shell 服务也没有 subprocess，起不了目录对话框。' }
+      }
       try {
         const powerShell = await windowsPowerShell()
         if (powerShell !== null) {
@@ -2455,9 +2567,18 @@ return {
           ]
           if (winStart !== null) lines.push("$d.SelectedPath = '" + winStart.split("'").join("''") + "'")
           lines.push('if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write("' + PICK_BEGIN + '" + $d.SelectedPath + "' + PICK_END + '") }')
-          const quoting = await currentShell(start)
-          const output = await runDialog(quoting.word(powerShell) + ' -NoProfile -STA -EncodedCommand ' +
-            utf16leBase64(lines.join('\n')), policyFor(start))
+          // 优先 argv 起（不需要 shell 服务）。桌面端实测：会话里的 pwsh 工具好用，
+          // 但宿主层拿不到 shell 服务 —— 那种情况下这条路是唯一能弹对话框的。
+          const encoded = utf16leBase64(lines.join('\n'))
+          let output = ''
+          const argvRun = await runProcess([powerShell, '-NoProfile', '-STA', '-EncodedCommand', encoded],
+            { cwd: start, maxBytes: 64 * 1024, graceMs: 3000 })
+          if (argvRun !== null) output = String(argvRun.text)
+          if (output === '' && shellOf() !== undefined) {
+            const quoting = await currentShell(start)
+            output = await runDialog(quoting.word(powerShell) + ' -NoProfile -STA -EncodedCommand ' + encoded,
+              policyFor(start))
+          }
           const picked = betweenMarkers(output)
           if (picked === '') return { supported: true, cancelled: true, via: 'windows', exe: powerShell }
           const converted = await convertPath('-u', picked)
@@ -2932,7 +3053,7 @@ return {
         platform: platformOf() || null,
         node: typeof process === 'undefined' ? null : process.version,
         missing: missing,
-        scanner: scanner, extractor: extractor, python: python,
+        scanner: scanner, extractor: extractor, python: python, pythonVia: pythonVia,
         pythonCandidates: pythonCandidates().slice(0, 8),
         bundledPythonDirs: bundledPythonDirs(),
         shellProbe: shellProbeInfo,

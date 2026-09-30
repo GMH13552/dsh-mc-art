@@ -79,7 +79,7 @@ function buildHandlers(options) {
   // （那里有 vendor 出来的 preset/mc-studio/skills/mc-art/tools/*.py，是真文件）。
   const moduleDir = opts.moduleDir === undefined ? require('path').join(__dirname, '..', '..', 'panel', 'lib') : opts.moduleDir
   const handlers = {}
-  const services = { fs: opts.fs, shell: opts.shell, directoryPickerController: opts.picker }
+  const services = { fs: opts.fs, shell: opts.shell, directoryPickerController: opts.picker, subprocess: opts.subprocess }
   const ctx = {
     get: (n) => (Object.prototype.hasOwnProperty.call(services, n) ? services[n] : undefined),
     effect: (fn) => fn(),

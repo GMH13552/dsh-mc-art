@@ -58,6 +58,41 @@ function makeJar(path, namespace) {
   nodeFs.rmSync(stage, { recursive: true, force: true })
 }
 
+/**
+ * `ctx.subprocess` 的桩 —— 但它是**真起进程**（node:child_process），形状照
+ * dsh-subprocess 的契约（argv/cwd/stdio+collect/spawn 回句柄、句柄有 done 与 collected）。
+ *
+ * 为什么要有这个桩：用户桌面端实测 —— 会话里的 `pwsh` 工具好用，但面板在宿主层
+ * `ctx.get('shell')` 是 undefined，于是所有探测都回 `exitCode: null`（"找不到 Python"那段
+ * 报错里每一项都写着 exit=null）。面板必须能在**没有 shell 服务**的宿主上跑，
+ * 靠的就是这条 argv 路。
+ */
+function makeSubprocess() {
+  const childProcess = require('child_process')
+  const reader = (chunks) => ({ readFrom: () => ({ text: Buffer.concat(chunks).toString('utf8'), nextOffset: 0, lossy: false }) })
+  return {
+    async resolveExecutable(command) {
+      if (command.includes('/')) return command
+      for (const dir of String(process.env.PATH || '').split(nodePath.delimiter)) {
+        if (dir === '') continue
+        const candidate = nodePath.join(dir, command)
+        if (nodeFs.existsSync(candidate)) return candidate
+      }
+      throw new Error('not found: ' + command)
+    },
+    spawn(spec) {
+      const child = childProcess.spawn(spec.argv[0], spec.argv.slice(1), { cwd: spec.cwd, stdio: ['ignore', 'pipe', 'pipe'] })
+      const out = [], err = []
+      child.stdout.on('data', (chunk) => out.push(chunk))
+      child.stderr.on('data', (chunk) => err.push(chunk))
+      const done = new Promise((resolve) => child.on('close', (code) => resolve({ exitCode: code })))
+      return { stdin: undefined, stdout: child.stdout, stderr: child.stderr, control: undefined,
+        collected: { stdout: reader(out), stderr: reader(err) }, done: done,
+        terminate: () => child.kill(), waitForExit: async () => true }
+    },
+  }
+}
+
 /** 门禁自己用的 Python：系统 PATH 里的第一个能跑的。 */
 function pythonForTest() {
   for (const candidate of ['python3', 'python']) {
@@ -159,6 +194,30 @@ async function main() {
   check('块列表也读得出来（抽取器那条链）',
     blocks && Array.isArray(blocks.blocks) && blocks.blocks.length > 0,
     JSON.stringify(blocks).slice(0, 240))
+
+  // ── 没有 shell 服务、只有 subprocess：用户桌面端那种宿主 ────────────────────
+  //
+  // 会话里的 pwsh 工具好用 ≠ 宿主层看得到 shell 服务。面板必须能在这条条件下跑完，
+  // 否则用户看到的就是"每一项都是 exit=null"。
+  console.log('--- 没有 shell 服务，只有 subprocess（桌面端那种宿主）')
+  const noShellHandlers = (FAULT ? require('./run.js') : mod).buildHandlers({
+    nodeFs: (FAULT ? require('./run.js') : mod).localFsShim, subprocess: makeSubprocess(),
+    moduleDir: FAULT ? nodePath.join(WORK, 'nosuch', 'lib') : nodePath.join(PANEL, 'lib') })
+  const noShellEnv = await noShellHandlers['atlas.env']({ root: project })
+  check('没有 shell 服务时 Python 仍然解析出来（走 subprocess 的 argv）',
+    typeof noShellEnv.python === 'string' && noShellEnv.python !== '' && noShellEnv.pythonVia === 'subprocess',
+    'python=' + String(noShellEnv.python) + ' via=' + String(noShellEnv.pythonVia))
+  check('没有 shell 服务时脚本也是从包里找到的',
+    typeof noShellEnv.scanner === 'string' && noShellEnv.scanner.indexOf(nodePath.join('panel', 'python')) >= 0,
+    String(noShellEnv.scanner))
+  await noShellHandlers['atlas.saveSettings']({
+    root: WORK, project: 'proj', directory: ref, includeGenerated: true, includeMods: true, mods: {},
+  })
+  const nsNoShell = await noShellHandlers['atlas.refNamespaces']({ root: WORK, project: 'proj' })
+  check('没有 shell 服务也能从 jar 里读出命名空间',
+    nsNoShell && Array.isArray(nsNoShell.namespaces) &&
+    nsNoShell.namespaces.some((item) => item.name === 'probemod' && item.blocks > 0),
+    JSON.stringify(nsNoShell).slice(0, 260))
 
   nodeFs.rmSync(WORK, { recursive: true, force: true })
   // Python 跑过会在脚本旁边留 `__pycache__`；那是编译产物，不该跟着包走
