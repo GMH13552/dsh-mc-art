@@ -1226,7 +1226,7 @@ def build_providers_multi(roots, version=None):
 
     A project's own pack and the game reference are two different roots, and a
     project model usually inherits vanilla parents it does not ship:
-    `eyeball_log` is `{"parent": "block/cube_column"}` and `cube_column` lives in
+    `example_log` is `{"parent": "block/cube_column"}` and `cube_column` lives in
     the version jar.  Reading only the project pack therefore found no `elements`
     anywhere and reported "这个方块没有几何模型" -- a true statement about that
     chain and a misleading one about the block.  Two roots fix it, and they have

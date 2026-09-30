@@ -22,12 +22,14 @@
  * 这个文件本身在公开仓库里，所以它自己一个字都不能带（以前的版本把词表写死在
  * 这里，等于把要拦的词又贴了一遍）。
  */
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const ROOTS = ['lib', 'preset']
+// `python/` 也要扫：随包发的引擎脚本是另一个仓库里来的，里面同样可能残留
+// 作者的项目名（0.1.15 就是这么漏过一次：一个 docstring 里的示例方块名）。
+const ROOTS = ['lib', 'preset', 'python']
 const FILES = ['cordis.patch.yml', 'README.md', 'build.mjs', 'package.json']
 const FAULT = process.argv.includes('--fault')
 const PLANT = join(HERE, 'lib', '.private-fault.txt')
@@ -56,6 +58,13 @@ const { markers, source } = privateMarkers()
 if (FAULT) {
   // 故障注入用第 3 类：一个只可能来自本机的路径，所以不靠词表也能证伪。
   writeFileSync(PLANT, '参考 /home/someone-else/projects/demo 与 C:\\Users\\someone\\demo 两处\n')
+  // 每个要扫的根都塞一份：少扫一个目录时，--fault 必须能说话。
+  for (const root of ROOTS) {
+    try {
+      mkdirSync(join(HERE, root), { recursive: true })
+      writeFileSync(join(HERE, root, '.private-fault.txt'), '参考 /home/someone-else/projects/demo\n')
+    } catch (error) { /* 根不存在就算了，下面会报 */ }
+  }
 }
 try {
   const hits = []
@@ -68,9 +77,15 @@ try {
     }
     return hits.length
   }
+  // 机器垃圾不进包，也不该拿它当"私有内容"证据：`__pycache__/*.pyc` 是 Python
+  // 跑过之后留下的编译产物（里面必然带着源码字符串），.git/node_modules 同理。
+  const JUNK = new Set(['__pycache__', '.git', 'node_modules', '.cache', '.pytest_cache'])
   const walk = (path, label) => {
     if (statSync(path).isDirectory()) {
-      for (const entry of readdirSync(path)) walk(join(path, entry), label + '/' + entry)
+      for (const entry of readdirSync(path)) {
+        if (JUNK.has(entry)) continue
+        walk(join(path, entry), label + '/' + entry)
+      }
       return
     }
     scan(label, readFileSync(path, 'utf8'))
@@ -91,5 +106,5 @@ try {
     process.exitCode = 1
   }
 } finally {
-  if (FAULT) rmSync(PLANT, { force: true })
+  if (FAULT) for (const root of ROOTS) rmSync(join(HERE, root, '.private-fault.txt'), { force: true })
 }

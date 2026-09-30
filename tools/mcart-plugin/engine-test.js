@@ -161,6 +161,9 @@ async function main() {
     JSON.stringify(blocks).slice(0, 240))
 
   nodeFs.rmSync(WORK, { recursive: true, force: true })
+  // Python 跑过会在脚本旁边留 `__pycache__`；那是编译产物，不该跟着包走
+  // （里面必然带着源码字符串，`check-private` 会正确地把它当可疑内容拦下来 —— 0.1.16 就拦过一次）。
+  nodeFs.rmSync(nodePath.join(PANEL, 'python', '__pycache__'), { recursive: true, force: true })
   console.log(failures === 0 ? '全部通过' : failures + ' 项失败')
   process.exit(failures === 0 ? 0 : 1)
 }
