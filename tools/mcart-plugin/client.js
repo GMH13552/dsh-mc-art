@@ -982,6 +982,8 @@ return {
       const savedSettingsPair = React.useState(null)
       const busyPair = React.useState(false)
       const pickingPair = React.useState(false)
+      // 参考目录的手输框内容（与 settings.directory 分开：输入过程中不该直接写盘）。
+      const dirDraftPair = React.useState('')
       const draftPair = React.useState('')
       const settingsPair = React.useState(null)
       const savePair = React.useState(null)
@@ -1008,6 +1010,7 @@ return {
       const savedSettings = savedSettingsPair[0], setSavedSettings = savedSettingsPair[1]
       const busy = busyPair[0], setBusy = busyPair[1]
       const picking = pickingPair[0], setPicking = pickingPair[1]
+      const dirDraft = dirDraftPair[0], setDirDraft = dirDraftPair[1]
       const draft = draftPair[0], setDraft = draftPair[1]
       const settings = settingsPair[0], setSettings = settingsPair[1]
       const saveState = savePair[0], setSaveState = savePair[1]
@@ -1170,25 +1173,46 @@ return {
       function runPicker(start, onPicked) {
         if (picking === true) return
         setPicking(true)
-        setNotice('正在打开系统的目录选择器…')
+        setNotice('正在打开系统的目录选择器…（有的环境弹不出来；弹不出来就在下面的输入框里直接贴路径）')
+        // 对话框这条路**可能永远不返回**：shell 服务跑在非交互窗口站上时，
+        // FolderBrowserDialog 既不显示也不结束，按钮就永久停在"对话框已打开…"，
+        // 用户看到的是"点了没反应、也没有报错"。给它一个上限，超时就把按钮放开、
+        // 并把下一步说清楚（真要等下去的对话框，用户自己会再点一次）。
+        const timer = setTimeout(() => {
+          setPicking(false)
+          setNotice('目录对话框 120 秒没有返回。这条路在你的环境里可能用不了 —— 请把路径直接贴进下面的输入框。')
+        }, 120000)
         host.call('atlas.pickDirectory', { start: start })
           .then((result) => {
+            clearTimeout(timer)
             setPicking(false)
             if (result === null || result === undefined) { setNotice('目录选择器没有返回结果。'); return }
             if (result.error !== undefined) { setNotice(String(result.error)); return }
             if (result.supported === false) {
-              setNotice(String(result.detail || '这个环境没有可用的目录选择器，') + '请在下面的输入框里直接填路径。')
+              setNotice(String(result.detail || '这个环境没有可用的目录选择器，') + '请把路径直接贴进下面的输入框。')
               return
             }
             if (result.cancelled === true) { setNotice(null); return }
             if (typeof result.path === 'string' && result.path.length > 0) { setNotice(null); onPicked(result.path); return }
             setNotice('目录选择器没有返回路径。')
           })
-          .catch((error) => { setPicking(false); setNotice('目录选择器失败：' + String(error && error.message ? error.message : error)) })
+          .catch((error) => {
+            clearTimeout(timer)
+            setPicking(false)
+            setNotice('目录选择器失败：' + String(error && error.message ? error.message : error) +
+              '　请把路径直接贴进下面的输入框。')
+          })
       }
 
       function pickDirectory() {
         runPicker(root !== '' ? root : (nearby !== null ? nearby.cwd : ''), commitRoot)
+      }
+
+      // 把输入框里的路径写进设置。空字符串 = 取消参考目录，这是有意的：
+      // "没设置就不参考外部资源" 是合法状态，不该逼着人一定选一个。
+      function applyDirDraft() {
+        const wanted = String(dirDraft).trim()
+        patchSettings({ directory: wanted }, true)
       }
 
       function loadSettings() {
@@ -1270,6 +1294,13 @@ return {
           })
           .catch((error) => setNearby({ cwd: '', loading: false, projects: [], error: String(error && error.message ? error.message : error) }))
       }, [])
+
+      // 参考目录的手输框跟着**已保存的值**走：载入设置、或保存成功之后回到真实值。
+      // 依赖是那个字符串本身（不是 settings 对象），所以人正在打字时不会被重置。
+      React.useEffect(() => {
+        if (settings === null) return
+        setDirDraft(typeof settings.directory === 'string' ? settings.directory : '')
+      }, [settings === null ? '' : String(settings.directory)])
 
       React.useEffect(() => {
         if (canvas === null) return
@@ -2979,6 +3010,23 @@ return {
               picking ? '对话框已打开…' : '选择目录…'),
           ]
           rows.push(React.createElement('div', { className: 'mcart-bar', key: 'dirbuttons' }, dirButtons))
+          // 手输/粘贴这条路是**必须**有的：系统目录对话框在某些环境里弹不出来
+          // （shell 服务跑在非交互窗口站上时，FolderBrowserDialog 既不显示也不返回），
+          // 而 fs 服务通常是好的 —— 那就让人把路径贴进来。
+          // 以前这里只有一个"选择目录…"按钮，于是"点了没反应"就真的没有下一步了。
+          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'dirinput' },
+            React.createElement('input', {
+              className: 'mcart-input mcart-grow', type: 'text',
+              placeholder: '参考目录路径，例如 C:\\Users\\你\\AppData\\Roaming\\.minecraft',
+              value: dirDraft,
+              onChange: (event) => setDirDraft(String(event.target.value)),
+              onKeyDown: (event) => { if (event.key === 'Enter') applyDirDraft() },
+            }),
+            React.createElement('button', { className: 'mcart-btn', type: 'button',
+              disabled: dirDraft.trim() === '', onClick: () => applyDirDraft() }, '用这个路径'),
+          ))
+          rows.push(React.createElement('div', { className: 'mcart-hint', key: 'dirhint' },
+            '对话框弹不出来时可以在这里贴路径（.minecraft、版本目录、mods 目录，或单个 jar 都行）。'))
           if (settings.directory !== '' && settings.directory !== undefined) {
             if (settings.scanError !== null && settings.scanError !== undefined) {
               rows.push(React.createElement('div', { className: 'mcart-err', key: 'scanerr' }, '没读到里面的资源：' + String(settings.scanError)))
@@ -2988,7 +3036,7 @@ return {
                 + ((settings.sources || []).length) + ' 个资源文件'))
             }
           }
-          for (const hint of (settings.directory === '' || settings.directory === undefined ? (settings.detected || []) : []).slice(0, 3)) {
+          for (const hint of (settings.directory === '' || settings.directory === undefined ? (settings.detected || []) : []).slice(0, 4)) {
             rows.push(React.createElement('div', { className: 'mcart-bar', key: 'det' + hint },
               React.createElement('span', { className: 'mcart-note mcart-grow' }, '检测到 ' + hint),
               React.createElement('button', { className: 'mcart-btn', type: 'button',
@@ -2998,6 +3046,8 @@ return {
           if ((settings.directory === '' || settings.directory === undefined) && (settings.detected || []).length === 0) {
             rows.push(React.createElement('div', { className: 'mcart-hint', key: 'nodir' },
               '没设置就不参考外部资源。可以指向 .minecraft、某个版本目录、mods 目录，或单个 jar。'))
+            rows.push(React.createElement('div', { className: 'mcart-hint', key: 'nodir2' },
+              '没有自动检测到游戏目录 —— 直接把路径贴进上面的输入框也一样能用。'))
           }
 
           rows.push(React.createElement('label', { className: 'mcart-switch', key: 'gen' },
@@ -3059,6 +3109,11 @@ return {
             ))
           }
         }
+        // 提示与报错**必须在这张卡里也出现**：这张设置卡原来不渲染 notice，
+        // 于是"选择目录…"失败（对话框弹不出来、没有 shell 服务…）时，
+        // 界面上一个字都不变 —— 用户看到的就是"点了没反应，也没有报错"。
+        if (notice !== null) rows.push(React.createElement('div', { className: 'mcart-bad', key: 'notice' }, String(notice)))
+        if (failure !== null) rows.push(React.createElement('div', { className: 'mcart-err', key: 'failure' }, String(failure)))
         return React.createElement('div', { className: 'mcart-card', key: 'settings' }, rows)
       }
 

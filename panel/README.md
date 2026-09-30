@@ -197,11 +197,42 @@ directoryPickerController, localFs}` 的在场情况、shell 方言、platform �
 「缺 labelFor、localOf、messageOf、policyFor、prefix、rel、tries」，`entry-test.mjs` 报
 `localOf is not defined`，两个门禁同时红。
 
+## 参考目录：对话框不可靠，所以必须能手输
+
+用户在 Windows 上点开 ⚙ 设置、点"选择目录…"，**没反应，也没有报错**。两个原因叠在一起：
+
+* 那个按钮靠系统对话框，而对话框在有些环境里既不显示也不返回（shell 服务跑在非交互
+  窗口站上时，`FolderBrowserDialog` 就是这么个结局）——按钮于是永久停在"对话框已打开…"；
+* 设置卡当时**不渲染 `notice`**，而且**没有任何手动输入路径的地方**，所以"没反应"之后
+  真的没有下一步。
+
+四条改动：
+
+1. 设置卡里加了**手输框 + "用这个路径"**：对话框弹不出来时把路径贴进去就行
+   （`.minecraft`、版本目录、mods 目录、单个 jar 都接受）；
+2. 设置卡现在也渲染 `notice` / `failure`，失败一定有字；
+3. `runPicker` 有 120 秒上限：超时就放开按钮，并写明"请把路径贴进下面的输入框"；
+4. `detectGameRoots` 原来只认 WSL 形状的路径（`/root/.minecraft`、`/mnt/c/Users/…`、
+   `/home/…`），在原生 Windows 上一条都不成立 —— 所以"检测到 … 用它"那一栏永远是空的。
+   现在按平台给候选（`%APPDATA%\.minecraft`、`~/Library/Application Support/minecraft`、
+   `~/.minecraft`）、**加上工程旁边的** `.minecraft`/`run`、并展开启动器实例目录一层
+   （CurseForge / Prism / MultiMC 的容器里才是真正的游戏目录），逐个 `stat` 只报存在的。
+   想知道"它到底去哪儿找过"，`atlas.gameRoots` 一条命令回候选与命中。
+
+门禁：`node panel/ui-test.mjs` —— 一个只实现 `createElement`/`useState`/`useEffect` 的假 React
+真渲染一遍设置卡，然后**按按钮的文字去点**，断言：手输框在、`用这个路径` 在、检测到的候选
+带 `用它`、对话框不可用时**原因出现在设置卡里**、打字后点按钮真的把路径写进
+`atlas.settings`。`--fault` 把那一行输入框从源码里删掉，要求这些断言变红。
+`node tools/mcart-plugin/roots-test.js` 用 Windows 形状的环境变量造一棵假树，
+断言候选/命中/展开/上限都对；`--fault` 换回老的 WSL 形状逻辑，要求它**找不到**这台机器。
+
 ## 门禁
 
 ```bash
 node panel/verify-build.mjs   # lib/ 与源码去注释后重新生成的结果逐字节比对（挡漂移）
 node panel/entry-test.mjs     # 两个入口真的加载/apply/派发；含一次真注入
+node panel/ui-test.mjs        # 假 React 真渲染设置卡并按文字点按钮（--fault 证明能红）
+node tools/mcart-plugin/roots-test.js  # 参考目录检测按平台给候选（--fault 证明老逻辑找不到）
 python3 tools/strip_gate.py   # 剥离器不许吞代码：声明的名字一个都不能少（--fault 证明能红）
 node panel/serve-check.mjs --url http://127.0.0.1:3099 --token <token>   # 真送达：对着跑着的实例查
 ```
