@@ -13,7 +13,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { build, hostModule, clientBundle, isJunk } from './build.mjs'
+import { build, hostModule, clientBundle, isJunk, isSkipped } from './build.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const FAULT = process.argv.includes('--fault')
@@ -67,8 +67,11 @@ for (const [label, disk, expected] of [['lib/index.js', before.index, expectedHo
 function treeDiff(expectedRoot, actualRoot, label, skipActual = () => false) {
   // 垃圾（.git / __pycache__ / .cache）两边都要忽略；skipActual 只用来处理
   // "生成的那份多带了 skills/" 这种结构性差异。
-  const expected = snapshot(expectedRoot, isJunk)
-  const actual = snapshot(actualRoot, (key) => isJunk(key) || skipActual(key))
+  // 两侧都要用同一套"不复制"规则：build 会跳过 tests/，比对时也得跳过，
+  // 否则门禁会把"有意没复制"报成"少了 25 个文件"（它刚这么干过）。
+  const skipCommon = (key) => isJunk(key) || isSkipped(key)
+  const expected = snapshot(expectedRoot, skipCommon)
+  const actual = snapshot(actualRoot, (key) => skipCommon(key) || skipActual(key))
   const missing = [...expected.keys()].filter((key) => !actual.has(key))
   const extra = [...actual.keys()].filter((key) => !expected.has(key))
   const changed = [...expected.keys()].filter((key) => actual.has(key) && expected.get(key) !== actual.get(key))

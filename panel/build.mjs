@@ -40,6 +40,12 @@ const STRIPPER = join(HERE, '..', 'tools', 'strip_comments.py')
  * 客户端那一半永远 "import failed"，页面上什么都不出现。
  * 所以包名只从 package.json 读一份，绝不手写。
  */
+/** 随包时**不复制**的整目录（相对其来源根）：mc-art 的测试夹具里带着作者示例项目的字面量，
+ *  而且用户明确说过"测试不必随包"——留一份在独立仓库里就够了。 */
+export function isSkipped(path) {
+  return String(path).split(/[\\/]/).includes('tests')
+}
+
 /** 生成物里不该出现的东西（相对任一路径都成立）。 */
 export function isJunk(path) {
   const parts = String(path).split(/[\\/]/)
@@ -235,7 +241,7 @@ export function vendored() {
     mkdirSync(dirname(to), { recursive: true })
     // 只带该带的东西：.git（没有历史）、__pycache__ / *.pyc（机器相关）、.cache（缓存）。
     // npm 打包时本来也会排掉其中一些，但那不该是"能不能出垃圾"的唯一防线。
-    cpSync(from, to, { recursive: true, filter: (src) => !isJunk(src) })
+    cpSync(from, to, { recursive: true, filter: (src) => !isJunk(src) && !isSkipped(src) })
   }
   return pairs
 }
