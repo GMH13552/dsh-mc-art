@@ -11,7 +11,8 @@ the project's contracts, the panel that edits them, the order to do things in, a
 
 Two rules run through everything here:
 
-1. **One namespace, one truth.** For a given asset id there is exactly one file
+1. **One namespace, one truth** — and **one mod, one namespace.** A project is a mod; it owns exactly one namespace, and nothing may grow a second
+   one inside it (the panel refuses to create it). For a given asset id there is exactly one file
    that says what it is. A texture in two places is two futures that will drift.
 2. **A check that cannot fail is not a check.** Every "it works" here names the
    evidence and, where it exists, the fault injection that proves the evidence

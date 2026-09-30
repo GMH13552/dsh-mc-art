@@ -1871,6 +1871,7 @@ return {
         word: (value) => shellDecoded(value),
         available: (tool) => 'command -v ' + tool,
         remove: (path) => 'rm -f ' + shellDecoded(path),
+        makeDir: (path) => 'mkdir -p ' + shellDecoded(path),
         move: (from, to) => 'mv -f ' + shellDecoded(from) + ' ' + shellDecoded(to),
         // 从暂存文件解开（命令行里只有路径）；writeInline 只在没有 fs 服务时兜底。
         decodeFile: (source, target) =>
@@ -1883,6 +1884,8 @@ return {
         word: (value) => PS_QUOTE(value),
         available: (tool) => '(Get-Command ' + PS_QUOTE(tool) + ' -ErrorAction SilentlyContinue) -ne $null',
         remove: (path) => 'Remove-Item -LiteralPath ' + PS_QUOTE(path) + ' -Force -ErrorAction SilentlyContinue',
+        // -Force 让"已存在"也返回成功（幂等）；[IO.Directory] 比 New-Item 少一层 cmdlet 开销。
+        makeDir: (path) => '[IO.Directory]::CreateDirectory(' + PS_QUOTE(path) + ') | Out-Null',
         move: (from, to) => 'Move-Item -LiteralPath ' + PS_QUOTE(from) +
           ' -Destination ' + PS_QUOTE(to) + ' -Force',
         // .NET 一次解码；暂存文件的内容由 fs 服务写（见 writeDecodedFile），
@@ -1930,6 +1933,12 @@ return {
         return { ok: false, exitCode: done.exitCode, err: done.err, step: 2, steps: 2 }
       }
       return { ok: true, steps: 2, dialect: dialect.name, stagingRemoved: cleanup.exitCode === 0 }
+    }
+
+    /** 建目录（幂等），按方言拼。 */
+    async function ensureDir(path, workspaceRoot) {
+      const done = await shellFileOp(workspaceRoot, (dialect) => dialect.makeDir(path), 20000)
+      return done.ok === true
     }
 
     /** 一条收尾命令（删/移），按方言拼。 */
@@ -2197,6 +2206,54 @@ return {
     // place the viewer writes it, and only the `cells` of one entry.  A manual
     // structure therefore makes `emit_atlas.py --check` report drift, which is
     // the truth: the file is no longer only what the generator produced.
+    // 新建一个项目（= 一个模组 = 一个命名空间）。
+    //
+    // 为什么要有它：空目录里面板只能说"没找到项目"，新手卡在第一步。这里写最小骨架 ——
+    // `mc-art.atlas.json` + `pack/assets/<命名空间>/` 下的几个空目录（宿主靠这两样认项目）。
+    // **一个模组一个命名空间**是硬约束：目录里已经有别的命名空间就拒绝，免得一个模组里
+    // 长出第二个命名空间（那正好是"一个命名空间一个真相"要防的事）。
+    const PROJECT_ID = /^[a-z0-9_]{2,32}$/
+    ctx.effect(() => harness.handle('atlas.createProject', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' ? request.root : ''
+      const id = typeof request.id === 'string' ? request.id.trim() : ''
+      const asked = typeof request.namespace === 'string' ? request.namespace.trim() : ''
+      const namespace = asked === '' ? id : asked
+      if (root === '') return { error: '没有给定根目录' }
+      if (!PROJECT_ID.test(id)) return { error: '项目 id 只能用小写字母、数字、下划线，2-32 个字符：' + JSON.stringify(id) }
+      if (!PROJECT_ID.test(namespace)) return { error: '命名空间只能用小写字母、数字、下划线，2-32 个字符：' + JSON.stringify(namespace) }
+      try {
+        const dir = root + '/' + id
+        if ((await statOf(dir + '/mc-art.atlas.json')) !== undefined) {
+          return { error: '这个目录里已经有项目了：' + id }
+        }
+        const existing = (await listDir(dir + '/pack/assets')).filter((entry) => entry.type === 'directory')
+        const others = existing.map((entry) => entry.name)
+        if (others.length > 0 && others.indexOf(namespace) < 0) {
+          return { error: '这个项目的资源包里已经有命名空间 ' + others.join('、') +
+            '。一个模组只用一个命名空间：用已有的那个，或者换一个目录。' }
+        }
+        // **先建目录再写文件**：fs.writeText / shell 重定向都不会替你建父目录
+        // （第一版写反了，门禁当场抓到 ENOENT）。
+        const folders = ['pack', 'pack/assets', 'pack/assets/' + namespace,
+          'pack/assets/' + namespace + '/textures/block', 'pack/assets/' + namespace + '/models/block',
+          'pack/assets/' + namespace + '/blockstates', 'pack/assets/' + namespace + '/lang']
+        for (const folder of folders) {
+          if (!(await ensureDir(dir + '/' + folder, root))) {
+            return { error: '建目录失败：' + folder + '（宿主没有 shell 服务时建不出目录）' }
+          }
+        }
+        const atlas = { schema: 'mc-art.atlas/1', namespace: namespace,
+          biomes: [], structures: [], entities: [], blocks: [] }
+        const wrote = await writeTextFile(dir + '/mc-art.atlas.json', JSON.stringify(atlas, null, 2) + '\n', root)
+        if (wrote.ok !== true) return { error: '写 atlas 失败：' + String(wrote.detail) }
+        return { created: true, id: id, namespace: namespace, dir: dir,
+          atlas: rel(root, dir + '/mc-art.atlas.json'), folders: folders.length }
+      } catch (error) {
+        return { error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
     ctx.effect(() => harness.handle('atlas.saveVoxel', async (args) => {
       const request = args || {}
       const root = typeof request.root === 'string' ? request.root : ''

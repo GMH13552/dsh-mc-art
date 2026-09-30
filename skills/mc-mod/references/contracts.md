@@ -99,6 +99,15 @@ the honest failure mode; do not invent a translation.
 `<项目>/pack/assets/<ns>/` **must exist** or the index skips the whole project —
 that directory is what makes something "a project" at all.
 
+## One project, one namespace
+
+A project directory is a mod: `namespace` in `mc-art.atlas.json` is the only namespace
+every unqualified id in it belongs to. Do not add a second namespace under the same
+project's `pack/assets/` — a name would then have two homes, which is the exact thing the
+first rule exists to prevent. The panel's create-project step enforces this (it refuses a
+namespace that differs from what the directory already holds) and names the project and
+the namespace the same way.
+
 ## Namespaces and parents (the part that bites)
 
 - **An unqualified model `parent` means `minecraft:`.** `{"parent": "block/cube_all"}`

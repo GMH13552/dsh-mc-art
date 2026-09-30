@@ -953,6 +953,10 @@ return {
       const sessionId = props.sessionId === undefined ? '' : String(props.sessionId)
       const indexPair = React.useState(null)
       const failurePair = React.useState(null)
+      // 空目录的引导：`emptyRoot` 记着"哪个根目录里一个项目都没有"，`newId` 是用户正在
+      // 取的项目名（命名空间与它同名 —— 一个模组一个命名空间，不让在这里分叉）。
+      const emptyPair = React.useState(null)
+      const newIdPair = React.useState('')
       const noticePair = React.useState(null)
       const nearbyPair = React.useState(null)
       const choicePair = React.useState(null)
@@ -985,6 +989,8 @@ return {
       const rootPair = React.useState(roots[sessionId] === undefined ? '' : roots[sessionId])
       const index = indexPair[0], setIndex = indexPair[1]
       const failure = failurePair[0], setFailure = failurePair[1]
+      const emptyRoot = emptyPair[0], setEmptyRoot = emptyPair[1]
+      const newId = newIdPair[0], setNewId = newIdPair[1]
       const notice = noticePair[0], setNotice = noticePair[1]
       const nearby = nearbyPair[0], setNearby = nearbyPair[1]
       const choice = choicePair[0], setChoice = choicePair[1]
@@ -1127,7 +1133,16 @@ return {
           setIndex(result)
           if (result.error !== undefined) { setFailure(result.error); return }
           const projects = result.projects || []
-          if (projects.length === 0) { setFailure('这个目录里没有找到资源包或 mc-art.atlas.json'); setScene(null); return }
+          if (projects.length === 0) {
+            // 以前这里直接 setFailure —— 于是"刚开一个空目录"看起来像报错。空目录不是错误，
+            // 是**还没开始**：给一张引导卡，让人在这里建出第一个项目。
+            setFailure(null)
+            setEmptyRoot(where)
+            setNewId(String(where).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '')
+            setScene(null)
+            return
+          }
+          setEmptyRoot(null)
           setFailure(null)
           indexes[where] = result
           const project = wantProject === undefined || wantProject === null ? null : projects.filter((p) => p.id === wantProject)[0]
@@ -3101,6 +3116,59 @@ return {
         )
       }
 
+      // 空目录的引导：一步建项目、一步指参考目录。已有参考目录设置的人看不到这张卡
+      // （他们的 scan 会正常返回项目，走的是老路）。
+      function guideCard() {
+        const id = String(newId).trim()
+        const valid = /^[a-z0-9_]{2,32}$/.test(id)
+        const reference = settings === null ? null : settings.directory
+        const rows = []
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },
+          React.createElement('span', { className: 'mcart-title' }, '开始一个新模组'),
+          React.createElement('span', { className: 'mcart-sub' }, '三步：目录 → 建项目 → 参考目录')))
+        rows.push(React.createElement('div', { className: 'mcart-note', key: 'why' },
+          '这个目录里还没有项目。一个模组 = 一个命名空间，所以这里只需要取一个名字：' +
+          '项目 id 与命名空间同名，之后不会给它长出第二个命名空间。'))
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'form' },
+          React.createElement('input', {
+            className: 'mcart-input', placeholder: '项目名，例如 fleshland（小写字母/数字/_）',
+            value: newId,
+            onChange: (event) => setNewId(String(event.target.value)),
+            onKeyDown: (event) => { if (event.key === 'Enter' && valid) createProject() },
+          }),
+          React.createElement('button', {
+            className: 'mcart-btn', type: 'button', disabled: !valid || busy,
+            onClick: () => createProject(),
+          }, busy ? '…' : '在这里新建项目')))
+        if (id !== '' && !valid) {
+          rows.push(React.createElement('div', { className: 'mcart-bad', key: 'badid' },
+            '只能用小写字母、数字、下划线，2-32 个字符'))
+        }
+        const here = emptyRoot === null ? root : emptyRoot
+        rows.push(React.createElement('div', { className: 'mcart-hint', key: 'where' }, '建在：' + here))
+        rows.push(React.createElement('div', { className: reference === null || reference === '' ? 'mcart-hint' : 'mcart-note', key: 'ref' },
+          reference === null || reference === ''
+            ? '建完下一步：点右上角 ⚙ 指定参考目录（面板会列出自动探测到的游戏目录）。不指定也能用，只是看不到原版/模组的参照。'
+            : '参考目录已经设好了：' + reference))
+        if (failure !== null) rows.push(React.createElement('div', { className: 'mcart-err', key: 'err' }, String(failure)))
+        return React.createElement('div', { className: 'mcart-card', key: 'guide' }, rows)
+      }
+
+      function createProject() {
+        const id = String(newId).trim()
+        if (!/^[a-z0-9_]{2,32}$/.test(id)) return
+        const here = emptyRoot === null ? root : emptyRoot
+        setBusy(true)
+        setFailure(null)
+        host.call('atlas.createProject', { root: here, id: id }).then((result) => {
+          setBusy(false)
+          if (result === null || result === undefined) { setFailure('新建项目没有返回任何东西'); return }
+          if (failureOf(result) !== null) { setFailure(String(failureOf(result))); return }
+          setEmptyRoot(null)
+          scan(here, true, id)
+        }).catch((error) => { setBusy(false); setFailure(String(error && error.message ? error.message : error)) })
+      }
+
       const projects = index === null ? [] : (index.projects || [])
       const menu = []
       for (const project of projects) {
@@ -3384,6 +3452,7 @@ return {
             onClick: openSettings }, settings === null ? '⚙' : '⚙▾'),
         ),
         settings === null ? null : settingsCard(),
+        emptyRoot === null ? null : guideCard(),
         React.createElement('div', { className: 'mcart-bar' },
           React.createElement('span', { className: 'mcart-path' }, root),
           React.createElement('button', { className: 'mcart-btn', type: 'button',

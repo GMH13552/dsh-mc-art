@@ -75,6 +75,19 @@ MC 资产            [物品列表] [⚙]
 - 保存写 `atlas.saveSettings` → `<项目>/mc-art.settings.json`。
   **这就是技能侧读的那份文件**（`mc_art.project_settings`），不是第二份。
 
+### 第一次打开一个空目录（引导）
+
+Selecting a directory that holds no project no longer reads as an error: the panel shows a
+three-step card — pick the directory, **create the project** (the id becomes the namespace,
+one mod one namespace), then point `⚙ 设置` at the reference directory (the panel lists the
+game roots it detected). If the project already has `mc-art.settings.json` with a reference
+directory, none of this appears and the normal view loads straight away.
+
+Creating writes `mc-art.atlas.json` plus an empty `pack/assets/<namespace>/` skeleton
+(`textures/block`, `models/block`, `blockstates`, `lang`) and refuses: a second project id in
+the same directory, a namespace that differs from one already in the pack, ids or namespaces
+outside `[a-z0-9_]{2,32}`, and any id carrying path separators.
+
 ## What it writes (and refuses)
 
 | 动作 | 宿主调用 | 写到哪 |
