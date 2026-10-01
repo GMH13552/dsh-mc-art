@@ -420,15 +420,12 @@ return {
     // 每次用的时候现取，代价是一次属性查找。
     const fsOf = () => ctx.get('fs')
     const sessionsOf = () => ctx.get('sessions')
-    const agentsOf = () => ctx.get('agents')
 
     // 最近一次从面板听到的会话 id。`atlas.scene` 不带它，但 `atlas.session`/
     // `atlas.settings` 每一次开面板都会带 —— 通知 agent 时用它找到"这个会话的那个 agent"。
-    let lastSessionId = ''
 
     // 同一件事只通知一次：渲染是每帧跑的，不去重就是刷屏。判据是**报告文本本身**，
     // 所以"修了一半、失败原因变了"会再通知一次，"还是同一个毛病"不会。
-    const agentNotices = new Map()
 
     /**
      * 把一条报告投进当前会话那个 agent 的上下文（下一个 step 边界就看见）。
@@ -440,42 +437,6 @@ return {
      * `UserMessage` 的形状在类型里是 `@deepseek-ai/dsh-llm` 的导出，这里**逐层试**并
      * 如实报告哪一层成的 —— 猜一个形状然后说"发不出去"是最没用的结果。
      */
-    async function notifyAgent(key, text) {
-      if (agentNotices.get(key) === text) return { sent: false, via: null, why: '同一份报告已经发过' }
-      const service = agentsOf()
-      const attempts = []
-      if (service === undefined) return { sent: false, via: null, attempts: ['宿主没有 agents 服务'] }
-      let agent
-      try {
-        if (typeof service.get === 'function' && lastSessionId !== '') agent = service.get(lastSessionId)
-        if (agent === undefined && typeof service.currentInitiator === 'function') agent = service.currentInitiator()
-        if (agent === undefined && typeof service.list === 'function') {
-          const all = service.list()
-          if (Array.isArray(all) && all.length === 1) agent = all[0]
-        }
-      } catch (error) { attempts.push('找 agent：' + messageOf(error)) }
-      if (agent === undefined) {
-        attempts.push('找不到这个会话的 agent（agents.get(' + JSON.stringify(lastSessionId) + ') 没有结果）')
-        return { sent: false, via: null, attempts: attempts }
-      }
-      const shapes = [
-        ['content-blocks', { role: 'user', content: [{ type: 'text', text: text }] }],
-        ['content-string', { role: 'user', content: text }],
-        ['text-field', { role: 'user', text: text }],
-      ]
-      for (const pair of shapes) {
-        if (typeof agent.steer === 'function') {
-          try { agent.steer(pair[1]); agentNotices.set(key, text); return { sent: true, via: 'steer/' + pair[0] } } catch (error) { attempts.push('steer ' + pair[0] + '：' + messageOf(error)) }
-        }
-      }
-      const inbox = agent.inbox
-      if (inbox !== undefined && inbox !== null && typeof inbox.append === 'function') {
-        for (const pair of shapes) {
-          try { inbox.append('next-step', pair[1]); agentNotices.set(key, text); return { sent: true, via: 'inbox.append/' + pair[0] } } catch (error) { attempts.push('inbox.append ' + pair[0] + '：' + messageOf(error)) }
-        }
-      } else attempts.push('这个 agent 上没有 inbox.append')
-      return { sent: false, via: null, attempts: attempts }
-    }
     const shellOf = () => ctx.get('shell')
     const errors = []
     let preloads = new Map()
@@ -3296,7 +3257,6 @@ return {
       const request = args || {}
       try {
         const id = typeof request.sessionId === 'string' ? request.sessionId : ''
-        if (id !== '') lastSessionId = id
         const session = (sessionsOf() === undefined || id === '') ? undefined : sessionsOf().get(id)
         if (session === undefined) return { cwd: null }
         const cwd = session.header.cwd
