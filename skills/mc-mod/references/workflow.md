@@ -128,15 +128,22 @@ Before any of it, point the reference correctly and list candidates instead of a
   palette: render them in the same session against the same reference and compare the
   sheets side by side. If two sheets do not look like siblings, that is two bugs, not
   two styles.
+- **The plan must mount the same-kind reference, not merely acknowledge it.** If a
+  same-kind vanilla reference exists on disk (or under `refs/`) and the plan's
+  `references` does not carry it with a role (`shape` / `material` / `pixel_style`),
+  the shape is being invented — mount it, or write down why not
+  (`art-direction.md` §3). `pixel_map` is for the last accent, never a replacement for
+  the reference.
 - **The engine measures what the eye cannot settle.** Accent share, isolated-pixel
   count, value spread, and "did the silhouette move when only the colour was asked
   to" are numbers (`art-direction.md` names the thresholds). The model reads the
   numbers and decides; the model does not produce them by eye.
 
 **Acceptance (all three, or the stage is not done):** the plan file(s) under the
-project, the rendered sheet, and a note of what differs from the reference and why.
-A PNG with no plan beside it fails this stage by definition. *Judge:* the model authors
-and looks; the engine rasterises and measures.
+project, the rendered sheet, and a note of what differs from the reference and why —
+plus every same-kind reference either mounted or its absence explained in the render
+summary. A PNG with no plan beside it fails this stage by definition. *Judge:* the
+model authors and looks; the engine rasterises and measures.
 
 ## 3. Write the atlas
 

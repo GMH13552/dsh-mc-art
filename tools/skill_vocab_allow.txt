@@ -271,3 +271,29 @@ maximum_step           # engine：允许的最大明度步长（度量阈值）
 mean_neighbour_step    # engine：相邻像素平均步长（度量指标）
 PermissionError        # api：Python 内置异常类（README 解释 Windows 权限坑）
 PowerShell             # format：Windows 的 shell 名（与 bash 并列出现）
+
+# ── 第五轮：用户看图否掉矿点/锭之后的"结构型门禁"（克隆 afa754f）──────────────
+# 与前几轮同一条规矩：逐条写理由，不按前缀整类放行。
+# 这一轮加的判据是"结构型"的（重复/排布/ramp/贴上去的矩形/阈值被放宽），
+# 名字都会出现在 SKILL.md 与 contracts.py 里。
+#
+# vanilla：原版资产名（这一轮**故意**把它们挂进 plan 当参考，所以会出现在文档里）
+iron_ore               # vanilla：原版铁矿方块（example_ore 的矿点参考）
+raw_iron               # vanilla：原版生铁物品（example_raw_ore 的轮廓参考）
+#
+# engine：这一轮新增的字段 / CLI 开关 / 门禁名
+accent_from_reference       # engine：强调色取自参考自身明暗的声明块
+brightest_percent           # engine：取参考最亮百分之几（accent_from_reference 的参数）
+reference_pool              # engine：候选参考池（CLI --reference-pool / plan.available_references）
+available_references        # engine：plan 上的"磁盘上有什么可选"清单
+reference_waiver            # engine：有同类参考却不挂时，必须给的显式理由
+threshold_waiver            # engine：有意放宽某个门禁阈值时必须给的显式理由
+accent_structure_report     # engine：强调色的结构报告（重复/排布/ramp）
+accent_motif_repeat_max     # engine：同一图章允许重复的次数上限
+motif_repeat_max            # engine：同上（style.py 里的短名）
+accent_layout_min_size_cv   # engine：簇大小差异下限（排布不许太规整）
+accent_layout_min_spacing_cv # engine：簇间距差异下限（排布不许落在规则网格上）
+accent_ramp_min_pixels      # engine：低于这个像素数就不查 ramp 使用度
+max_dominant_share          # engine：单个明度档最多允许占的比例
+min_levels                  # engine：一个强调簇至少要跨几档明度
+min_pixels                  # engine：结构门禁的最小像素门槛

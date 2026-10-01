@@ -52,7 +52,7 @@ owns it and what counts as passing.
 | `references/panel.md` | the panel: every control, what it writes, what it refuses |
 | `references/contracts.md` | `mc-art.atlas.json`, `mc-art.settings.json`, the pack layout, and who reads what |
 | `references/workflow.md` | the general order of work, stage by stage, with "what passes" and "who judges" for each |
-| `references/art-direction.md` | the decisions a tool cannot make: pointing the reference root, reference choice, bands not speckles, accent budget, family boundary, UV |
+| `references/art-direction.md` | the decisions a tool cannot make: pointing the reference root, mounting the reference into the plan, reference choice, bands not speckles, accent budget, family boundary, UV |
 | `references/versions.md` | the version matrix, what changes per version, and how to find out rather than guess |
 | `references/gametest.md` | the verification loop: exact commands, exit-code semantics, templates, the traps |
 | `references/windows.md` | native Windows: shell, `python` vs `python3`, JDK, line endings, encoding, paths |

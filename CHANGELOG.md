@@ -11,6 +11,46 @@ panel/report contract is stable, and whose shipped skills are general (no loader
 version, machine or project is baked in). Earlier 0.1.x releases were development
 snapshots and are not itemised here.
 
+## 0.2.1
+
+### Fixed
+
+- **An accent is no longer allowed to be a pasted band.** A cluster that fills ≥ 75 % of
+  its bounding box *and* is ≥ 1.8 : 1 elongated is rejected — its outline has nothing to
+  do with the form it lies on. The rejected 17-pixel, 7×3, 81 %-filled bar is kept as the
+  gate's red fixture.
+- **A declared limit can no longer be widened quietly.** A plan whose threshold is looser
+  than the engine's reference *and* whose product only passes because of it is an error,
+  unless `appearance.threshold_waiver` says why — and it is reported either way. (The
+  ingot's `accent_edge_max` had been raised 60 → 90 to let its own 83.24 through.)
+- **A reference that is on disk but not attached to the plan is now an error.** The new
+  `reference_pool` stage scores every candidate the reference root holds against the one
+  the plan attached; an unattached candidate that scores higher is
+  `REFERENCE AVAILABLE BUT UNUSED`, unless `descriptor.reference_waiver` explains it.
+  In this repository's own example family that is exactly what had happened: `iron_ore`
+  and `raw_iron` were extracted and never attached, and the ore's specks had been
+  hand-drawn crosses.
+- **Three structure gates**, calibrated against vanilla rather than guessed: motif repeat
+  (one stamp used several times), layout regularity (cluster centres on a grid) and ramp
+  use (a cluster sitting in one value level). Vanilla `iron_ore`'s own specks pass all
+  three comfortably; the rejected deliveries are the fixtures.
+- The example family is rebuilt on real references: the ore overlays **`iron_ore`'s own
+  pixels** on the stone base (the base is byte-identical to `example_stone` outside the
+  61 accent pixels), the raw lump takes `raw_iron`'s contour under `appearance_only`, and
+  the ingot's highlight is taken from **`iron_ingot`'s own lighting**
+  (`accent_from_reference`: brightest 22 % of its luminance, mapped down a four-stop
+  ramp) instead of a drawn band.
+- Contact sheets state provenance honestly: one tile per reference **the plan actually
+  attached** (`example_ore <- stone`, `example_ore <- iron_ore`), plus a red
+  `AVAILABLE, NOT USED` column for anything left behind.
+- `mc-mod`'s `art-direction.md` gained §3, "the reference must be *mounted* into the plan,
+  not just present on disk", and the rule that a hand-written `pixel_map` is not a
+  substitute for a reference.
+
+### Changed
+
+- Vendored `mc-art` snapshot: `7e95b70` → `afa754f` (196 tests passing).
+
 ## 0.2.0
 
 ### Added

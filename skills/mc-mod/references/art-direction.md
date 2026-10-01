@@ -93,7 +93,42 @@ guess what it points at.
 `audit --family` gates a set on its hue and value spread (defaults: 26° and 56°), so
 "the family drifted" becomes a failing command instead of an opinion.
 
-## 3. When the panel cannot draw a block: read the report first
+## 3. The reference must be *mounted* into the plan, not just present on disk
+
+Being on disk is not enough. Measured on a real project: the reference root had exported
+five vanilla references — the `stone` and `deepslate` families plus an ore and its raw
+and ingot forms — and yet the ore's plan mounted **only one of them**, while the
+raw-ore plan mounted **none at all** (`"references": []`) even though the matching PNG
+sat right beside it. The engine's own artifacts recorded it honestly (an `offered` count
+of 1, `0 other candidate(s)`); nobody read them, nothing warned, and the ore's specks
+were hand-written `pixel_map` instead. The user's reaction was: "this still does not
+match the ore — was it even referenced?"
+
+Checkable rules:
+
+1. **"Does this asset have a vanilla same-kind thing?" is the first question, before
+   anything is drawn.** Ores, raw forms, ingots, tools, armour, logs, stone: almost
+   everything does. If it does, that reference **must** be mounted in the plan's
+   `references`, with a role (`shape` / `material` / `pixel_style`). Having looked at it
+   and drawn from memory is **not** mounting it.
+2. **"On disk but not in the plan" is an error, not a choice.** If a same-kind reference
+   exists in the reference root (or the plan's `refs/`) and you did not mount it, you are
+   inventing the shape out of nothing. Either mount it, or write down why not — and that
+   reason must be reported **prominently in the render summary**, not buried.
+3. **Do not use `pixel_map` as a substitute for the reference.** Hand-written pixels are
+   for the layer the reference cannot give you — where the accent goes, and how much of
+   the surface it may take (§6). Using them to draw an ore's specks or an ingot's sheen
+   produces exactly the "same stamp four times" and "one abrupt colour block" the user
+   complained about. **Shape and value come from sampling the reference** (`pattern` /
+   `value`); the hand-written part is only the final accent.
+4. **Read the engine's own count.** When the render summary reports how many references
+   were offered and how many other candidates exist, that number is the evidence. One
+   mounted reference where several same-kind candidates exist is the smell.
+5. **Self-check before delivery.** If the asset looks like a vanilla same-kind thing,
+   ask: "side by side with that vanilla asset, can someone tell these are the same kind
+   of thing with a different material?" If not, the reference was never connected.
+
+## 4. When the panel cannot draw a block: read the report first
 
 The panel returns a **structured** diagnostic, not a sentence: a `reason`, a `missing[]`
 list where each entry is `kind: 'project'` or `kind: 'vanilla'` and carries the path to
@@ -112,7 +147,7 @@ project's own model file was missing. The report format was the bug and it is fi
 but the lesson stands: **when something cannot be drawn, read the report before changing
 anything, and never "fix" it by editing `parent` on a hunch.**
 
-## 4. Gradients and bands, not scattered dots
+## 5. Gradients and bands, not scattered dots
 
 Per-pixel independent randomness reads as static. A material reads as a material when
 its variation has **structure**:
@@ -131,7 +166,7 @@ Measurable, so a script settles the argument:
 | value histogram | a few modes (bands), not one flat blob |
 | family hue/value spread | inside `audit --max-hue-span` / `--max-value-span` |
 
-## 5. The accent colour has a budget
+## 6. The accent colour has a budget
 
 "One or two pixels jut out" is a budget problem:
 
@@ -146,7 +181,7 @@ Measurable, so a script settles the argument:
 - **Keep the value range tight** — about two or three steps for one family — so the
   family reads as one material.
 
-## 6. The edge between two colours is part of the shape
+## 7. The edge between two colours is part of the shape
 
 Two family members whose colours meet (a warm hue next to a cold one, a bright top next
 to a dark body) must not meet at one hard pixel. Put an intermediate value at the
@@ -154,7 +189,7 @@ boundary; the eye then reads a transition instead of "how abrupt can you make it
 measurement behind the judgement: `audit --accent-edge-max` is the largest accepted
 accent-to-base step, and the isolated-pixel share across the boundary stays low.
 
-## 7. The family boundary: what must look alike, and what must not
+## 8. The family boundary: what must look alike, and what must not
 
 | must look alike | must not be forced alike |
 |---|---|
@@ -167,7 +202,7 @@ match, the shape must stay pixel-identical: measure the silhouette before and af
 must not move. Changing the shape while claiming to fix the colour is the fastest way
 to lose trust ("只要求颜色对称，结果形状也被改了").
 
-## 8. Block entities and UV: "is this really a table?"
+## 9. Block entities and UV: "is this really a table?"
 
 "Dark wood table with a paper on it" is not a plank texture with two extra strokes. If
 the thing has geometry the player walks around, it needs:
@@ -182,7 +217,7 @@ inside it (`entity` / `uv`, and the `pack` step for multi-face assets) — that 
 what turns "it is probably a table" into a verdict. If the model does not exist, the
 pack needs no texture at all — the game draws it (`contracts.md`).
 
-## 9. The look-at-it checklist (stage 6)
+## 10. The look-at-it checklist (stage 6)
 
 - the rendered sheet at 100% and zoomed;
 - the whole family side by side;
