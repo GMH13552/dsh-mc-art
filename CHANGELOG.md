@@ -11,6 +11,31 @@ panel/report contract is stable, and whose shipped skills are general (no loader
 version, machine or project is baked in). Earlier 0.1.x releases were development
 snapshots and are not itemised here.
 
+## 0.2.5
+
+### Fixed
+
+- **Every texture in your own project pack refused to save.** The panel said *"this texture handle
+  is not a relative path inside the project pack"* while the path plainly **was** inside your pack:
+  the sentence was true about the *shape* and false about the *reason*. The host stored your
+  project's own textures as **absolute** paths (`preload()`), that value travelled to the editor as
+  its save handle, and the client's safety check rejects drive-letter paths — so **no texture in your
+  own pack could be saved**, and the write path was never reached at all. The host now stores
+  pack-relative handles and resolves them against the project root when reading; the in-pack test
+  normalises separators, case and `.`/`..` and compares real paths, and it **accepts an in-pack
+  absolute path** as well, so a stray absolute handle cannot lock you out again. The rejection
+  message now names what is actually wrong — empty / NUL / drive-letter / leading slash / `..` /
+  outside the pack, five distinct reasons — instead of one sentence that blames your own pack.
+- `tools/mcart-plugin/texture-edit-test.js`: the handle must pass the **real** client check
+  (`safeTextureHandle`, pulled out of `client.js` rather than re-implemented) and the host must
+  actually land the bytes in the project pack (before/after compared). The reverse fixture puts the
+  absolute path back and turns **six** assertions red — including the message users actually saw,
+  verbatim — with the file unchanged at 224 B, i.e. not one byte written.
+
+### Changed
+
+- Vendored `mc-art` snapshot unchanged (`cf39eba`): this release is panel-side only.
+
 ## 0.2.4
 
 ### Added

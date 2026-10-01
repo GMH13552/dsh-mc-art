@@ -129,7 +129,8 @@ function loadHost(source, options) {
     },
   }
   const plugin = new Function('harness', 'console', 'TextEncoder', 'btoa', 'atob', 'nodeFs', 'moduleDir', 'process',
-    source)(globalThis.harness, quietConsole, TextEncoder, btoa, atob, undefined,
+    source)(globalThis.harness, quietConsole, TextEncoder, btoa, atob,
+    opts.nodeFs === undefined ? undefined : opts.nodeFs,
     nodePath.join(REPO, 'panel', 'lib'), process)
   plugin.apply(ctx)
   return handlers

@@ -695,10 +695,83 @@ return {
     // A texture handle is either a file path (a project's own pack) or a
     // `ref:` key into what was already extracted from a jar.  One dispatcher, so
     // no caller has to know which kind it is holding.
-    async function textureUrlFor(entry) {
+    /** `/` 归一的纯路径（解析 `.` / `..`；盘符原样保留大小写，比较时再归）。 */
+    function normalizePath(value) {
+      let text = String(value === undefined || value === null ? '' : value).split(BACKSLASH).join('/')
+      const drive = /^[A-Za-z]:\//.test(text) ? text.slice(0, 2) : ''
+      if (drive !== '') text = text.slice(2)
+      const lead = text.charAt(0) === '/' ? '/' : ''
+      const parts = []
+      for (const piece of text.split('/')) {
+        if (piece === '' || piece === '.') continue
+        if (piece === '..') {
+          if (parts.length > 0 && parts[parts.length - 1] !== '..') parts.pop()
+          else parts.push('..')
+          continue
+        }
+        parts.push(piece)
+      }
+      return drive + lead + parts.join('/')
+    }
+
+    /** Windows 上路径比较不看大小写；POSIX 上看。 */
+    const samePath = (left, right) =>
+      platformOf() === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
+
+    /**
+     * 贴图句柄 → **项目包里的绝对路径**，并且说得出**真实**的拒绝原因。
+     *
+     * 判据是"归一化之后的真实路径在不在 `<项目>/pack` 底下"，不是字符串前缀草比：
+     * 大小写（Windows）、`\` / `/`、`.` / `..` 全部归一。**包内的绝对路径也接受**
+     * （解析后落在包里就行）—— 这样即使别处再产出一个绝对句柄，用户也不会被"写不了自己
+     * 的贴图"卡死。
+     *
+     * 旧代码是 `target.indexOf(pack) !== 0`，而用户看到的那句话是"这条贴图句柄不是项目包里
+     * 的相对路径"——对着一张明明就在项目包里的图说，自相矛盾。形状（空 / NUL / 盘符 /
+     * 前导斜杠 / `..`）现在写在原因里，"拒绝写"三个字保留（icon-test 钉着它）。
+     */
+    function packPathOf(project, value) {
+      const raw = String(value === undefined || value === null ? '' : value)
+      if (raw === '') return { ok: false, reason: '贴图句柄是空的，拒绝写' }
+      if (raw.indexOf('\u0000') >= 0) return { ok: false, reason: '贴图句柄里有 NUL 字符，拒绝写' }
+      const projectDir = normalizePath(String(project.dir))
+      const pack = normalizePath(projectDir + '/pack')
+      const driveAbsolute = /^[A-Za-z]:[\\/]/.test(raw)
+      const absolute = driveAbsolute || raw.charAt(0) === '/' || raw.charAt(0) === BACKSLASH
+      // 相对句柄按**项目根**解析（`pack/assets/…` 是相对项目根的），再判它在不在 `<项目>/pack` 底下。
+      const at = normalizePath(absolute ? raw : projectDir + '/' + raw.split(BACKSLASH).join('/'))
+      const inside = samePath(at, pack) || samePath(at.slice(0, pack.length + 1), pack + '/')
+      if (inside) return { ok: true, path: at }
+      const shape = driveAbsolute ? '盘符绝对路径'
+        : (absolute ? '前导斜杠的绝对路径'
+          : (raw.split(/[\\/]/).indexOf('..') >= 0 ? '相对路径里带 ..' : '包内相对路径'))
+      return { ok: false, reason: '这条贴图解析之后落在项目包外面（句柄形态：' + shape
+        + '；解析后 = ' + at + '；项目包 = ' + pack + '），拒绝写' }
+    }
+
+    /**
+     * 项目自己的贴图句柄 → 磁盘路径。
+     *
+     * 句柄有三种形态，都要认：
+     *   * `ref:` 句柄 —— 参考 jar 里现取的，调用方另有分支；
+     *   * **包内相对路径**（`pack/assets/<ns>/textures/…`）—— `preload()` 现在存的就是这个，
+     *     因为它要一路走到客户端编辑器手里，而那里只接受相对路径；
+     *   * 绝对路径 —— 历史形态（老版本存过），别的调用方也可能给。
+     * 相对的一律按**项目根**解析：不解析就是"读不到自己项目里的图"。
+     */
+    function textureFileOf(project, value) {
+      const text = String(value === undefined || value === null ? '' : value).split(BACKSLASH).join('/')
+      if (text === '' || text.slice(0, 4) === 'ref:') return text
+      if (/^[A-Za-z]:\//.test(text) || text.charAt(0) === '/') return text
+      const dir = project !== undefined && project !== null && typeof project.dir === 'string'
+        ? String(project.dir).split(BACKSLASH).join('/').replace(/\/+$/, '') : ''
+      return dir === '' ? text : dir + '/' + text.replace(/^\.\//, '')
+    }
+
+    async function textureUrlFor(entry, project) {
       if (typeof entry !== 'string' || entry === '') return undefined
       if (entry.slice(0, 4) === 'ref:') return referenceTextures.get(entry)
-      return await textureUrl(entry)
+      return await textureUrl(textureFileOf(project, entry))
     }
 
     // Animated textures are the ONE thing a texture id alone cannot describe.
@@ -726,8 +799,14 @@ return {
       for (const kind of ['block', 'blocks', 'entity', 'item']) {
         for (const entry of await listDir(assets + '/textures/' + kind)) {
           if (entry.type !== 'file' || !/\.png$/.test(entry.name)) continue
+          // **存包内相对路径，不存绝对路径。** 这个值会一路流到 `quad.tex` → `textureIds`
+          // → 客户端编辑器手里那个句柄，而客户端的底线是"只写项目自己的包"（拒盘符、拒前导
+          // 斜杠）。存绝对路径的后果是**项目自己的每一张贴图在编辑器里都保存不了**，屏幕上
+          // 还说"这条贴图句柄不是项目包里的相对路径"（用户实测；那句话对着一张明明就在
+          // 项目包里的图说，读起来自相矛盾）。
+          // 读：`textureFileOf()` 按项目根解析回绝对路径；写：`atlas.saveTexture` 同样解析。
           textures.set(namespace + ':' + kind + '/' + entry.name.replace(/\.png$/, ''),
-            assets + '/textures/' + kind + '/' + entry.name)
+            'pack/assets/' + namespace + '/textures/' + kind + '/' + entry.name)
         }
       }
       return { dir: dir, namespace: namespace, assets: assets, models: models, textures: textures }
@@ -1979,7 +2058,7 @@ return {
       const textures = {}
       for (const id of ids) {
         if (already[id] === true) continue
-        const url = await textureUrlFor(id)
+        const url = await textureUrlFor(id, project)
         if (url !== undefined) textures[id] = url
       }
       out.textures = textures
@@ -2882,7 +2961,7 @@ return {
       const textures = {}
       for (const path of textureIds) {
         if (already[path] === true) continue
-        const url = await textureUrlFor(path)
+        const url = await textureUrlFor(path, project)
         if (url !== undefined) textures[path] = url
       }
       return { kind: kind, id: id, title: labelFor(namespace, kind, id),
@@ -3444,7 +3523,8 @@ return {
       const projectId = typeof request.project === 'string' ? request.project : ''
       const path = typeof request.path === 'string' ? request.path : ''
       const base64 = typeof request.base64 === 'string' ? request.base64 : ''
-      if (path === '' || base64 === '') return { error: '缺少贴图路径或图像数据' }
+      if (path === '') return { error: '贴图句柄是空的，拒绝写' }
+      if (base64 === '') return { error: '缺少图像数据' }
       try {
         const project = await projectFor(root, projectId)
         if (project === undefined) return { error: '找不到项目：' + projectId }
@@ -3458,16 +3538,18 @@ return {
         if (path.slice(0, 4) === 'ref:') {
           const resolved = editablePaths.get(path)
           if (resolved === undefined) {
-            const pack0 = project.dir + '/pack/assets/'
             return { error: '这张贴图不在这个项目的资源包里（它在参考的 jar 里），改不了：' + path }
           }
           target = resolved
         }
-        const pack = project.dir + '/pack/assets/'
-        if (target.indexOf(pack) !== 0) {
+        // **按解析后的真实路径判"在不在包里"**，并说出真实原因（空 / NUL / 盘符 / 前导
+        // 斜杠 / `..` / 包外）。包内的绝对路径也接受：解析后落在 `<项目>/pack` 里就行。
+        const placed = packPathOf(project, target)
+        if (placed.ok !== true) {
           // This is a brush, not a general file writer.
-          return { error: '这张贴图不在这个项目的资源包里，拒绝写：' + target }
+          return { error: placed.reason + '：' + String(target) }
         }
+        target = placed.path
         // Write beside the original, check it, and only then move it into place.
         // Writing straight over the texture meant a bad encode destroyed the
         // sprite *before* anyone noticed it was not a PNG.
@@ -3646,7 +3728,7 @@ return {
         const textures = {}
         for (const path of textureIds) {
           if (already[path] === true) continue
-          const url = await textureUrlFor(path)
+          const url = await textureUrlFor(path, project)
           if (url !== undefined) textures[path] = url
         }
         return { block: block, at: at, quads: built.quads, textureIds: textureIds, textures: textures,
@@ -3684,7 +3766,7 @@ return {
           const first = elements.length > 0 && elements[0].faces !== undefined
             ? Object.keys(elements[0].faces)[0] : undefined
           const tex = first === undefined ? undefined : elements[0].faces[first].tex
-          const url = tex === undefined ? undefined : await textureUrlFor(tex)
+          const url = tex === undefined ? undefined : await textureUrlFor(tex, project)
           if (url === undefined) { failed.push(reference + '（没有贴图）'); continue }
           icons[block] = url
         }
