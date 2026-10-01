@@ -1,11 +1,11 @@
-# 血肉之地 · 模组工程（Forge 1.18.2）
+# Example Land · 模组工程（Forge 1.18.2）
 
-这个目录是**代码那一半**。资源那一半在 `../pack/`（`fleshland/pack/`），由面板和
+这个目录是**代码那一半**。资源那一半在 `../pack/`（`examplemod/pack/`），由面板和
 `mc-art` skill 编辑，`../mc-art.atlas.json` 是它的索引。
 
 ## 为什么不在这里放资源
 
-同一个命名空间有两份 `assets/fleshland/` 就是两个真相，迟早对不上。所以：
+同一个命名空间有两份 `assets/examplemod/` 就是两个真相，迟早对不上。所以：
 
 - `../pack/` = 资源**唯一**真相（贴图、模型、blockstate、lang）；
 - 这里 = **代码**，外加以后由 `datagen` 从 atlas **生成**到
@@ -17,8 +17,9 @@
 
 ```bash
 # 推荐：走判定工具（读退出码、解析日志、给出裁决；--fault 证明裁判会说"不"）
-python3 ../../tools/mcmod_gametest.py
-python3 ../../tools/mcmod_gametest.py --fault
+# Windows 上解释器通常叫 python（`python3` 常是 0 字节 Store 存根）
+python ../../tools/mcmod_gametest.py
+python ../../tools/mcmod_gametest.py --fault
 
 # 或者直接：
 ./gradlew runGameTestServer --no-daemon --console=plain
@@ -29,12 +30,12 @@ python3 ../../tools/mcmod_gametest.py --fault
 | 跑法 | 服务端说 | 退出码 |
 |---|---|---|
 | 正常 | `All 2 required tests passed :)` | 0 |
-| `--fault`（断言改成 DIRT） | `fleshblockplaces failed! 放下去的血肉块不是血肉块 at 1,-59,1 (relative: 1,1,1)` + `1 required tests failed :(` | 1 |
+| `--fault`（断言改成 DIRT） | `exampleBlockPlaces failed! 放下去的示例方块不是示例方块 at 1,-59,1 (relative: 1,1,1)` + `1 required tests failed :(` | 1 |
 
 首次构建 26 分钟（下 Gradle 发行版 + MC/Forge 依赖 + 450 MB 资源，走代理），之后每次 **约 1 分钟**。
 
 - 它起的是 Mojang 的 `GameTestServer`：**无窗口**、跑完就退、**退出码 = 失败的必要测试数量**。
-- 测试写在 `src/main/java/com/fleshland/FleshlandGameTests.java`，用
+- 测试写在 `src/main/java/com/examplemod/ExampleGameTests.java`，用
   `GameTestHelper` 断言（`setBlock` / `assertBlockState` / `assertTrue`），
   注册走 `RegisterGameTestsEvent`（Forge 自己 1.18.x 的写法）。
 - **没有测试会直接崩**：MDK 的注释就写了 "the server will crash when no gametests are provided"。

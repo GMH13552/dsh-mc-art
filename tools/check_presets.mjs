@@ -11,11 +11,12 @@
  * 谁要是把 `tool-cordis` 加回这个模式，或者又拷出一个变体，这道门禁就红。
  *
  *   node tools/check_presets.mjs
- *   node tools/check_presets.mjs --fault    # 注入一行启用的 tool-cordis，要求红
+ *   node tools/check_presets.mjs --fault    # 注入一行启用的 tool-cordis + 去掉 disabled 探测，要求红
  */
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { generate, rowBlock, extractPanelPatch, TARGET_FILE } from './gen_preset_patch.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = dirname(HERE)
@@ -67,6 +68,36 @@ const installer = readFileSync(join(REPO, 'install.mjs'), 'utf8')
 check('安装器只装这一个模式', /PRESETS = \['mc-studio'\]/.test(installer))
 check('安装器不再引用已删掉的变体（除非是在清理它）',
   !/mc-studio-nocordis/.test(installer) || /LEGACY_PRESETS[\s\S]{0,80}mc-studio-nocordis/.test(installer))
+
+// ── 桌面代（0.2.0-rc.x）的送达：包自己的 patch 里那段预设不许漂移 ─────────────
+//
+// 这一段的唯一真相是 `presets/mc-studio/{preset.yml,agent.cordis.yml}` 经
+// `tools/gen_preset_patch.mjs` 生成的结果；panel/cordis.patch.yml 里那份是嵌进去的副本。
+// 手抄过一次，立刻漂了（persona 改了、插件行加了，副本还停在旧版），所以这里挡住它。
+const PANEL_PATCH = join(REPO, 'panel', 'cordis.patch.yml')
+let panelPatchText = readFileSync(PANEL_PATCH, 'utf8')
+let generatedText = readFileSync(TARGET_FILE, 'utf8')
+if (FAULT) {
+  // 故障注入：把安全探测那一行删掉、把生成物污染一个字节。
+  panelPatchText = panelPatchText.replace(/^.*disabled: !!js.*\n/m, '')
+  generatedText += '# fault\n'
+}
+const embedded = extractPanelPatch(panelPatchText)
+check('panel/cordis.patch.yml 里那份桌面代预设与 presets/mc-studio 逐字符相同（改预设后要重新生成）',
+  embedded !== null && embedded === rowBlock(),
+  embedded === null ? '找不到生成标记' : '长度 ' + embedded.length + ' vs 生成 ' + rowBlock().length)
+check('panel/cordis.patch.yml 的生成物与磁盘上那份 standalone 一致',
+  generatedText === generate(), '磁盘 ' + generatedText.length + ' / 生成 ' + generate().length)
+check('桌面代那行带"这一代没有 @deepseek-ai/dsh-agent-preset 就 disabled"的安全探测',
+  embedded !== null && /disabled:\s*!!js/.test(embedded) &&
+  embedded.includes("resolve('@deepseek-ai/dsh-agent-preset/package.json')"),
+  embedded === null ? '' : (/disabled:\s*!!js/.test(embedded) ? 'disabled 在，但探测表达式不对' : '没有 disabled'))
+check('桌面代那行 plugins 完整（有 persona 与 skill-filesystem 两行）',
+  embedded !== null && embedded.includes('- id: persona') && embedded.includes('- id: skill-filesystem'))
+check('skill 目录从包解析（baseUrl → dsh-mc-art-panel/package.json），不靠盘符 hack',
+  embedded !== null && embedded.includes("resolve('dsh-mc-art-panel/package.json')"))
+check('0.1.x 那代的 roots 仍然在（两代同送）',
+  panelPatchText.includes('- id: agent-presets') && panelPatchText.includes('roots:'))
 
 console.log(failures === 0 ? '全部通过' : failures + ' 项失败')
 process.exit(failures === 0 ? 0 : 1)

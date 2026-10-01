@@ -25,7 +25,14 @@ const { runPython } = require('./python-bin.js')
 
 // Reuse the same service stubs the other host gates use, so what runs here is
 // the emitted host, not a re-implementation of it.
-const { handlers } = require('./run.js')
+//
+// `subprocess` 那条缝必须给：原生 Windows 上 `run.js` 默认的 shell 桩是 `bash -c`
+// （WSL 的 bash），宿主会拿它去跑 `python3`，Windows 路径被 WSL 解成
+// `/mnt/c/...\tools\...` 而整条参考链红掉 —— 那不是被测代码的毛病。真桌面端给的也是
+// `ctx.subprocess`（argv，不经 shell），所以这里按**真实形态**驱动。
+const { buildHandlers, fsService } = require('./run.js')
+const { realSubprocess } = require('./model-test.js')
+const handlers = buildHandlers({ fs: fsService, subprocess: realSubprocess() })
 
 // The project has to live INSIDE the repository: the host finds the extractor by
 // walking up from the project directory (`findTool`, five levels), so a fixture

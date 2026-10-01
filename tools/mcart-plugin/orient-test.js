@@ -10,7 +10,13 @@ const path = require('path')
 // this test grade the working copy instead of what was emitted.
 const { handlers } = require(process.env.MCART_RUN || path.join(__dirname, 'run.js'))
 
-const PROJECT = { root: '/home/gmh/mc-art', project: 'fleshland' }
+// 工程与参考目录**都由环境变量给**：被 git 跟踪的文件里不许出现作者机器上的路径
+// （AC5 / 铁律 5）。不设就 SKIP（exit 3），并说清怎么设。
+//   MCART_PROJECT_ROOT=<资产根目录>   MCART_PROJECT_ID=<工程名>
+const PROJECT = {
+  root: process.env.MCART_PROJECT_ROOT || '',
+  project: process.env.MCART_PROJECT_ID || '',
+}
 
 // WHICH MINECRAFT this measures is not this file's business to guess.
 //
@@ -32,12 +38,17 @@ const PROJECT = { root: '/home/gmh/mc-art', project: 'fleshland' }
 const EXPECTED = '1.12.2'
 
 async function requireVersion() {
+  if (PROJECT.root === '' || PROJECT.project === '') {
+    console.log('跳过：没给工程。设 MCART_PROJECT_ROOT=<资产根目录> 与 MCART_PROJECT_ID=<工程名> 再跑。')
+    process.exit(3)
+  }
   const refs = await handlers['atlas.refNamespaces'](PROJECT)
   const version = String(refs.version || '')
   if (version.indexOf(EXPECTED) >= 0) return
   console.log('跳过：参考目录现在量到的是 ' + (version || '（认不出）') + '，这批断言是按 '
     + EXPECTED + ' 量的。')
-  console.log('     改 /home/gmh/mc-art/fleshland/mc-art.settings.json 的 reference.directory 再跑。')
+  console.log('     把 <资产根>/<工程名>/mc-art.settings.json 的 reference.directory '
+    + '指到一个 1.12.2 的版本目录再跑。')
   process.exit(3)
 }
 
@@ -138,7 +149,7 @@ function facesWith(result, needle) {
 
   // --- a placed cell keeps its own orientation -----------------------------
   const scene = await handlers['atlas.scene'](Object.assign({}, PROJECT,
-    { kind: 'biome', id: 'fleshland', cells: [
+    { kind: 'biome', id: PROJECT.project, cells: [
       { block: 'minecraft:oak_log', at: [0, 0, 0], variant: 'axis=x' },
       { block: 'minecraft:oak_log', at: [1, 0, 0] },
     ] }))

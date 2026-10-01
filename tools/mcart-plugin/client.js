@@ -669,6 +669,8 @@ const CSS = [
   '.mcart-src{display:flex;align-items:center;gap:6px}',
   '.mcart-ref{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 6px;padding:6px 10px;border-radius:8px;background:rgba(127,127,127,.14);border:1px solid rgba(127,127,127,.3);font-size:12px}',
   '.mcart-ref-path{opacity:.66;word-break:break-all}',
+  '.mcart-report{white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,.22);border:1px solid rgba(127,127,127,.28);border-radius:6px;padding:6px 8px;margin:2px 0;font-size:11px;line-height:1.5;max-height:280px;overflow:auto;user-select:text;font-family:inherit}',
+  '.mcart-reportnote{font-size:10px;opacity:.55;word-break:break-all}',
 ].join('')
 
 const CATEGORIES = [
@@ -856,6 +858,147 @@ function failureOf(reply) {
   if (reply.error === undefined || reply.error === null) return null
   return String(reply.error)
 }
+
+/**
+ * 「画不出来」在屏幕上的报告。契约见 BRIEF §2.4。
+ *
+ * 这件事有一条**信任级**的红线：面板曾经把用户的会话日志写坏（0.1.26 往 agent 里塞了一条
+ * 没有 `source` 的消息，会话再也打不开）。所以报告**只在屏幕上**：人能读、能一键复制，
+ * 而这个文件里**没有**任何 `steer` / inbox / 会话写方法的调用 —— 报告不注入任何地方。
+ * 界面门禁（`panel/ui-test.mjs`）静态 + 行为两头都盯着这一条。
+ */
+const DIAG_REASON = {
+  'project-model-missing': '项目包里缺这个模型文件（要补的是项目自己的文件，不是原版的）',
+  'vanilla-parent-missing': '原版母模型没取到（参考目录没设对，或那个 jar 里确实没有）',
+  'no-reference-directory': '还没有设置参考目录，原版/模组的模型取不到',
+  'reference-jar-missing': '参考目录里找不到对应的 jar',
+  'extractor-failed': '抽取器跑失败了（多半是 Python 探测或工具本身的毛病）',
+  'parent-cycle': '模型 parent 链成环了',
+  // 契约后来加的两个取值：模型/链都在，是"贴图"或"面"那一段空掉了。
+  'textures-unresolved': '模型解析出来了，但面上引用的贴图取不到（典型：项目模型用了原版的 minecraft:block/…，而参考目录没设或取不到）',
+  'no-quads': '整条模型链都完整，但一个面都没产出（例如零厚度平面 + 贴图缺失）',
+  'unknown': '原因不明',
+}
+// ↓ 这两句是报告里最容易指错方向的地方：项目自己的缺失**绝不许**说成"缺的原版母模型"。
+const DIAG_KIND = { project: '项目里缺', vanilla: '缺的原版母模型' }
+// 报告长度的上限：屏幕是有限的，同一条报告刷屏比不报还糟。
+const DIAG_LINES = 20
+// 折叠前先显示几行。
+const DIAG_SHOW = 8
+
+/**
+ * 原因那一行。
+ *
+ * **兜底是硬要求**：宿主那边的契约会长出新 `reason`（面板比宿主旧是常态），而"原因"
+ * 这一行绝不许因为不认识这个词就变成空白 / `undefined`。不认识的取值**把原值照抄**出来，
+ * 人至少能拿着那个英文原值去搜、去问；`unknown` 才是"宿主连 reason 都没给"。
+ */
+function reasonLine(reason) {
+  const raw = typeof reason === 'string' ? reason : ''
+  if (raw !== '' && Object.prototype.hasOwnProperty.call(DIAG_REASON, raw)) {
+    return '原因：' + DIAG_REASON[raw] + '（' + raw + '）'
+  }
+  if (raw !== '') return '原因：' + raw + '（面板不认识这个 reason，把原值照贴出来）'
+  return '原因：unknown（宿主没有给 reason）'
+}
+
+const diagnosticOf = (payload) => {
+  const raw = payload === null || payload === undefined ? undefined : payload.diagnostic
+  if (raw === null || raw === undefined || typeof raw !== 'object') return null
+  return {
+    reason: typeof raw.reason === 'string' && raw.reason !== '' ? raw.reason : 'unknown',
+    block: typeof raw.block === 'string' ? raw.block : '',
+    missing: arrayOf(raw.missing).filter((entry) => entry !== null && typeof entry === 'object')
+      .map((entry) => ({
+        kind: entry.kind === 'vanilla' ? 'vanilla' : 'project',
+        name: typeof entry.name === 'string' ? entry.name : '',
+        fixPath: typeof entry.fixPath === 'string' ? entry.fixPath : '',
+      })),
+    tried: arrayOf(raw.tried).map((line) => String(line)),
+    referenceDirectory: typeof raw.referenceDirectory === 'string' ? raw.referenceDirectory : '',
+  }
+}
+
+/** 人能照着做的几行字。顺序就是照做的顺序：先一句人话，再原因，再要补的文件。 */
+function diagLines(diag, error) {
+  const lines = []
+  const head = error === null || error === undefined ? '' : String(error).trim()
+  if (head !== '') lines.push(head)
+  lines.push(reasonLine(diag.reason))
+  if (diag.block !== '') lines.push('方块：' + diag.block)
+  for (const entry of diag.missing) {
+    lines.push('· ' + (DIAG_KIND[entry.kind] || DIAG_KIND.project) + '：'
+      + (entry.name === '' ? '（没给名字）' : entry.name)
+      + (entry.fixPath === '' ? '' : ' —— 要动这个文件：' + entry.fixPath))
+  }
+  lines.push(diag.referenceDirectory === ''
+    ? '参考目录：没设。点右上角 ⚙ 把 .minecraft / 版本目录 / mods 目录的路径贴进去'
+    : '参考目录：' + diag.referenceDirectory)
+  if (diag.tried.length > 0) {
+    lines.push('已经试过：')
+    for (const line of diag.tried) lines.push('  - ' + String(line))
+  }
+  return lines
+}
+
+function diagText(diag, error) {
+  const all = diagLines(diag, error)
+  if (all.length <= DIAG_LINES) return all.join('\n')
+  return all.slice(0, DIAG_LINES).join('\n') + '\n…（还有 ' + (all.length - DIAG_LINES) + ' 行没画出来）'
+}
+
+/** 同一个 (原因, 方块, 缺什么) 只留一条：报告反复出现本身就是在刷屏。 */
+function reportKeyOf(diag) {
+  return diag.reason + '|' + diag.block + '|'
+    + diag.missing.map((entry) => entry.kind + ':' + entry.name).join(',')
+}
+
+const versionTag = () => '（MC 资产面板 ' + String(PANEL_VERSION) + '）'
+
+/**
+ * 「取不到 / 画不出」这类话在屏幕上一定要带版本号：用户报问题时能直接照着说，
+ * 免得"你装的是哪一版"来回问。其它正常句子**不加**，加了就是噪音。
+ */
+function withVersion(text) {
+  const line = text === null || text === undefined ? '' : String(text)
+  if (line === '') return line
+  if (line.indexOf('MC 资产面板') >= 0) return line
+  if (!/(画不出|取不到|拿不到|失败|没有返回|没写盘)/.test(line)) return line
+  return line + versionTag()
+}
+
+/**
+ * 贴图句柄的底线：**只写项目自己的包**。
+ *
+ * `atlas.saveTexture` 收的是贴图句柄（`<ns>:<路径>`），宿主拿它在项目包里定点写；
+ * 一个绝对路径或 `..` 就是"写到项目外面去"的形状。客户端在发出去之前先挡下来，
+ * 屏幕上说清楚，而不是让宿主去背这个锅。
+ */
+function safeTextureHandle(id) {
+  const text = id === undefined || id === null ? '' : String(id)
+  if (text === '') return false
+  if (text.indexOf('\u0000') >= 0) return false
+  if (/^[a-zA-Z]:/.test(text)) return false
+  if (text.charAt(0) === '/' || text.charAt(0) === '\\') return false
+  if (text.split(/[\\/]/).indexOf('..') >= 0) return false
+  if (text.indexOf('..') >= 0) return false
+  return true
+}
+
+/**
+ * 幽灵预览的归一化。宿主回来的 `atlas.preview` 缺字段是常态（JSON 会丢掉 `undefined`），
+ * 而 `ghost.quads.length` 在渲染键里被直接读 —— 少一个 `quads` 就是一次白屏。
+ */
+const ghostOf = (result, base) => ({
+  block: base.block,
+  at: base.at,
+  variant: base.variant,
+  loading: false,
+  quads: arrayOf(result.quads),
+  textures: objectOf(result.textures),
+  textureIds: idsOf(result),
+  animations: objectOf(result.animations),
+})
 function countsOf(list, keyOf, labelOf) {
   // `{key: {count, label}}` for a chip row -- labels come from the data.
   const out = {}
@@ -889,7 +1032,7 @@ function fromHex(text, alpha) {
 }
 
 /** Which faces a texture covers, in words.  The tab order follows the model,
- *  which starts at the bottom, so a grass block opened on 底面 flesh_soil and
+ *  which starts at the bottom, so a grass block opened on 底面 example_soil and
  *  nothing said so -- a label is the honest fix, not a different order. */
 function faceLabel(faces) {
   const list = faces === undefined || faces === null ? [] : faces
@@ -956,6 +1099,98 @@ let lastDrawKey = ''
 // that pixel into "how far up the face did I hit" needs the same projection the
 // pick buffer was filled with -- not a fresh one from current state.
 let lastCamera = null
+// 上一条「画不出来」报告是谁。同一个 key 再来一次只在屏幕上留一行"同一条"，
+// 不再把整段报告重画一遍 —— 刷屏的报告等于没有报告。
+let lastReportKey = ''
+
+// ---- 「出错时让 AI 知道」：只写输入框草稿，**永不发送** ----------------------
+//
+// 用户的诉求是"太依赖脚本了：出错的内容会立刻死掉，AI 不知道"。而 0.1.26 的教训是
+// 宿主往会话日志里写会写坏会话（所以永久禁掉了注入）。两条的交点就是这里：
+// **客户端把报告放进输入框的草稿**，用户自己按回车才发出去 —— 面板这一侧对外
+// **零 host 调用**，更没有 `agent.*` / `session.*`。
+//
+// 输入框的把手（`inputActions.setDraft` / `useInput`）只有 `conversation.input.dock`
+// 槽的 props 里有，所以引用条每渲染一遍就把它们记下来；`useInput` 是壳给的**钩子**，
+// 只能在渲染时调，所以这里连"这一遍读到的草稿"一起缓存。
+const composer = { write: null, draft: '' }
+const composerWaiters = []
+let composerFilledKey = ''
+let autoReportOn = true
+let lastAutoVerdict = ''
+const AUTO_REPORT_KEY = 'dsh-mc-art.auto-report'
+try {
+  if (typeof localStorage !== 'undefined' && localStorage !== null && localStorage.getItem(AUTO_REPORT_KEY) === '0') {
+    autoReportOn = false
+  }
+} catch (error) { /* 沙箱里没有 storage：用默认值（开） */ }
+
+function setAutoReport(on) {
+  autoReportOn = on === true
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage !== null) {
+      localStorage.setItem(AUTO_REPORT_KEY, autoReportOn ? '1' : '0')
+    }
+  } catch (error) { /* 存不下不影响本次会话 */ }
+}
+
+/** 输入框的把手什么时候到手。到手之前先排队，到手了就通知（面板要重试一次）。 */
+function onComposerReady(callback) {
+  if (typeof composer.write === 'function') { callback(); return () => {} }
+  composerWaiters.push(callback)
+  return () => {
+    const at = composerWaiters.indexOf(callback)
+    if (at >= 0) composerWaiters.splice(at, 1)
+  }
+}
+function composerCaptured() {
+  const waiting = composerWaiters.slice()
+  composerWaiters.length = 0
+  for (const callback of waiting) {
+    try { callback() } catch (error) { /* 等的人自己有问题不该拖垮这里 */ }
+  }
+}
+
+/**
+ * 把一段文本放进输入框草稿。返回值就是屏幕上那句话的依据：
+ *   'filled'（放进去了）| 'busy'（草稿里有别人的字，**不覆盖**）| 'done'（同一条已经放过）
+ *   | 'off'（开关关了）| 'no-composer'（这个壳没有输入框接口）
+ * `manual` = 用户**自己点的按钮**：这时不许再拿"草稿非空"挡他（他就是要放），
+ * 而且是**追加**到他写的东西后面，不冲掉。
+ */
+function autoFillDraft(text, key, manual) {
+  const body = text === null || text === undefined ? '' : String(text)
+  const name = key === undefined || key === null ? '' : String(key)
+  if (body === '') { lastAutoVerdict = 'empty'; return 'empty' }
+  if (autoReportOn !== true && manual !== true) { lastAutoVerdict = 'off'; return 'off' }
+  if (manual !== true && name !== '' && composerFilledKey === name) { lastAutoVerdict = 'done'; return 'done' }
+  if (typeof composer.write !== 'function') { lastAutoVerdict = 'no-composer'; return 'no-composer' }
+  const current = String(composer.draft === undefined || composer.draft === null ? '' : composer.draft)
+  // **不许覆盖用户正在写的东西。**（自动那条路；用户自己点按钮是另一回事。）
+  if (manual !== true && current.trim() !== '') { lastAutoVerdict = 'busy'; return 'busy' }
+  const base = manual === true && current.trim() !== '' ? current.replace(/\s+$/, '') + ' ' : ''
+  composer.write(base + body)
+  composerFilledKey = name
+  lastAutoVerdict = 'filled'
+  return 'filled'
+}
+
+/** 给 AI 看的报告：自包含 —— 版本、资产身份、reason、缺什么（含 fixPath）、参考目录。 */
+function reportForAI(diag, error) {
+  return '这是「MC 资产面板」自动生成的报告（面板版本 ' + String(PANEL_VERSION)
+    + '；只放进草稿，没有发送，按回车之前都可以改）。'
+    + '\n' + diagText(diag, error)
+    + '\n请按这份报告直接修，不用再问我。'
+}
+/** 渲染期抛异常时那份报告：没有结构化诊断，但也不能让 AI 干等。 */
+function reportForBoundary(error) {
+  const message = error !== null && error !== undefined && error.message !== undefined
+    ? String(error.message) : String(error)
+  return '这是「MC 资产面板」自动生成的报告（面板版本 ' + String(PANEL_VERSION)
+    + '；只放进草稿，没有发送）。'
+    + '\n面板渲染失败：' + message
+    + '\n这一条没有结构化诊断（异常发生在渲染期）。请从这句话入手。'
+}
 // Frame clock for animated textures, counted in the timer's own ticks (50 ms
 // each).  Deliberately not `Date.now()`: the only clock this half is given is
 // the timer service, and deriving the frame from the very ticks that trigger
@@ -1048,16 +1283,31 @@ return {
         }
         componentDidCatch(error) {
           try { console.error('[mcart] 面板渲染失败', error) } catch (ignored) { /* 没有 console 也不能再炸 */ }
+          // 用户的话："出错的内容会立刻死掉，AI 不知道"。所以边界这里也把报告放进
+          // 输入框草稿（**只放、不发送**）；对外零 host 调用，绝不碰会话 / agent。
+          try {
+            autoFillDraft(reportForBoundary(error), 'boundary|'
+              + (error !== null && error !== undefined && error.message !== undefined ? String(error.message) : String(error)))
+          } catch (ignored) { /* 通知失败不该把"报错"这件事本身也弄没 */ }
         }
         render() {
           if (this.state.error === null || this.state.error === undefined) return this.props.children
           const message = this.state.error !== null && this.state.error.message !== undefined
             ? this.state.error.message : this.state.error
+          const notice = lastAutoVerdict === 'filled' || lastAutoVerdict === 'done'
+            ? '已把这份报告放进输入框（只是草稿，没发送；按回车才会发）'
+            : (lastAutoVerdict === 'busy'
+              ? '输入框里已经有你写的字，没有动它 —— 报告在上面这段里，选中就能复制'
+              : (lastAutoVerdict === 'off'
+                ? '「出错时自动把报告放进输入框」现在是关的'
+                : (lastAutoVerdict === 'no-composer'
+                  ? '这个壳没有给输入框接口 —— 上面这段可以手动选中复制'
+                  : '刷新一次；如果仍是这一句，把它连同"MC 资产"面板发给我')))
           return React.createElement('div', { className: 'mcart-root' },
             React.createElement('div', { className: 'mcart-err' },
               '面板渲染失败：' + String(message)),
             React.createElement('div', { className: 'mcart-hint' },
-              '刷新一次；如果仍是这一句，把它连同"MC 资产"面板发给我 —— 版本：' + String(PANEL_VERSION)),
+              notice + ' —— 版本：' + String(PANEL_VERSION)),
           )
         }
       }
@@ -1154,6 +1404,21 @@ return {
       // 左边菜单的方块图标也全没了。清缓存必须同时踢一脚用它的人，所以把纪元号
       // 加进这些 effect 的依赖里。缓存是模块级的，纪元是实例级的，两者各司其职。
       const texEpochPair = React.useState(0)
+      // 「画不出来」的报告：`{ diag, error, repeat }`。与 `failure` 分开是因为报告要
+      // 折叠、要复制、要去重，而 `failure` 只是一句人读的短句（别的地方也在用）。
+      const diagPair = React.useState(null)
+      const diagOpenPair = React.useState(false)
+      const copiedPair = React.useState('')
+      // 「把报告放进输入框」的结果/开关状态（`autoTick` 只是让开关动一次重新渲染一次）。
+      const autoStatusPair = React.useState('')
+      const autoTickPair = React.useState(0)
+      const composerTickPair = React.useState(0)
+      const diag = diagPair[0], setDiag = diagPair[1]
+      const diagOpen = diagOpenPair[0], setDiagOpen = diagOpenPair[1]
+      const copied = copiedPair[0], setCopied = copiedPair[1]
+      const autoStatus = autoStatusPair[0], setAutoStatus = autoStatusPair[1]
+      const autoTick = autoTickPair[0], setAutoTick = autoTickPair[1]
+      const composerTick = composerTickPair[0], setComposerTick = composerTickPair[1]
       const voxel = voxelPair[0], setVoxel = voxelPair[1]
       const hover = hoverPair[0], setHover = hoverPair[1]
       const ghost = ghostPair[0], setGhost = ghostPair[1]
@@ -1200,6 +1465,89 @@ return {
         return projects.length > 0 ? projects[0].id : null
       }
 
+      // 「画不出来」的落点。报告只进 state，只上屏；这里没有一个字节发往会话 / agent。
+      function noteDiag(payload, error) {
+        const info = diagnosticOf(payload)
+        if (info === null) { setDiag(null); return }
+        const key = reportKeyOf(info)
+        // 同一条（原因+方块+缺什么）再发生一次：屏幕上已有的那条还成立，别再画一遍。
+        const repeat = lastReportKey !== '' && lastReportKey === key
+        lastReportKey = key
+        setDiagOpen(false)
+        setCopied('')
+        setDiag({ diag: info, error: error === undefined || error === null ? '' : String(error), repeat: repeat, key: key })
+      }
+
+      /**
+       * 「出错时让 AI 知道」：把这份报告放进输入框的**草稿**。
+       *
+       *   1. 草稿是空的 → 自动放（用户按一次回车就发，之前都能改）；
+       *   2. 草稿里有他正在写的东西 → **一个字节都不动它**，报告卡上留一个按钮让他自己点；
+       *   3. 同一条报告不重复塞（`autoFillDraft` 用 key 去重）；
+       *   4. 从不到"发送"为止 —— 客户端根本没有发送接口，对外零 host 调用。
+       */
+      function statusText(verdict) {
+        if (verdict === 'filled') return '已放进输入框（只是草稿，没发送；按回车之前都可以改）'
+        if (verdict === 'busy') return '输入框里已经有你写的字，没有动它 —— 要放就点左边的按钮'
+        if (verdict === 'done') return '同一条报告已经放进过输入框，没有再塞一遍'
+        if (verdict === 'off') return '「出错时自动把报告放进输入框」现在是关的'
+        if (verdict === 'no-composer') return '这个壳没有给输入框接口 —— 上面那段可以选中复制'
+        return '出错时会把这份报告放进输入框（只放草稿，不发送）'
+      }
+      function placeReport(manual) {
+        if (diag === null) return
+        const verdict = autoFillDraft(reportForAI(diag.diag, diag.error), 'diag|' + String(diag.key), manual === true)
+        setAutoStatus(verdict)
+      }
+
+      // 输入框的把手可能比这一次失败晚到手（槽的 props 是渲染时给的）：到手了就重试一次。
+      React.useEffect(() => onComposerReady(() => setComposerTick(composerTick + 1)), [])
+      // 报告出来时自动放进草稿。`diag.key` 保证同一条只放一次；草稿非空时 `autoFillDraft`
+      // 会返回 'busy'，一个字节都不写。
+      React.useEffect(() => {
+        if (diag === null) return
+        const verdict = autoFillDraft(reportForAI(diag.diag, diag.error), 'diag|' + String(diag.key))
+        setAutoStatus(verdict)
+      }, [diag === null ? '' : String(diag.key), composerTick, autoTick])
+
+      /**
+       * 一键复制。**到剪贴板为止**，没有第二条路：绝不把报告送进任何会话 / agent。
+       * 浏览器不给剪贴板、或这段代码跑在没有 DOM 的地方（Node 门禁）时，
+       * 也只能是"告诉你手动选中上面那段"，绝不许抛 —— 复制失败不该把面板炸掉。
+       */
+      function copyReport(text) {
+        const payload = String(text === undefined || text === null ? '' : text)
+        const done = (message) => { try { setCopied(message) } catch (ignored) { /* 不能因为一句提示再炸一次 */ } }
+        try {
+          const board = typeof navigator !== 'undefined' && navigator !== null ? navigator.clipboard : undefined
+          if (board !== undefined && board !== null && typeof board.writeText === 'function') {
+            const result = board.writeText(payload)
+            if (result !== undefined && result !== null && typeof result.then === 'function') {
+              result.then(() => done('已复制到剪贴板'), () => fallbackCopy(payload, done))
+            } else { done('已复制到剪贴板') }
+            return
+          }
+        } catch (error) { /* 没有剪贴板就走下面那条 */ }
+        fallbackCopy(payload, done)
+      }
+
+      function fallbackCopy(text, done) {
+        try {
+          if (typeof document !== 'undefined' && document !== null && typeof document.createElement === 'function') {
+            const area = document.createElement('textarea')
+            area.value = text
+            area.setAttribute('readonly', 'readonly')
+            if (document.body && typeof document.body.appendChild === 'function') document.body.appendChild(area)
+            if (typeof area.select === 'function') area.select()
+            const ok = typeof document.execCommand === 'function' ? document.execCommand('copy') : false
+            if (document.body && typeof document.body.removeChild === 'function') document.body.removeChild(area)
+            done(ok === false ? '没复制成 —— 请手动选中上面那段' : '已复制到剪贴板')
+            return
+          }
+        } catch (error) { /* 没有 DOM 不是错误 */ }
+        done('没复制成 —— 请手动选中上面那段')
+      }
+
       function open(target, where) {
         // 换项目就丢像素缓存：缓存按贴图 id 存，而两个项目可以有同名贴图
         // （`examplemod:stone` 换了项目还是那个 id，但文件已经不是同一张）。
@@ -1222,8 +1570,16 @@ return {
         host.call('atlas.scene', want).then((result) => {
           setBusy(false)
           if (result === null || result === undefined) { setFailure('scene returned nothing'); return }
-          if (result.error !== undefined) { setFailure(result.error); setScene(null); return }
+          if (result.error !== undefined) {
+            setFailure(result.error)
+            noteDiag(result, result.error)
+            setScene(null)
+            return
+          }
           setFailure(null)
+          // 换了一个画得出来的资产：上一次的报告作废（不然下一条同样的报告会被当成"重复"）。
+          lastReportKey = ''
+          setDiag(null)
           for (const key of Object.keys(imageNodes)) delete imageNodes[key]
           setScene(sceneOf(result))
         }).catch((error) => { setBusy(false); setFailure(String(error && error.message ? error.message : error)) })
@@ -2283,7 +2639,7 @@ return {
               textureIds: [], error: String(result && result.error ? result.error : '没有返回结果') })
             return
           }
-          setGhost(Object.assign({ loading: false }, result))
+          setGhost(ghostOf(result, { block: voxel.block, at: target, variant: wantVariant }))
         }).catch((error) => {
           setGhost({ block: voxel.block, at: target, variant: wantVariant, quads: [], textures: {},
             textureIds: [], error: String(error && error.message ? error.message : error) })
@@ -2615,9 +2971,9 @@ return {
         rows.push(React.createElement('div', { className: 'mcart-hint', key: 'how' },
           '像原版一样：左键破坏，右键放置；拖动仍然是旋转。半透明的方块就是将要放上去的位置，红色高亮是要破坏的那一格。'))
         rows.push(React.createElement('div', { className: 'mcart-bar', key: 'msg' },
-          React.createElement('span', { className: 'mcart-note mcart-grow' }, voxel.msg === null ? '' : String(voxel.msg))))
+          React.createElement('span', { className: 'mcart-note mcart-grow' }, voxel.msg === null ? '' : withVersion(voxel.msg))))
         if (ghost !== null && ghost.error !== undefined) {
-          rows.push(React.createElement('div', { className: 'mcart-err', key: 'ghosterr' }, '预览拿不到：' + String(ghost.error)))
+          rows.push(React.createElement('div', { className: 'mcart-err', key: 'ghosterr' }, withVersion('预览拿不到：' + String(ghost.error))))
         }
         return React.createElement('div', { className: 'mcart-card', key: 'voxel' }, rows)
       }
@@ -2684,7 +3040,7 @@ return {
           React.createElement('span', { className: 'mcart-sub' },
             item.source === 'project' ? '本项目' : item.namespace),
           React.createElement('span', { className: 'mcart-note mcart-grow' },
-            itemFetchError === '' ? '点一格就放到上面的 3D 里看' : itemFetchError),
+            itemFetchError === '' ? '点一格就放到上面的 3D 里看' : withVersion(itemFetchError)),
           React.createElement('button', { className: 'mcart-btn', type: 'button',
             onClick: () => { setItemOpen(false); setIconPick(null) } }, '收起')))
         // Our own pack first, because that is what this project makes.
@@ -2802,7 +3158,7 @@ return {
               + (recipe !== undefined && recipe !== null && recipe.error ? ' · ' + String(recipe.error) : ''))))
         }
         rows.push(React.createElement('div', { className: 'mcart-bar', key: 'msg' },
-          React.createElement('span', { className: 'mcart-note mcart-grow' }, item.msg === null ? '' : String(item.msg))))
+          React.createElement('span', { className: 'mcart-note mcart-grow' }, item.msg === null ? '' : withVersion(item.msg))))
         return React.createElement('div', { className: 'mcart-card', key: 'items' }, rows)
       }
 
@@ -2959,6 +3315,14 @@ return {
       function saveEdit() {
         if (edit === null || edit.pixels === undefined || editBusy) return
         if (editScratch === null) { setEditMsg('画布还没准备好'); return }
+        // **只写项目自己的包**：句柄必须是包内的相对路径。绝对路径 / `..` 一律不发出去，
+        // 屏幕上说清楚是哪一条 —— 让宿主去挡"写到项目外面"是挡不住的。
+        const target = edit.ids[edit.index]
+        if (!safeTextureHandle(target)) {
+          setEditMsg('这条贴图句柄不是项目包里的相对路径，没有写盘：' + String(target)
+            + '（只写项目自己的包；要改原版/模组贴图，先在项目包里放一张同名贴图）')
+          return
+        }
         setEditBusy(true)
         setEditMsg(null)
         // The engine has no binary write, so the pixels leave as an encoded PNG
@@ -2972,16 +3336,22 @@ return {
         frame.data.set(edit.pixels)
         paint.putImageData(frame, 0, 0)
         const url = editScratch.toDataURL('image/png')
+        // **先验是 PNG 再发**。"临时文件 → 校验是 PNG → 才替换"这条规矩的客户端那一半：
+        // 画布给不出 PNG 就一个字节都不发（宿主那一半负责落临时文件、校验、再替换）。
+        if (String(url).indexOf('data:image/png') !== 0) {
+          setEditBusy(false)
+          setEditMsg('画布没有给出 PNG（拿到 ' + String(url).slice(0, 24) + '…），没有写盘')
+          return
+        }
         const base64 = url.slice(url.indexOf(',') + 1)
         host.call('atlas.saveTexture', {
-          root: root, project: activeProjectId(), path: edit.ids[edit.index], base64: base64,
+          root: root, project: activeProjectId(), path: target, base64: base64,
         }).then((result) => {
           setEditBusy(false)
           if (result === null || result === undefined || result.error !== undefined) {
             setEditMsg('保存失败：' + String(result && result.error ? result.error : '没有返回结果'))
             return
           }
-          const target = edit.ids[edit.index]
           decoded[target] = { width: edit.w, height: edit.h, data: edit.pixels }
           delete failedTex[target]
           lastDrawKey = ''
@@ -3087,7 +3457,7 @@ return {
           React.createElement('span', { className: 'mcart-note mcart-grow' },
             (edit.ids[edit.index] || '').split('/').pop())))
         rows.push(React.createElement('div', { className: 'mcart-bar', key: 'msg' },
-          React.createElement('span', { className: 'mcart-note mcart-grow' }, editMsg === null ? '' : String(editMsg))))
+          React.createElement('span', { className: 'mcart-note mcart-grow' }, editMsg === null ? '' : withVersion(editMsg))))
         return React.createElement('div', { className: 'mcart-card', key: 'editor' }, rows)
       }
 
@@ -3134,6 +3504,51 @@ return {
         }
         setItemMsg(null)
         setPending({ path: path, title: asset.title })
+      }
+
+      /**
+       * 「画不出来」的报告卡（BRIEF §2.4）。三件事必须同时成立：
+       *   1. 看得懂 —— 原因用中文，缺什么按 `kind` 分开写，每条带能直接照做的路径；
+       *   2. 能一键复制 —— 只到剪贴板；太长就折叠，屏幕上不会出现一条几百行的东西；
+       *   3. **不注入任何地方** —— 这段代码里没有任何会话 / agent 的写调用。
+       */
+      function diagnosticCard() {
+        if (diag === null) return null
+        const info = diag.diag
+        const all = diagLines(info, diag.error)
+        const full = diagText(info, diag.error)
+        const rows = []
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },
+          React.createElement('span', { className: 'mcart-title' }, '画不出来 · 报告'),
+          React.createElement('span', { className: 'mcart-sub' }, versionTag()),
+          React.createElement('button', { className: 'mcart-btn', type: 'button',
+            onClick: () => copyReport(full) }, '复制报告'),
+          all.length > DIAG_SHOW ? React.createElement('button', { className: 'mcart-btn', type: 'button',
+            onClick: () => setDiagOpen(diagOpen !== true) }, diagOpen === true ? '收起' : '展开全部') : null,
+          React.createElement('button', { className: 'mcart-btn', type: 'button',
+            onClick: () => { setDiag(null); setCopied('') } }, '关掉')))
+        if (diag.repeat === true) {
+          rows.push(React.createElement('div', { className: 'mcart-hint', key: 'repeat' },
+            '同一条报告：屏幕上只留这一条，不重复刷屏。'))
+        }
+        const shown = diag.repeat === true ? all.slice(0, 3)
+          : (diagOpen === true ? all.slice(0, DIAG_LINES) : all.slice(0, DIAG_SHOW))
+        rows.push(React.createElement('pre', { className: 'mcart-report', key: 'text' }, shown.join('\n')))
+        // 「出错就死在那里，AI 不知道」的修法：报告直接进输入框**草稿**，用户按回车才发。
+        // 草稿里有他正在写的东西时一个字节都不动（`autoFillDraft` 的 'busy'），只留这个按钮。
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'ai' },
+          React.createElement('button', { className: 'mcart-btn', type: 'button',
+            onClick: () => placeReport(true) }, '把报告放进输入框'),
+          React.createElement('span', { className: 'mcart-note mcart-grow' }, statusText(autoStatus)),
+          React.createElement('label', { className: 'mcart-switch' },
+            React.createElement('input', { type: 'checkbox', checked: autoReportOn === true,
+              onChange: (event) => { setAutoReport(event.target.checked); setAutoTick(autoTick + 1) } }),
+            React.createElement('span', null, '出错时自动放进输入框'))))
+        rows.push(React.createElement('div', { className: 'mcart-reportnote', key: 'note' },
+          copied === ''
+            ? '上面这段可以选中复制，或点「复制报告」/「把报告放进输入框」。面板不会自动发送；面板不会把它发进任何会话。'
+            : copied))
+        return React.createElement('div', { className: 'mcart-card', key: 'diag' }, rows)
       }
 
       function settingsCard() {
@@ -3239,6 +3654,14 @@ return {
             React.createElement('span', { className: 'mcart-note mcart-grow' }, settings.file || ''),
             React.createElement('span', { className: 'mcart-bad' }, saveState === null ? '' : saveState),
           ))
+          // 「出错时自动把报告放进输入框」：默认开，且**只到草稿为止**（见 autoFillDraft）。
+          rows.push(React.createElement('label', { className: 'mcart-switch', key: 'autoreport' },
+            React.createElement('input', { type: 'checkbox', checked: autoReportOn === true,
+              onChange: (event) => { setAutoReport(event.target.checked); setAutoTick(autoTick + 1) } }),
+            React.createElement('span', null, '出错时自动把报告放进输入框'),
+          ))
+          rows.push(React.createElement('div', { className: 'mcart-hint', key: 'autoreporthint' },
+            '只是草稿：不会自动发送，输入框里已经有你写的字时也不动它。'))
           // Nothing pushes a message into the conversation, so the panel offers
           // the sentence and one click puts it (plus the settings file, which the
           // skill reads) in the composer.  This is the answer to "我改了设置会通知
@@ -3259,7 +3682,7 @@ return {
         // 于是"选择目录…"失败（对话框弹不出来、没有 shell 服务…）时，
         // 界面上一个字都不变 —— 用户看到的就是"点了没反应，也没有报错"。
         if (notice !== null) rows.push(React.createElement('div', { className: 'mcart-bad', key: 'notice' }, String(notice)))
-        if (failure !== null) rows.push(React.createElement('div', { className: 'mcart-err', key: 'failure' }, String(failure)))
+        if (failure !== null) rows.push(React.createElement('div', { className: 'mcart-err', key: 'failure' }, withVersion(failure)))
         return React.createElement('div', { className: 'mcart-card', key: 'settings' }, rows)
       }
 
@@ -3307,7 +3730,7 @@ return {
         ))
 
         if (notice !== null) card.push(React.createElement('div', { className: 'mcart-bad', key: 'notice' }, String(notice)))
-        if (failure !== null) card.push(React.createElement('div', { className: 'mcart-err', key: 'failure' }, String(failure)))
+        if (failure !== null) card.push(React.createElement('div', { className: 'mcart-err', key: 'failure' }, withVersion(failure)))
         return React.createElement('div', { className: 'mcart-root' },
           React.createElement('div', { className: 'mcart-bar' },
             React.createElement('span', { className: 'mcart-title' }, 'MC 资产'),
@@ -3351,7 +3774,7 @@ return {
           reference === null || reference === ''
             ? '建完下一步：点右上角 ⚙ 指定参考目录（面板会列出自动探测到的游戏目录）。不指定也能用，只是看不到原版/模组的参照。'
             : '参考目录已经设好了：' + reference))
-        if (failure !== null) rows.push(React.createElement('div', { className: 'mcart-err', key: 'err' }, String(failure)))
+        if (failure !== null) rows.push(React.createElement('div', { className: 'mcart-err', key: 'err' }, withVersion(failure)))
         return React.createElement('div', { className: 'mcart-card', key: 'guide' }, rows)
       }
 
@@ -3434,7 +3857,7 @@ return {
         ))
         if (bad > 0) stage.push(React.createElement('div', { className: 'mcart-bad', key: 'bad' }, bad + ' 张贴图解码失败'))
         if (scene.errors && scene.errors.length > 0) {
-          stage.push(React.createElement('div', { className: 'mcart-bad', key: 'notes' }, scene.errors.join('；')))
+          stage.push(React.createElement('div', { className: 'mcart-bad', key: 'notes' }, withVersion(scene.errors.join('；'))))
         }
         // Why this is on screen and not in the console: "the whole strip on one
         // face" has exactly two causes -- `animations` has no entry for that
@@ -3697,7 +4120,8 @@ return {
             // 只重扫索引的话，`have` 里还留着旧贴图的 id，宿主永远不会再送新的字节。
             onClick: () => { forgetTextures(); setTexEpoch(texEpoch + 1); scan(root, true, null) } }, '刷新'),
         ),
-        failure === null ? null : React.createElement('div', { className: 'mcart-err' }, String(failure)),
+        failure === null ? null : React.createElement('div', { className: 'mcart-err' }, withVersion(failure)),
+        diagnosticCard(),
         React.createElement('div', { className: 'mcart-list' }, menu),
         editorCard(),
         voxelCard(),
@@ -3718,6 +4142,18 @@ return {
     function ReferenceBar(props) {
       const current = usePending()
       const draft = props.useInput !== undefined ? props.useInput((state) => state.draft) : ''
+      // 输入框的把手只有这里能拿到（`useInput` 是壳给的**钩子**，只能在渲染里调），
+      // 所以每渲染一遍就把"能写草稿"和"这一遍读到的草稿"记下来 —— 渲染失败的边界和
+      // 报告卡都靠它把报告放进草稿。**只是草稿**：这里没有、也不会有发送接口。
+      try {
+        if (props.inputActions !== undefined && props.inputActions !== null
+          && typeof props.inputActions.setDraft === 'function') {
+          const first = typeof composer.write !== 'function'
+          composer.write = props.inputActions.setDraft
+          if (first) composerCaptured()
+        }
+        composer.draft = draft === undefined || draft === null ? '' : String(draft)
+      } catch (error) { /* 壳给的 props 形状不对也不该把引用条弄没 */ }
       if (current === null || current.path === '') return null
       // `note` is the sentence that goes WITH the reference: a settings change has
       // to say WHAT changed, or `@file` alone leaves the agent to diff it.  It is

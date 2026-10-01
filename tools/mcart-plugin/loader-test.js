@@ -20,6 +20,10 @@ const nodePath = require('path')
 const HERE = __dirname
 const LOADER_HOST = nodePath.join(HERE, 'loader.host.js')
 const LOADER_CLIENT = nodePath.join(HERE, 'loader.client.js')
+// `--fault`：把 loader.host.js 里的中性占位符换成真机路径，要求下面那条"仓库里不许有
+// 真机路径"的静态断言变红（A/B：只换检查用的那一份，真正执行的还是磁盘上那份）。
+const FAULT = process.argv.includes('--fault')
+const NEUTRAL_HOME = '/path/to/dsh-mc-art/tools/mcart-plugin'
 
 let failures = 0
 function check(name, ok, detail) {
@@ -35,6 +39,23 @@ function runBody(text, names, values) {
   return make.apply(null, values)
 }
 
+/**
+ * 仓库里那份 `loader.host.js` 是**被跟踪的公开文件**，所以它的 `MCART_HOME` 是中性
+ * 占位符（`install.mjs` 在本地把它重写成本机克隆）。门禁要跑的是真代码，所以这里的
+ * `fs` 垫片把那个占位符映射回这个仓库 —— 不然"/path/to/… 不存在"会把整条链断掉，
+ * 而断掉的原因和被测代码毫无关系。
+ */
+function repoFs() {
+  return {
+    resolve: async (path) => ({ path: path }),
+    readText: async (target) => {
+      const at = String(target.path)
+      if (at.indexOf(NEUTRAL_HOME) === 0) return source(nodePath.join(HERE, at.slice(NEUTRAL_HOME.length + 1)))
+      return source(at)
+    },
+  }
+}
+
 function hostEnv(overrides) {
   const handlers = {}
   const disposers = []
@@ -42,10 +63,7 @@ function hostEnv(overrides) {
   const harness = {
     handle: (method, fn) => { handlers[method] = fn; return () => { delete handlers[method] } },
   }
-  const fsStub = (overrides || {}).fs || {
-    resolve: async (path) => ({ path: path }),
-    readText: async (target) => source(target.path),
-  }
+  const fsStub = (overrides || {}).fs || repoFs()
   const ctx = {
     get: (name) => (name === 'fs' ? fsStub : undefined),
     effect: (fn) => { const d = fn(); disposers.push(d); return () => { } },
@@ -70,6 +88,20 @@ async function expectThrows(run) {
 }
 
 async function main() {
+  console.log('--- 仓库形状：被跟踪的 loader.host.js 里不许有真机路径')
+  const loaderText = source(LOADER_HOST)
+  const forCheck = FAULT
+    ? loaderText.replace("'" + NEUTRAL_HOME + "'", "'/home/someone/mc-art/tools/mcart-plugin'")
+    : loaderText
+  if (FAULT && forCheck === loaderText) {
+    console.log('  FAIL --fault 没生效：loader.host.js 里找不到中性占位符（门禁要跟着改）')
+    return 1
+  }
+  check('MCART_HOME 是中性占位符（install.mjs 在本地重写），不是谁家的机器目录',
+    forCheck.indexOf("'" + NEUTRAL_HOME + "'") >= 0
+    && !/(\/home\/[A-Za-z0-9_.-]+\/|\/mnt\/c\/|[A-Za-z]:[\\/]Users)/.test(forCheck),
+    forCheck.split('\n').filter((line) => /MCART_HOME\s*=/.test(line)).join(' '))
+
   console.log('--- 宿主那一半：从磁盘读 host.js 并跑起来')
   const host = await loadHost()
   check('mcart.source 挂上了（客户端那一半要靠它拿源码）',
@@ -111,7 +143,8 @@ async function main() {
   console.log('--- 注入：这三种坏法必须报出来，而不是安静地少一半')
   const notFound = await expectThrows(() => loadHost({ fs: {
     resolve: async (path) => ({ path: path }),
-    readText: async () => { throw new Error('ENOENT: ' + '/home/gmh/mc-art/tools/mcart-plugin/host.js') },
+    // 中性假路径：这里只要一句"读不到"，不该把任何人的机器目录写进仓库（BRIEF §5）。
+    readText: async () => { throw new Error('ENOENT: ' + '/path/to/dsh-mc-art/tools/mcart-plugin/host.js') },
   } }))
   check('host.js 读不到时会报错（含路径）',
     notFound !== null && String(notFound.message).indexOf('host.js') >= 0,

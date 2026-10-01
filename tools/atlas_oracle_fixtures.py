@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write the oracle fixtures: Python-rendered ground truth + a JS job spec.
 
-    python3 tools/atlas_oracle_fixtures.py [outdir]
+    python tools/atlas_oracle_fixtures.py [outdir]
 
 Each fixture is a scene the two renderers must agree on, pixel for pixel.  The
 Python side renders the reference PNG; the JS side (`tools/atlas_oracle.mjs`)
@@ -128,14 +128,14 @@ def block_fixture(out, name, model, texture_map, parent_override=None):
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else "/tmp/oracle"
     os.makedirs(out, exist_ok=True)
-    pack = os.path.join(ROOT, "fleshland", "pack", "assets", "fleshland", "textures")
+    pack = os.path.join(ROOT, "examplemod", "pack", "assets", "examplemod", "textures")
 
     # 1. the vanilla cow: the fixture the entity renderer was calibrated on
     entity_fixture(out, "cow", [(em.cow(), os.path.join(
         ROOT, "vanilla3d", "textures", "entity", "cow.png"), False)],
         em.VIEWS["front34"])
 
-    # 2. the flesh sheep: two layers, opaque skin then blended fleece
+    # 2. the example sheep: two layers, opaque skin then blended fleece
     entity_fixture(out, "sheep", [
         (em.sheep_skin(), os.path.join(pack, "entity", "blood_sheep.png"), False),
         (em.sheep_wool(), os.path.join(pack, "entity", "blood_sheep_wool.png"), True),
@@ -147,18 +147,18 @@ def main():
         {
             "parent": "block/cube_bottom_top",
             "textures": {
-                "top": "fleshland:block/flesh_grass_top",
-                "bottom": "fleshland:block/flesh_soil",
-                "side": "fleshland:block/flesh_grass_side",
+                "top": "examplemod:block/example_grass_top",
+                "bottom": "examplemod:block/example_soil",
+                "side": "examplemod:block/example_grass_side",
             },
             "_elements": cube_elements({
                 "down": "#bottom", "up": "#top", "north": "#side",
                 "south": "#side", "west": "#side", "east": "#side"}),
         },
         {
-            "fleshland:block/flesh_grass_top": os.path.join(pack, "block", "flesh_grass_top.png"),
-            "fleshland:block/flesh_soil": os.path.join(pack, "block", "flesh_soil.png"),
-            "fleshland:block/flesh_grass_side": os.path.join(pack, "block", "flesh_grass_side.png"),
+            "examplemod:block/example_grass_top": os.path.join(pack, "block", "example_grass_top.png"),
+            "examplemod:block/example_soil": os.path.join(pack, "block", "example_soil.png"),
+            "examplemod:block/example_grass_side": os.path.join(pack, "block", "example_grass_side.png"),
         },
     )
 
@@ -168,10 +168,10 @@ def main():
         out, "block_cross",
         {
             "parent": "block/cross",
-            "textures": {"cross": "fleshland:block/flesh_tendril"},
+            "textures": {"cross": "examplemod:block/example_tendril"},
             "_elements": CROSS_ELEMENTS,
         },
-        {"fleshland:block/flesh_tendril": os.path.join(pack, "block", "flesh_tendril.png")},
+        {"examplemod:block/example_tendril": os.path.join(pack, "block", "example_tendril.png")},
         parent_override={
             "block/cross": {"textures": {"particle": "#cross"},
                             "elements": CROSS_ELEMENTS},

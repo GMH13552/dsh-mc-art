@@ -24,7 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TOOL = os.path.join(HERE, "mcart_extract_block.py")
 
 # The installation the real-jar tests read.  Absent -> those tests skip.
-REAL_ROOT = "/mnt/c/Users/GMH13/Release 2.8.3/.minecraft"
+REAL_ROOT = os.environ.get("MCART_TEST_MINECRAFT", "")
 REAL_VERSION = "1.12.2-Forge_14.23.5.28641"
 REAL_VANILLA_JAR = os.path.join(REAL_ROOT, "versions", REAL_VERSION, REAL_VERSION + ".jar")
 REAL_MOD_JAR = os.path.join(REAL_ROOT, "versions", REAL_VERSION, "mods", "[虚无世界] AoA3-3.3.6.jar")
@@ -32,7 +32,7 @@ REAL_MOD_JAR = os.path.join(REAL_ROOT, "versions", REAL_VERSION, "mods", "[虚�
 PNG = b"\x89PNG\r\n\x1a\n" + b"pretend pixels"
 
 # The live project pack, for the multi-root check against a real vanilla parent.
-PROJECT_PACK = "/home/gmh/mc-art/eyeball_tree/pack"
+PROJECT_PACK = os.environ.get("MCART_TEST_PACK", "")
 
 
 # Real-jar checks skip when this machine does not have that installation.
@@ -703,7 +703,7 @@ def test_real_vanilla_blocks_have_chinese_names():
 
 
 @needs_real
-@pytest.mark.skipif(not os.path.isfile(REAL_MOD_JAR), reason="没有 AoA3")
+@pytest.mark.skipif(not os.path.isfile(REAL_MOD_JAR), reason="这台机器上没有那个模组 jar")
 def test_real_mod_block():
     out = run("--root", REAL_ROOT, "--block", "aoa3:achony_log")
     assert "error" not in out, out

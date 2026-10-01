@@ -2535,6 +2535,10 @@ def main(argv):
             # 少了这个键就是 KeyError —— 抽取器一崩，所有用到它的门禁（refs/multipart/
             # icon/engine）全部变红，而错误信息只写着"扫描脚本退出码 1"。
             "models": [],
+            # `--textures`：项目的模型直接引用原版贴图（`"texture": "block/ladder"`）时，
+            # 面板要把那个 PNG 从参考目录的 jar 里现取回来，否则那几个面会被静默丢掉、
+            # 屏幕上只剩一片空白。和 `models` 一样，键必须在默认值里。
+            "textures": [],
             "list": False, "probe": False, "icons": None, "namespaces": False,
             "variant": None, "kind": "block", "codeBlocks": False, "limit": None,
             "item": None, "items": None}
@@ -2574,6 +2578,9 @@ def main(argv):
         elif token == "--model" and index + 1 < len(argv):
             args["models"] = [name for name in argv[index + 1].split(",") if name]
             index += 2
+        elif token == "--textures" and index + 1 < len(argv):
+            args["textures"] = [name for name in argv[index + 1].split(",") if name]
+            index += 2
         elif token == "--kind" and index + 1 < len(argv):
             args["kind"] = argv[index + 1]
             index += 2
@@ -2599,6 +2606,38 @@ def main(argv):
 
     if args["namespaces"]:
         return namespaces(root, args["version"])
+
+    if args["textures"]:
+        # 只取**贴图**，不取方块：项目的模型常常直接引用原版贴图
+        # （`"textures": {"texture": "block/ladder"}` —— 裸名按 Minecraft 规则是
+        # `minecraft:block/ladder`）。宿主那边 `texturePath()` 在项目包里找不到时，
+        # 走这一条去参考目录的 jar 里把 PNG 现取回来；取不到的面会被静默丢掉，
+        # 屏幕上就是一片空白（用户实测的 `mist_ladder`）。
+        #
+        # 复用 `collect_texture_payload`：动画（mcmeta）的处理在那一份里，两份实现会漂移。
+        providers, detail = build_providers_multi(args["roots"], args["version"])
+        if providers is None:
+            return {"error": detail["error"]}
+        repository = Repository(providers)
+        out_textures, out_files, out_animations, missing = {}, {}, {}, []
+        for reference in args["textures"]:
+            namespace, _path = split_ref(reference, "minecraft")
+            # `namespace_chain` 会先试它自己、再退回 minecraft —— 手写的包把裸名当
+            # 自己的命名空间，原版贴图又只可能在 minecraft 里，两种都要认。
+            textures, files, _animated, animations, missing_textures, _sources = collect_texture_payload(
+                repository, namespace, [reference], {reference: reference}, animate=True)
+            if not textures:
+                missing.extend(missing_textures or [reference])
+                continue
+            out_textures.update(textures)
+            out_files.update(files)
+            out_animations.update(animations)
+        if not out_textures:
+            return {"error": "一个贴图都没取到：" + ",".join(args["textures"]),
+                    "missing": missing[:8], "root": root}
+        return {"textures": out_textures, "textureFiles": out_files, "animations": out_animations,
+                "missing": missing[:8], "requested": args["textures"], "roots": args["roots"],
+                "version": detail.get("version"), "shape": detail.get("shape")}
 
     if args["models"]:
         # 只取模型链本身，不取方块：面板遇到"项目自己的模型继承了原版母模型，而内置表里

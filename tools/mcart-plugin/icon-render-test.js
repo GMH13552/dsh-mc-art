@@ -29,12 +29,51 @@ const { handlers } = require('./run.js')
 
 const CLIENT = process.env.MCART_CLIENT || nodePath.join(__dirname, 'client.js')
 const REPO = nodePath.resolve(__dirname, '..', '..')
-const PROJECT = process.env.MCART_PROJECT || 'fleshland'
+const FAULT = process.argv.includes('--fault')
+
+// **自包含夹具**，不依赖任何本地美术工程。
+//
+// 原来这里读的是作者机器上的 `examplemod`（gitignore 的、全新 clone 上没有），于是
+// "项目里的物品模型会不会画歪"这条在别人机器上**必红** —— 那正是"别人拿到不能用"。
+// 现在自己造一个小工程：一个正常的方块物品（parent 链上有 `display.gui`）和一个
+// 花物品（`item/generated`）。`--fault` 时再塞一个"物品模型指向没有 display 的几何模型"
+// 的坏物品，用来证明这条断言真的会红。
+const WORK = nodePath.join(REPO, 'tools', 'mcart-plugin', '.icon-render-fixture')
+const PROJ = 'proj'
+const NS = 'testicons'
+const TINY_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
+
+function buildFixture(withCrippled) {
+  nodeFs.rmSync(WORK, { recursive: true, force: true })
+  const base = nodePath.join(WORK, PROJ)
+  const assets = nodePath.join(base, 'pack', 'assets', NS)
+  const put = (relative, body) => {
+    const target = nodePath.join(assets, relative)
+    nodeFs.mkdirSync(nodePath.dirname(target), { recursive: true })
+    nodeFs.writeFileSync(target, typeof body === 'string' ? body : JSON.stringify(body))
+  }
+  const png = Buffer.from(TINY_PNG, 'base64')
+  put('textures/block/solid.png', png)
+  put('textures/block/flower.png', png)
+  put('blockstates/solid.json', { variants: { '': { model: NS + ':block/solid' } } })
+  put('models/block/solid.json', { parent: 'block/cube_all', textures: { all: NS + ':block/solid' } })
+  // 有 elements、**没有** display 的几何（花就是这一种）。
+  const faces = {}
+  for (const face of ['north', 'south']) faces[face] = { texture: '#cross' }
+  put('models/block/flower.json', { textures: { cross: NS + ':block/flower' },
+    elements: [{ from: [0, 0, 0], to: [16, 16, 0], shade: false, faces: faces }] })
+  put('models/item/good_block.json', { parent: NS + ':block/solid' })
+  put('models/item/flower_item.json', { parent: 'item/generated', textures: { layer0: NS + ':block/flower' } })
+  if (withCrippled) put('models/item/cross_flower.json', { parent: NS + ':block/flower' })
+  nodeFs.writeFileSync(nodePath.join(base, 'mc-art.atlas.json'),
+    JSON.stringify({ schema: 'mc-art.atlas/1', namespace: NS, biomes: [], structures: [], entities: [], blocks: [] }))
+}
 
 let failures = 0
+const failedLabels = []
 function check(name, ok, detail) {
   if (ok) console.log('  OK   ' + name)
-  else { failures += 1; console.log('  FAIL ' + name + (detail === undefined ? '' : '  ← ' + detail)) }
+  else { failures += 1; failedLabels.push(name); console.log('  FAIL ' + name + (detail === undefined ? '' : '  ← ' + detail)) }
 }
 
 /** The number is the evidence, so it is printed whether the check passes or not. */
@@ -162,18 +201,20 @@ async function main() {
   check('注入故障（drawItemIcon 不带标记）时图标立刻变歪',
     bad.ratio > 1.1, '最宽/最窄 = ' + bad.ratio.toFixed(2))
 
-  console.log('--- 项目里的物品模型会不会在游戏里画歪')
-  const root = REPO
+  console.log('--- 项目里的物品模型会不会在游戏里画歪（自包含夹具，不依赖本地工程）')
+  buildFixture(FAULT)
+  const root = WORK
   const scan = await handlers['atlas.scan']({ root: root })
-  const project = (scan.projects || []).filter((entry) => entry.id === PROJECT)[0]
+  const project = (scan.projects || []).filter((entry) => entry.id === PROJ)[0]
   if (project === undefined) {
-    check('找到项目 ' + PROJECT, false, '扫描结果里没有它')
+    check('找到夹具工程 ' + PROJ, false, JSON.stringify(scan).slice(0, 160))
   } else {
-    const list = await handlers['atlas.refItems']({ root: root, project: PROJECT,
+    const list = await handlers['atlas.refItems']({ root: root, project: PROJ,
       source: 'project', namespace: project.namespace })
     const facts = (list.items || []).filter((entry) => entry.parentOnly !== true)
-    check('拿到 ' + PROJECT + ' 的物品清单', facts.length > 0, String(facts.length) + ' 个')
-    const page = await handlers['atlas.itemIcons']({ root: root, project: PROJECT, source: 'project',
+    check('拿到夹具工程的物品清单', facts.length > 0, String(facts.length) + ' 个：'
+      + facts.map((entry) => entry.id).join('、'))
+    const page = await handlers['atlas.itemIcons']({ root: root, project: PROJ, source: 'project',
       namespace: project.namespace, items: facts.map((entry) => entry.id) })
     const crippled = []
     const counted = { flat: 0, iso: 0, none: 0 }
@@ -195,8 +236,26 @@ async function main() {
       crippled.length === 0,
       crippled.length === 0 ? '' : crippled.join('、')
         + ' ← 把 models/item/<名字>.json 改成 item/generated（layer0 指向那张贴图）')
+    console.log(FAULT
+      ? '      （--fault：夹具里故意塞了 cross_flower，上面那条必须红）'
+      : '      （夹具只有 good_block 与 flower_item，正常时必须全绿）')
   }
 
+  if (FAULT) {
+    // 故障注入：夹具里多了一个"物品模型指向没有 display 的几何模型"的坏物品，那条必须红。
+    // （上面两条 `注入故障（…）` 是**自证型**断言：它们本来就在量为注入的客户端故障确实
+    // 会破坏测量，所以两种模式下都该是绿的，不算在这里。）
+    const expectRed = ['没有「物品模型指向没有 display 的几何模型」的物品']
+    const missed = expectRed.filter((label) => failedLabels.indexOf(label) < 0)
+    console.log('--- 故障注入结果：' + failures + ' 条断言变红')
+    console.log('    变红的：' + (failedLabels.join(' | ') || '（一条都没有）'))
+    if (missed.length > 0) {
+      console.log('  FAIL 故障注入没有让这些断言变红（门禁对它们失效）：' + missed.join(' / '))
+      process.exit(1)
+    }
+    console.log('全部通过（故障注入下这些断言确实会红）')
+    return 0
+  }
   console.log(failures === 0 ? '全部通过' : (failures + ' 项失败'))
   return failures
 }

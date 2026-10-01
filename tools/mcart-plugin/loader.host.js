@@ -10,7 +10,14 @@
 // Approving this package approves that arrangement, not one frozen copy of the
 // code -- a grant here means "run the files", so an edit to those files takes
 // effect the next time the package is activated.
-const MCART_HOME = '/home/gmh/mc-art/tools/mcart-plugin'
+//
+// This is a TRACKED, PUBLIC file, so the committed value must be a neutral
+// placeholder -- never a real machine path (that leaks somebody's home directory
+// into the repository, and it is wrong for everyone else anyway).
+// `install.mjs` rewrites this line to the local clone when you run it, and the
+// shipped panel does not use this file at all (the npm package has a real
+// `cordis.patch.yml`); this is only the dynamic-plugin dev path.
+const MCART_HOME = '/path/to/dsh-mc-art/tools/mcart-plugin'
 
 return {
   async apply(ctx) {

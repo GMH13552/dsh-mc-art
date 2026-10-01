@@ -15,8 +15,8 @@ findScanner、PYTHON_CANDIDATES、resolvePython、itemRoots、roots）——整�
 所以这条门禁只看一件事：**声明的名字有没有少**。它比对
 `tools/mcart-plugin/<half>.js` 与 `panel/lib/<half>.js` 里内嵌的那份字符串。
 
-   python3 tools/strip_gate.py          # 两半都查
-   python3 tools/strip_gate.py --fault  # 证明这条检查能红：同一份夹具，老规则会吞、新规则不会
+   python tools/strip_gate.py          # 两半都查
+   python tools/strip_gate.py --fault  # 证明这条检查能红：同一份夹具，老规则会吞、新规则不会
 """
 import json
 import os
@@ -29,6 +29,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import strip_comments  # noqa: E402  (同一目录，脚本式导入)
+
+# Windows：stdout 默认按控制台代码页（本机 cp936）编码，中文输出在 pwsh / CI 里会变成乱码。
+# 这些门禁的输出是给人看的，统一钉成 UTF-8（Linux/macOS 上本来就一致，无副作用）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError, OSError):
+        pass
 
 # 声明：`function name` / `const|let|var name =`（顶层和函数内都算——函数里的
 # 局部 const 被吞掉同样是坏函数，`roots` 那次就是这么丢的）。

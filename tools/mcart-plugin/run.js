@@ -24,11 +24,41 @@ const fsService = {
   async writeText(p, text) { nodeFs.mkdirSync(nodePath.dirname(p), { recursive: true }); nodeFs.writeFileSync(p, text); return {} },
 }
 
+// DSH 换 shell 是**按平台**的：POSIX 上是 `bash -c`，Windows 上是
+// `pwsh -NoLogo -NoProfile -NonInteractive -Command <整串>`。门禁的桩必须跟真宿主演同一个形状：
+// 在 Windows 上给它一个 `bash -c` 桩，等于把宿主扔进一个 WSL 世界 —— 它会"找到" WSL 的
+// python3，然后把 `C:\...` 拼进 `/mnt/c/...` 的命令里（实测：`python3: can't open file
+// '/mnt/c/.../C:\...\panel/python/mcart_extract_block.py'`），于是所有要跑 Python 的门禁
+// （icon / engine / …）红得莫名其妙，而真机上的宿主根本不是那样。
+// `MCART_FAKE_SHELL=wsl` 强制退回旧形状：只用来证明"桩形状"这条断言能红。
+const SHELL_SHAPE = process.env.MCART_FAKE_SHELL === 'wsl'
+  ? 'posix'
+  : (process.platform === 'win32' ? 'pwsh' : 'posix')
+
+/** 本机那个真的 powershell.exe（原生 Windows 走绝对路径，省得 PATH 里没有）。 */
+function windowsPowerShellForTest() {
+  const root = (process.env.SystemRoot || 'C:/Windows')
+  const candidates = [
+    root + '\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  ]
+  for (const candidate of candidates) {
+    try { if (nodeFs.existsSync(candidate)) return candidate } catch (e) { /* 试下一个 */ }
+  }
+  return 'powershell.exe'
+}
+
 const shellService = {
+  shape: SHELL_SHAPE,
   resolve(spec) { return spec },
   async run(spec) {
     const started = Date.now()
-    const out = cp.spawnSync('bash', ['-c', spec.command], { encoding: 'utf8', timeout: spec.timeoutMs || 60000, maxBuffer: 16 << 20 })
+    const out = SHELL_SHAPE === 'pwsh'
+      ? cp.spawnSync(windowsPowerShellForTest(),
+        ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', spec.command],
+        { encoding: 'utf8', timeout: spec.timeoutMs || 60000, maxBuffer: 16 << 20 })
+      : cp.spawnSync('bash', ['-c', spec.command],
+        { encoding: 'utf8', timeout: spec.timeoutMs || 60000, maxBuffer: 16 << 20 })
     const ms = Date.now() - started
     if (process.env.MCART_SHOW_SHELL === '1') process.stderr.write('  [shell ' + ms + 'ms] ' + spec.command.slice(0, 100) + '\n')
     return { exitCode: out.status === null ? 124 : out.status, stdout: { text: out.stdout || '' }, stderr: { text: out.stderr || '' } }
@@ -102,14 +132,14 @@ function buildHandlers(options) {
 }
 
 const handlers = buildHandlers({ fs: fsService, shell: shellService })
-module.exports = { handlers, buildHandlers, fsService, shellService,
+module.exports = { handlers, buildHandlers, fsService, shellService, shellShape: SHELL_SHAPE,
   localFsShim: require('./local-fs-shim.js').makeLocalFs() }
 
 if (require.main === module) {
   ;(async () => {
     const target = process.argv[2] || ''
     console.log('--- atlas.settings（未设置参考目录）')
-    let r = await handlers['atlas.settings']({ root: '/home/gmh/mc-art', project: 'fleshland' })
+    let r = await handlers['atlas.settings']({ root: process.cwd(), project: 'examplemod' })
     console.log('  directory=', JSON.stringify(r.directory), ' shape=', JSON.stringify(r.shape), ' scanError=', r.scanError)
     console.log('  scanner=', r.scanner)
     console.log('  detected=', r.detected)
@@ -118,11 +148,11 @@ if (require.main === module) {
     if (target !== '') {
       console.log('--- atlas.settings（参考目录=' + target + '）')
       const t0 = Date.now()
-      r = await handlers['atlas.settings']({ root: '/home/gmh/mc-art', project: 'fleshland', directory: target })
-      r = await handlers['atlas.saveSettings']({ root: '/home/gmh/mc-art', project: 'fleshland', directory: target, includeGenerated: true, includeMods: true, mods: {} })
+      r = await handlers['atlas.settings']({ root: process.cwd(), project: 'examplemod', directory: target })
+      r = await handlers['atlas.saveSettings']({ root: process.cwd(), project: 'examplemod', directory: target, includeGenerated: true, includeMods: true, mods: {} })
       console.log('  save:', JSON.stringify(r))
       const t1 = Date.now()
-      r = await handlers['atlas.settings']({ root: '/home/gmh/mc-art', project: 'fleshland' })
+      r = await handlers['atlas.settings']({ root: process.cwd(), project: 'examplemod' })
       const t2 = Date.now()
       console.log('  directory=', r.directory)
       console.log('  shape=', r.shape, '| 贴图', r.textures, '| 来源', (r.sources || []).length)

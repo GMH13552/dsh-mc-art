@@ -221,3 +221,53 @@ gen_b                              # format
 src_a                              # format
 src_b                              # format
 asset_groups                       # format
+
+# ── 第三轮：art-engine 新加的字段（公开 API，理由 engine）─────────────────
+# 这一组是 art-engine 正在动的 `mc_art/*.py` 的字段名；它们会随 skill 一起发出去，
+# 属于公开代码的 API，不是作者项目名。**字段还会增**，发布前要拿那一次的清单复核。
+accent_budget          # engine：强调色预算（plan/契约字段）
+accent_colors          # engine：强调色清单（契约字段）
+accent_edge_max        # engine：强调色贴边像素上限（度量阈值）
+accent_min_cluster     # engine：强调色最小簇（度量阈值）
+accent_tolerance       # engine：强调色容差（度量阈值）
+band_maximum_isolated  # engine：色带允许的最大孤立像素比（度量阈值）
+edge_max               # engine：边缘像素上限（度量阈值）
+family_consistency     # engine：族一致性指标名
+flat_tolerance         # engine：平坦区域容差
+hue_distance_limit     # engine：色相距离上限
+isolated_share         # engine：孤立像素占比指标名
+minimum_cluster        # engine：最小簇像素数
+
+# 同一轮的其余记号（同一个来源，逐条写理由；**没有**按前缀整类放行）
+accent_cleanup             # engine：强调色清理（字段/开关）
+accent_hue_span            # engine：强调色色相跨度
+alpha_overlap              # engine：alpha 重叠判定
+below_min                  # engine：低于下限的判定名
+chroma_span                # engine：彩度跨度指标
+deep_1                     # engine：深浅分档名（deep_N）
+deep_2                     # engine：深浅分档名（deep_N）
+deep_3                     # engine：深浅分档名（deep_N）
+deep_4                     # engine：深浅分档名（deep_N）
+deep_5                     # engine：深浅分档名（deep_N）
+face_all                   # engine：面选择值（cube_all 那种 JSON 字段）
+fault_demo                 # engine：示例族的演示入口（example_family/fault_demo.py）
+hue_span                   # engine：色相跨度指标
+iron_ingot                 # vanilla：原版物品 id（演示输入用它）
+raw_ore                    # vanilla：原版矿石方块/贴图后缀
+reference_selection        # engine：参考选择字段
+shade_mode                 # engine：明暗模式字段
+style_report               # engine：样式报告的输出名
+top_left_to_bottom_right   # engine：填充方向值
+uv_regions                 # engine：UV 区域字段
+validate_style             # engine：样式校验入口
+value_span                 # engine：明度跨度指标
+
+# ── 第四轮：art-engine 收尾（style.py 的度量字段 + 文档里的通用名词）──────────
+# 这一轮是**已经推到最后一次**的清单（克隆 7e95b70，`MC_ART_SKILL_DIR` 指过去跑出来的）。
+# 与第三轮同一条规矩：逐条写理由，不按前缀整类放行。
+band_maximum_step      # engine：色带相邻档位的最大步长（度量阈值）
+maximum_isolated       # engine：允许的最大孤立像素比（度量阈值）
+maximum_step           # engine：允许的最大明度步长（度量阈值）
+mean_neighbour_step    # engine：相邻像素平均步长（度量指标）
+PermissionError        # api：Python 内置异常类（README 解释 Windows 权限坑）
+PowerShell             # format：Windows 的 shell 名（与 bash 并列出现）

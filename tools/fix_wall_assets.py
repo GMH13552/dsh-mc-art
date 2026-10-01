@@ -24,9 +24,9 @@
 所以本脚本做的事就是：读原版那四个文件 → 把名字换成你的墙、把 wall 贴图换成你的贴图
 → 写进项目的每一棵树（pack/、src/main/resources/、build/resources/main/，只写已经存在的）。
 
-  python3 tools/fix_wall_assets.py --project <项目目录>
-  python3 tools/fix_wall_assets.py --project <项目目录> --check    # 只报，不改
-  python3 tools/fix_wall_assets.py --project <项目目录> --jar <jar>
+  python tools/fix_wall_assets.py --project <项目目录>
+  python tools/fix_wall_assets.py --project <项目目录> --check    # 只报，不改
+  python tools/fix_wall_assets.py --project <项目目录> --jar <jar>
 
 参考目录默认从 <项目>/mc-art.settings.json 的 reference.directory 读（面板里设置的那个），
 Windows 路径会翻译成 WSL 的 /mnt/<盘符>/…。

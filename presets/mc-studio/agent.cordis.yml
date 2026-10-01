@@ -37,24 +37,35 @@
       - 工作区就是 {{cwd}}：路径一律用相对路径，**绝不写死绝对路径**（这套东西别人也在用，
         各人的目录不同）。面板与工具在本仓库（`tools/mcart-plugin/`、`panel/`）；
         美术引擎是另一个仓库的 `mc-art` skill。
-      - 动手前先读 `mc-mod`（插件说明书 / 七阶段通用流程 / 版本矩阵 / 踩过的坑）；
-        碰像素之前先读 `mc-art`（确定性美术引擎）。
-      - **面板是以"装好的包"形式来的**（`dsh-mc-art-panel`，装进 profile 后每次开页面都在）。
-        会话开始时先确认它在不在（右侧栏该有「MC 资产」）。不在就按顺序做两件事：
-        ① 让用户跑一次 `install.bat`（Windows）或 `sh install.sh`——它会顺手把面板装进 profile；
-        ② 或直接装发布好的包，然后重启 DSH：
-           `dsh plugin --profile web add dsh-mc-art-panel`
-           （国内加 `--registry=https://registry.npmmirror.com/`；不想依赖 npm 就用 Release 里的
-           tarball：https://github.com/GMH13552/dsh-mc-art/releases/latest/download/dsh-mc-art-panel.tgz ）
-        **不要**在本模式里用 Cordis 工具动态发射面板：这个模式刻意不带 `tool-cordis`
-        （那个工具集会占用进程级的 Cordis inspect provider，和另一个用着它的会话直接冲突，
-        冲突时是整行挂载失败）。面板源码在 tools/mcart-plugin/，装成包的那份由 panel/build.mjs 生成。
+      - 先分清谁判断什么：**美丑、参考选哪张、族内边界、强调与命名 → 你判断**；
+        **像素度量、jar 扫描、退出码、可重复的光栅化 → 交给脚本/引擎**。别把审美推给脚本
+        （它只会取第一张名字对得上的参考，深渊石就参考成了浅层石），也别用眼睛代替度量。
+      - 动手前先读 `mc-mod`（说明书 / stage 0–7 通用流程 / 版本矩阵 / 美术规程 /
+        Windows 注意事项 / 踩过的坑）；碰像素之前先读 `mc-art`（确定性美术引擎）。
+      - **装一个 npm 包就全有**：`dsh-mc-art-panel` 同时带着面板 + 本模式 + 两个 skill。
+        `dsh plugin --profile <profile> add dsh-mc-art-panel`，重启 DSH → 右侧栏出现
+        「MC 资产」、模式名单里出现本模式（profile 名通常是 `web`；桌面端是 `desktop`）。
+        国内可加 `--registry=https://registry.npmmirror.com/`；不想依赖 npm 就用 Release 里
+        那份不带版本号的 tarball：
+        https://github.com/GMH13552/dsh-mc-art/releases/latest/download/dsh-mc-art-panel.tgz
+        改面板源码时才用本地目录 `dsh plugin --profile <profile> add <本仓库>/panel`。
+        **不需要**再手工往 `~/.dsh` 拷 skill 或 preset（`install.bat` / `sh install.sh` 只是
+        开发与离线时的备选）；包里的模式用 baseUrl 相对定位自带的 `skills/`，装到哪都成立。
+      - **不要**在本模式里用 Cordis 工具动态发射面板：这个模式刻意不带 `tool-cordis`
+        （那个工具集注册的 Host Cordis inspect provider 是**进程级**的，和另一个已经用着它的
+        会话直接冲突，冲突时是整行挂载失败）。面板由装好的包提供。
       - 想改面板行为：改 `tools/mcart-plugin/{host,client}.js`（唯一的源码），跑 `node panel/build.mjs`
         重新生成 `panel/lib/`，再重装/刷新。**不要**手改 `panel/lib/` 里的生成物（有漂移门禁挡着）。
-      - 判定：`python tools/mcmod_gametest.py`（退出码 = 失败的必要测试数，
-        服务端无窗口、跑完自动退出）；改完任何检查再跑一次 `--fault`，证明它**还会说"不"**。
+      - 判定：`python tools/mcmod_gametest.py`（退出码 = 失败的必要测试数，服务端无窗口、
+        跑完自动退出）。Windows 上 Python 通常叫 `python` 或 `py -3`；`python3` 常是 0 字节的
+        Store 存根（退出码 9009，无输出）——判据是"**真跑一次**"，不是"命令在不在"。
+        改完任何检查再跑一次 `--fault`，证明它**还会说"不"**。
       - 跨版本：先看 `mc-mod` 的版本矩阵——**1.12.2 没有 GameTest**，只有"能编译、服务端起来、
-        日志干净"；能判行为的版本从 1.17 起，Forge 要 39.0.88+。
+        日志干净"；GameTest 从 1.17 起，Forge 侧要 1.18.1+ / 39.0.88+。**怎么查而不是猜**
+        写在 `mc-mod` 的 `references/versions.md`（读 `version.json`、`javap` 映射 jar）。
+      - 平台：**不需要 WSL**，Windows 原生与 POSIX 都支持。Windows 的差异（shell 是
+        PowerShell 不是 bash、`.bat`/`.cmd` 用 CRLF、BOM 与 GBK 编码坑、含空格与中文的路径、
+        JDK 要 17/21）见 `mc-mod` 的 `references/windows.md`。
 
 
 - id: agent-instructions

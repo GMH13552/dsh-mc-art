@@ -233,7 +233,7 @@ node panel/verify-build.mjs   # lib/ 与源码去注释后重新生成的结果�
 node panel/entry-test.mjs     # 两个入口真的加载/apply/派发；含一次真注入
 node panel/ui-test.mjs        # 假 React 真渲染设置卡并按文字点按钮（--fault 证明能红）
 node tools/mcart-plugin/roots-test.js  # 参考目录检测按平台给候选（--fault 证明老逻辑找不到）
-python3 tools/strip_gate.py   # 剥离器不许吞代码：声明的名字一个都不能少（--fault 证明能红）
+node ../tools/python_env.mjs ../tools/strip_gate.py   # 剥离器不许吞代码：声明的名字一个都不能少（--fault 证明能红）
 node panel/serve-check.mjs --url http://127.0.0.1:3099 --token <token>   # 真送达：对着跑着的实例查
 ```
 

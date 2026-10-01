@@ -15,7 +15,13 @@ const nodePath = require('path')
 const cp = require('child_process')
 const { runPython } = require('./python-bin.js')
 
-const { handlers } = require('./run.js')
+// `subprocess` 那条缝必须给：原生 Windows 上 `run.js` 默认的 shell 桩是 `bash -c`
+// （WSL 的 bash），宿主会拿它去跑 `python3`，Windows 路径被 WSL 解成
+// `/mnt/c/...\tools\...` 而整条参考链红掉 —— 那不是被测代码的毛病。真桌面端给的也是
+// `ctx.subprocess`（argv，不经 shell），所以这里按**真实形态**驱动。
+const { buildHandlers, fsService } = require('./run.js')
+const { realSubprocess } = require('./model-test.js')
+const handlers = buildHandlers({ fs: fsService, subprocess: realSubprocess() })
 
 const REPO = nodePath.resolve(__dirname, '..', '..')
 const WORK = nodePath.join(REPO, 'tools', 'mcart-plugin', '.mp-fixture')

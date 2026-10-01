@@ -21,8 +21,8 @@ const nodeFs = require('fs')
 const nodePath = require('path')
 const { handlers } = require(process.env.MCART_RUN || nodePath.join(__dirname, 'run.js'))
 
-const ROOT = '/home/gmh/mc-art'
-const PROJECT = 'fleshland'
+const ROOT = process.argv[2] || process.cwd()
+const PROJECT = 'examplemod'
 const SETTINGS = nodePath.join(ROOT, PROJECT, 'mc-art.settings.json')
 const settingsBefore = nodeFs.readFileSync(SETTINGS, 'utf8')
 
@@ -75,7 +75,7 @@ async function requireVersion() {
   check('坐标贴在 [0,0,0]', quads.every((q) => q.p.every((p) => p.every((v) => v >= -0.001 && v <= 1.001))))
 
   console.log('--- 2. 项目自己的方块没被这条新路弄坏')
-  r = await handlers['atlas.preview']({ root: ROOT, project: PROJECT, block: 'flesh_soil', at: [0, 0, 0] })
+  r = await handlers['atlas.preview']({ root: ROOT, project: PROJECT, block: 'example_soil', at: [0, 0, 0] })
   check('项目方块仍然能预览', r.error === undefined && (r.quads || []).length > 0, r.error || (r.quads || []).length + ' 面')
   check('项目方块走文件通道', (r.textureIds || []).every((id) => id.slice(0, 4) !== 'ref:'), JSON.stringify(r.textureIds))
 
@@ -114,12 +114,12 @@ async function requireVersion() {
 
   console.log('--- 7. 结构里混用原版方块，真的渲染出来')
   const cells = [
-    { block: 'flesh_soil', at: [0, 0, 0] },
+    { block: 'example_soil', at: [0, 0, 0] },
     { block: 'minecraft:oak_log', at: [1, 0, 0] },
     { block: 'aoa3:achony_log', at: [2, 0, 0] },
     { block: 'minecraft:stone', at: [0, 1, 0] },
   ]
-  r = await handlers['atlas.scene']({ root: ROOT, project: PROJECT, kind: 'biome', id: 'fleshland', cells: cells })
+  r = await handlers['atlas.scene']({ root: ROOT, project: PROJECT, kind: 'biome', id: 'examplemod', cells: cells })
   check('没有报错', r.error === undefined, r.error)
   check('四个方块都画出来了', (r.quads || []).length >= 24, (r.quads || []).length + ' 面')
   const palette = (r.palette || []).map((p) => p.block + '=' + p.label)
@@ -129,7 +129,7 @@ async function requireVersion() {
     Object.keys(r.textures || {}).length + '/' + (r.textureIds || []).length)
 
   console.log('--- 8. 删除方块后缓存要释放，再问一次要能重新抽出来')
-  let released = await handlers['atlas.releaseRefs']({ keep: ['fleshland:flesh_soil'] })
+  let released = await handlers['atlas.releaseRefs']({ keep: ['examplemod:example_soil'] })
   check('释放掉了东西', released.dropped >= 3, JSON.stringify(released))
   r = await handlers['atlas.preview']({ root: ROOT, project: PROJECT, block: 'minecraft:oak_log', at: [0, 0, 0] })
   check('释放后还能重新抽出来', r.error === undefined && (r.quads || []).length > 0, r.error || (r.quads || []).length + ' 面')
@@ -142,7 +142,7 @@ async function requireVersion() {
   r = await handlers['atlas.preview']({ root: ROOT, project: PROJECT, block: 'minecraft:oak_log', at: [0, 0, 0] })
   check('明说没设置参考目录', r.error !== undefined && r.error.indexOf('参考目录') >= 0, r.error)
   await handlers['atlas.saveSettings']({
-    root: ROOT, project: PROJECT, directory: '/mnt/c/Users/GMH13/Release 2.8.3/.minecraft',
+    root: ROOT, project: PROJECT, directory: process.env.MCART_TEST_MINECRAFT || '',
     includeGenerated: true, includeMods: true, mods: {},
   })
   r = await handlers['atlas.preview']({ root: ROOT, project: PROJECT, block: 'minecraft:oak_log', at: [0, 0, 0] })

@@ -6,8 +6,17 @@
  * —— 因为 `lib/` 是由源码逐字生成的，而 `preset/` 是另一个仓库的快照，**发布前没人扫一遍**。
  * npm 的版本不能改，所以这条只能靠"发之前拦住"。
  *
- *   node check-private.mjs            # 扫 lib/ preset/ 与几个根文件
- *   node check-private.mjs --fault    # 塞一个带标记的临时文件，要求它红
+ *   node check-private.mjs                        # 扫 lib/ preset/ python/ 与几个根文件
+ *   node check-private.mjs --fault                # 塞一个带标记的临时文件，要求它红
+ *   node check-private.mjs --require-generated    # **发布**用：缺生成物就非零退出
+ *
+ * 为什么有 `--require-generated`：`panel/preset/` 是 gitignore 的**生成物**（`panel/vendor.mjs`
+ * 或 `build.mjs` 生成），全新 clone 上不存在。以前 `walk()` 直接 `statSync` 一个不存在的根，
+ * 于是整个门禁变成一段 ENOENT 未捕获异常 —— 既不是"通过"也不是"发现私有内容"。
+ * 现在的规矩：
+ *   * 缺某个根 → 打印一行明确的"这一层**没扫**"，继续扫其它根（结论里也写清覆盖率缺口）；
+ *   * 发布流程用 `--require-generated`：缺生成物 / 缺随包的 mc-art skill 就**非零退出**，
+ *     绝不让"没扫到"伪装成"没问题"。
  *
  * 两类规则：
  *
@@ -25,6 +34,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isExampleAsset, isJunk, isSkipped } from './build.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 // `python/` 也要扫：随包发的引擎脚本是另一个仓库里来的，里面同样可能残留
@@ -32,8 +42,23 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOTS = ['lib', 'preset', 'python']
 const FILES = ['cordis.patch.yml', 'README.md', 'build.mjs', 'package.json']
 const FAULT = process.argv.includes('--fault')
+const REQUIRE_GENERATED = process.argv.includes('--require-generated')
 const PLANT = join(HERE, 'lib', '.private-fault.txt')
 const MARKER_FILE = join(HERE, 'private-markers.txt')
+
+/**
+ * `--require-generated` 时要逐条 stat 的随包内容。缺任何一条都是"发出去的包是残的"，
+ * 不能只靠"没扫到私有痕迹"就放行 —— 少一个 skill 的包同样扫不出私有痕迹。
+ */
+const REQUIRED_GENERATED = [
+  ['lib/index.js', '宿主入口（生成物）'],
+  ['lib/client.js', '客户端入口（生成物）'],
+  ['preset/mc-studio/preset.yml', '随包的「MC 模组工作室」模式'],
+  ['preset/mc-studio/skills/mc-mod/SKILL.md', '随包的 mc-mod skill'],
+  ['preset/mc-studio/skills/mc-art/SKILL.md', '随包的 mc-art skill（缺它 = 发出去的包少一个 skill）'],
+  ['python/mcart_scan_refs.py', '随包的扫描器'],
+  ['python/mcart_extract_block.py', '随包的提取器'],
+]
 
 // 第 1 类：通用形状。用正则，不用字面量——因为要描述的是"任何人的机器路径"。
 const PATTERNS = [
@@ -55,16 +80,33 @@ function privateMarkers() {
 
 const { markers, source } = privateMarkers()
 
+/** `--fault` 时被我们新建出来的根：结束后删掉，别给仓库留空目录。 */
+const createdRoots = []
 if (FAULT) {
   // 故障注入用第 3 类：一个只可能来自本机的路径，所以不靠词表也能证伪。
-  writeFileSync(PLANT, '参考 /home/someone-else/projects/demo 与 C:\\Users\\someone\\demo 两处\n')
+  try {
+    mkdirSync(join(HERE, 'lib'), { recursive: true })
+    writeFileSync(PLANT, '参考 /home/someone-else/projects/demo 与 C:\\Users\\someone\\demo 两处\n')
+  } catch (error) { /* lib 建不出来就算了，下面会报 */ }
   // 每个要扫的根都塞一份：少扫一个目录时，--fault 必须能说话。
   for (const root of ROOTS) {
+    const dir = join(HERE, root)
     try {
-      mkdirSync(join(HERE, root), { recursive: true })
-      writeFileSync(join(HERE, root, '.private-fault.txt'), '参考 /home/someone-else/projects/demo\n')
-    } catch (error) { /* 根不存在就算了，下面会报 */ }
+      if (!existsSync(dir)) { mkdirSync(dir, { recursive: true }); createdRoots.push(dir) }
+      writeFileSync(join(dir, '.private-fault.txt'), '参考 /home/someone-else/projects/demo\n')
+    } catch (error) { /* 根建不出来就算了，下面会报 */ }
   }
+  // 许可证那一条也要能红：往"会被发布"的位置塞一个假 png，形状就是源树里的
+  // `examples/example_family/refs/*`（实测那 4 张是 Mojang 原版贴图）。
+  try {
+    const fakeRefs = join(HERE, 'preset', 'mc-studio', 'skills', 'mc-art',
+      'examples', 'example_family', 'refs')
+    const missingDirs = []
+    let at = fakeRefs
+    while (!existsSync(at) && at !== dirname(at)) { missingDirs.push(at); at = dirname(at) }
+    for (const dir of missingDirs.reverse()) { mkdirSync(dir, { recursive: true }); createdRoots.push(dir) }
+    writeFileSync(join(fakeRefs, '.private-fault.png'), '假的 Mojang 素材（只用来证明这条门禁能红）\n')
+  } catch (error) { /* 建不出来就算了，下面会报 */ }
 }
 try {
   const hits = []
@@ -77,34 +119,105 @@ try {
     }
     return hits.length
   }
-  // 机器垃圾不进包，也不该拿它当"私有内容"证据：`__pycache__/*.pyc` 是 Python
-  // 跑过之后留下的编译产物（里面必然带着源码字符串），.git/node_modules 同理。
-  const JUNK = new Set(['__pycache__', '.git', 'node_modules', '.cache', '.pytest_cache'])
+  // "什么会发出去"只有一份判据：`panel/build.mjs` 的 isJunk / isSkipped / isExampleAsset。
+  // 这里**导入**它们，而不是再抄一份集合 —— 抄一份就等于允许两边漂移。
+  // （`.pytest-tmp/` 那次就是这么被抓到的：它里面是带作者机器路径的中间产物，
+  //   而 `examples/**/refs` 更严重：那是 Mojang 原版素材，随 MIT 的包再分发是许可问题。）
+  /** 发版物里**绝对不许出现**的东西（就算过滤器将来回退，这里也要拦一次）。 */
+  const FORBIDDEN = [
+    { label: 'Mojang 原版素材（examples/**/refs、examples/**/textures）—— 再分发是许可问题',
+      test: (rel) => isExampleAsset(rel) },
+    // 只在 preset/ 里判：`package.json:files` 对 `python/**` 明写了
+    // `!python/**/__pycache__` / `!python/**/*.pyc`（npm 打包会排掉），而 `preset/**` 没有
+    // 任何排除 —— `.pytest-tmp/` 就是这么发出去的。判据要对准"真的会发出去的东西"。
+    { label: 'preset/ 里的字节码缓存或 pytest 临时目录（npm 不会替你排掉 preset/**）',
+      test: (rel) => rel.startsWith('preset/') &&
+        (/(^|\/)__pycache__\//.test(rel) || /\.py[co]$/.test(rel) ||
+         /(^|\/)(\.pytest-tmp|\.pytest_cache)\//.test(rel)) },
+  ]
+  /** `python/` 下的字节码缓存：npm 排得掉，所以只提示（跑过引擎脚本就会长出来）。 */
+  const pythonCache = (rel) => rel.startsWith('python/') &&
+    (/(^|\/)__pycache__\//.test(rel) || /\.py[co]$/.test(rel))
+
+  /** 没扫到的层（不存在的根/文件）。绝不静默：结论里要写清缺口。 */
+  const missing = []
+  /** 包里出现了"绝不能发"的东西（过滤器回退 / 手工塞进来 / 旧生成物残留）。 */
+  const forbidden = []
+  /** 不会随包、但值得说一句的（python/ 下的缓存）。 */
+  const notices = []
   const walk = (path, label) => {
+    if (!existsSync(path)) { missing.push(label); return }
     if (statSync(path).isDirectory()) {
       for (const entry of readdirSync(path)) {
-        if (JUNK.has(entry)) continue
+        // `.git` / `node_modules` 整棵跳过（不进包，也没必要走一遍）；别的目录都走到文件级，
+        // 这样 FORBIDDEN 才能对"已经在包里的东西"说话。
+        if (entry === '.git' || entry === 'node_modules') continue
         walk(join(path, entry), label + '/' + entry)
       }
       return
     }
+    for (const rule of FORBIDDEN) {
+      if (rule.test(label)) { forbidden.push(label + ' ← ' + rule.label); return }
+    }
+    if (pythonCache(label)) notices.push(label)
+    if (isJunk(label) || isSkipped(label)) return
     scan(label, readFileSync(path, 'utf8'))
   }
   for (const root of ROOTS) walk(join(HERE, root), root)
   for (const file of FILES) walk(join(HERE, file), file)
+
+  for (const label of missing) {
+    console.log('  SKIP ' + label + ' 不存在 —— 这一层**没扫**' +
+      (label === 'preset'
+        ? '（它是生成物：先跑 `node panel/vendor.mjs` 或 `node panel/build.mjs`）'
+        : ''))
+  }
+  if (forbidden.length === 0) {
+    console.log('  OK   随包物里没有"绝不能发"的东西（Mojang 素材 / preset 里的字节码缓存 / pytest 临时目录）')
+  } else {
+    for (const hit of forbidden.slice(0, 20)) console.log('  FAIL 不该随包的东西在包里：' + hit)
+    console.log(`${forbidden.length} 处不该随包的内容 —— 拒绝发布（先跑 \`node panel/build.mjs\` 重新生成）`)
+    process.exitCode = 1
+  }
+  if (notices.length > 0) {
+    console.log(`  · ${notices.length} 个 python/ 下的字节码缓存（npm 的 files 排得掉，且 ` +
+      '`node panel/build.mjs` 会清掉）—— 例如 ' + notices[0])
+  }
   const coverage = PATTERNS.length + markers.length
   if (hits.length === 0) {
-    console.log(`  OK   要发的 ${ROOTS.join('/ ')} 与根文件里没有私有痕迹（` +
+    const scanned = ROOTS.filter((root) => !missing.includes(root))
+    console.log(`  OK   要发的 ${scanned.join('/ ')} 与根文件里没有私有痕迹（` +
       `${PATTERNS.length} 条通用规则` +
       (source === null
         ? '；**专属词表没配**，只跑了通用规则（要更严：设 MCART_PRIVATE_MARKERS 或写 panel/private-markers.txt）'
         : `；${markers.length} 条专属词表来自 ${source}`) + '）')
-    console.log('全部通过')
+    if (missing.length === 0 && forbidden.length === 0 && !REQUIRE_GENERATED) console.log('全部通过')
+    else if (missing.length > 0) console.log(`注意：有 ${missing.length} 层没扫到（见上面的 SKIP）—— 这份"没有私有痕迹"**不覆盖**它们。` +
+      '发布请用 `--require-generated`（缺生成物直接失败）。')
   } else {
     for (const hit of hits.slice(0, 20)) console.log('  FAIL ' + hit + `（命中规则：${coverage} 条在跑）`)
     console.log(`${hits.length} 处私有内容 —— 拒绝发布`)
     process.exitCode = 1
   }
+
+  // 发布路径的完整性门禁：缺生成物 / 缺随包的 skill —— 那是"发出去的包是残的"，
+  // 而"扫不出私有痕迹"完全不能排除这种情况。
+  if (REQUIRE_GENERATED) {
+    const absent = REQUIRED_GENERATED.filter(([relative]) => !existsSync(join(HERE, relative)))
+    if (absent.length === 0) {
+      console.log(`  OK   --require-generated：随包的 ${REQUIRED_GENERATED.length} 份内容都在` +
+        '（lib/ + preset/ + python/ + mc-mod skill + mc-art skill）')
+      if (hits.length === 0 && forbidden.length === 0) console.log('全部通过')
+    } else {
+      for (const [relative, why] of absent) console.log(`  FAIL 随包内容缺失：${relative}（${why}）`)
+      console.log(`${absent.length} 份该随包的内容不在 —— 拒绝发布` +
+        '（跑 `node panel/build.mjs --release` 生成；它会在缺 mc-art 克隆时硬失败）')
+      process.exitCode = 1
+    }
+  }
 } finally {
-  if (FAULT) for (const root of ROOTS) rmSync(join(HERE, root, '.private-fault.txt'), { force: true })
+  if (FAULT) {
+    for (const root of ROOTS) rmSync(join(HERE, root, '.private-fault.txt'), { force: true })
+    for (const dir of createdRoots) rmSync(dir, { recursive: true, force: true })
+  }
 }

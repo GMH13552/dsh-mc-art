@@ -1,22 +1,41 @@
-# 「MC 模组工作室」——桌面端那一代（0.2.0-rc.x）的预设写法。
+# 生成物：由 tools/gen_preset_patch.mjs 从 presets/mc-studio/{preset.yml,agent.cordis.yml} 生成。
+# **不要手改**；改预设请改那两份来源，然后 `node tools/gen_preset_patch.mjs --write`。
 #
-# 那一代不扫 `.agent-presets/` 目录：一个预设就是组合里的一行
-# （`@deepseek-ai/dsh-agent-preset`，config = {id,name,description,order,plugins}），
-# `plugins:` 里放这个人格要挂的行。我们的 npm 包把 WSL 那代写成目录
-# （`preset/mc-studio/`），这里把同一批行换成那一代的送达方式。
+# 这一份是给**桌面代**（dsh 0.2.0-rc.x）的：那一代不扫 .agent-presets 目录，
+# 一个预设就是组合里的一行（@deepseek-ai/dsh-agent-preset + config.plugins）。
+# 装 npm 包的方式已由包自己的 cordis.patch.yml 带这段（同一份生成物），
+# 这个文件是"不想装包、手工追加"时的等价物：把下面全部内容追加到
+# <你的 profile>/cordis.patch.yml 末尾，然后重启。不生效就删掉追加的部分。
 #
-# 用法：把下面全部内容追加到 <你的 profile>/cordis.patch.yml
-# （桌面端通常是 %USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml），然后重启。
-# 不生效/出问题就把追加的部分删掉——原文件一个字都没动。
+# 行 id 用 preset-<预设 id>，config.id 才是预设 id（实测的两代约定）。
+
 - insert:
-    - id: mc-studio
+    - id: preset-mc-studio
       name: '@deepseek-ai/dsh-agent-preset'
+      # 只有这一代真的有 @deepseek-ai/dsh-agent-preset 时才挂载。
+      disabled: !!js "(() => { try { process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json'); return false } catch (error) { return true } })()"
       config:
         id: mc-studio
-        name: MC 模组工作室
-        description: 做 Minecraft 模组的一体化模式：MC 资产面板 + mc-mod / mc-art 两个 skill + GameTest 判定闭环。
+        name: 'MC 模组工作室'
+        description: '做 Minecraft 模组的一体化模式：mcart 面板（3D+物品栏、像素编辑器、结构编辑器、@ 提意见）+ mc-mod / mc-art 两个 skill + GameTestServer 判定闭环。分工写死在流程里：审美、参考选择、族内边界与命名交给 AI，像素度量、jar 扫描与退出码交给脚本。通用、不绑某个 loader / 版本 / 项目，Windows 原生与 POSIX 都能用。'
         order: 100
         plugins:
+          # The `cordis` agent preset: the standard coding agent, plus the ability to
+          # read and write the runtime it is running in.
+          #
+          # It exists so a person can ask an agent to author another agent. Everything in
+          # `standard` is here unchanged; what is added is the self-referential Cordis
+          # toolset, a skill that teaches composition authoring, and a persona that says
+          # which of the two planes an edit belongs to.
+          #
+          # TRUST: `cordis_mount` evaluates model-written JavaScript against the live
+          # runtime, and a composition this agent writes becomes a preset other sessions
+          # mount. Treat a session on this preset as shell access — the toolset's own
+          # documentation makes the same statement.
+
+
+          # The preset's own persona, shadowing the deployment default for this agent.
+          # `{{model}}` and `{{cwd}}` resolve from the agent's own route and workspace.
           - id: persona
             name: '@deepseek-ai/dsh-persona'
             config:
@@ -40,24 +59,37 @@
                 - 工作区就是 {{cwd}}：路径一律用相对路径，**绝不写死绝对路径**（这套东西别人也在用，
                   各人的目录不同）。面板与工具在本仓库（`tools/mcart-plugin/`、`panel/`）；
                   美术引擎是另一个仓库的 `mc-art` skill。
-                - 动手前先读 `mc-mod`（插件说明书 / 七阶段通用流程 / 版本矩阵 / 踩过的坑）；
-                  碰像素之前先读 `mc-art`（确定性美术引擎）。
-                - **面板是以"装好的包"形式来的**（`dsh-mc-art-panel`，装进 profile 后每次开页面都在）。
-                  会话开始时先确认它在不在（右侧栏该有「MC 资产」）。不在就按顺序做两件事：
-                  ① 让用户跑一次 `install.bat`（Windows）或 `sh install.sh`——它会顺手把面板装进 profile；
-                  ② 或直接装发布好的包，然后重启 DSH：
-                     `dsh plugin --profile web add dsh-mc-art-panel`
-                     （国内加 `--registry=https://registry.npmmirror.com/`；不想依赖 npm 就用 Release 里的
-                     tarball：https://github.com/GMH13552/dsh-mc-art/releases/latest/download/dsh-mc-art-panel.tgz ）
-                  **不要**在本模式里用 Cordis 工具动态发射面板：这个模式刻意不带 `tool-cordis`
-                  （那个工具集会占用进程级的 Cordis inspect provider，和另一个用着它的会话直接冲突，
-                  冲突时是整行挂载失败）。面板源码在 tools/mcart-plugin/，装成包的那份由 panel/build.mjs 生成。
+                - 先分清谁判断什么：**美丑、参考选哪张、族内边界、强调与命名 → 你判断**；
+                  **像素度量、jar 扫描、退出码、可重复的光栅化 → 交给脚本/引擎**。别把审美推给脚本
+                  （它只会取第一张名字对得上的参考，深渊石就参考成了浅层石），也别用眼睛代替度量。
+                - 动手前先读 `mc-mod`（说明书 / stage 0–7 通用流程 / 版本矩阵 / 美术规程 /
+                  Windows 注意事项 / 踩过的坑）；碰像素之前先读 `mc-art`（确定性美术引擎）。
+                - **装一个 npm 包就全有**：`dsh-mc-art-panel` 同时带着面板 + 本模式 + 两个 skill。
+                  `dsh plugin --profile <profile> add dsh-mc-art-panel`，重启 DSH → 右侧栏出现
+                  「MC 资产」、模式名单里出现本模式（profile 名通常是 `web`；桌面端是 `desktop`）。
+                  国内可加 `--registry=https://registry.npmmirror.com/`；不想依赖 npm 就用 Release 里
+                  那份不带版本号的 tarball：
+                  https://github.com/GMH13552/dsh-mc-art/releases/latest/download/dsh-mc-art-panel.tgz
+                  改面板源码时才用本地目录 `dsh plugin --profile <profile> add <本仓库>/panel`。
+                  **不需要**再手工往 `~/.dsh` 拷 skill 或 preset（`install.bat` / `sh install.sh` 只是
+                  开发与离线时的备选）；包里的模式用 baseUrl 相对定位自带的 `skills/`，装到哪都成立。
+                - **不要**在本模式里用 Cordis 工具动态发射面板：这个模式刻意不带 `tool-cordis`
+                  （那个工具集注册的 Host Cordis inspect provider 是**进程级**的，和另一个已经用着它的
+                  会话直接冲突，冲突时是整行挂载失败）。面板由装好的包提供。
                 - 想改面板行为：改 `tools/mcart-plugin/{host,client}.js`（唯一的源码），跑 `node panel/build.mjs`
                   重新生成 `panel/lib/`，再重装/刷新。**不要**手改 `panel/lib/` 里的生成物（有漂移门禁挡着）。
-                - 判定：`python tools/mcmod_gametest.py`（退出码 = 失败的必要测试数，
-                  服务端无窗口、跑完自动退出）；改完任何检查再跑一次 `--fault`，证明它**还会说"不"**。
+                - 判定：`python tools/mcmod_gametest.py`（退出码 = 失败的必要测试数，服务端无窗口、
+                  跑完自动退出）。Windows 上 Python 通常叫 `python` 或 `py -3`；`python3` 常是 0 字节的
+                  Store 存根（退出码 9009，无输出）——判据是"**真跑一次**"，不是"命令在不在"。
+                  改完任何检查再跑一次 `--fault`，证明它**还会说"不"**。
                 - 跨版本：先看 `mc-mod` 的版本矩阵——**1.12.2 没有 GameTest**，只有"能编译、服务端起来、
-                  日志干净"；能判行为的版本从 1.17 起，Forge 要 39.0.88+。
+                  日志干净"；GameTest 从 1.17 起，Forge 侧要 1.18.1+ / 39.0.88+。**怎么查而不是猜**
+                  写在 `mc-mod` 的 `references/versions.md`（读 `version.json`、`javap` 映射 jar）。
+                - 平台：**不需要 WSL**，Windows 原生与 POSIX 都支持。Windows 的差异（shell 是
+                  PowerShell 不是 bash、`.bat`/`.cmd` 用 CRLF、BOM 与 GBK 编码坑、含空格与中文的路径、
+                  JDK 要 17/21）见 `mc-mod` 的 `references/windows.md`。
+
+
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
@@ -75,6 +107,7 @@
           - id: tool-bash
             name: '@deepseek-ai/dsh-tool-bash'
             disabled: !!js process.platform === 'win32'
+
           - id: tool-pwsh
             name: '@deepseek-ai/dsh-tool-pwsh'
             disabled: !!js process.platform !== 'win32'
@@ -85,6 +118,7 @@
           # they need no realm. The `fs` service and its policy stay in the host.
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
+
           - id: tool-fs-search
             name: '@deepseek-ai/dsh-tool-fs-search'
             config:
@@ -109,6 +143,7 @@
           # preset's scoped layers.
           - id: command-goal
             name: '@deepseek-ai/dsh-command-goal'
+
           - id: tool-goal
             name: '@deepseek-ai/dsh-tool-goal'
 
@@ -255,8 +290,10 @@
                   maxRounds: 64
 
           # ── remaining model-facing rows ─────────────────────────────────────────────
+
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'
+
           - id: tool-todo
             name: '@deepseek-ai/dsh-tool-todo'
             config:
@@ -285,10 +322,11 @@
             name: '@deepseek-ai/dsh-skill-filesystem'
             config:
               customSkillDirs:
-                - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('node_modules/dsh-mc-art-panel/preset/mc-studio/skills', baseUrl))"
+                - !!js "(() => { const cpu = process.getBuiltinModule('node:path'); const req = process.getBuiltinModule('node:module').createRequire(baseUrl); try { return cpu.join(cpu.dirname(req.resolve('dsh-mc-art-panel/package.json')), 'preset', 'mc-studio', 'skills') } catch (error) { return process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl)) } })()"
 
           # `tool-skill` 是加载 skill 的工具本身。
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
+
           - id: present
             name: '@deepseek-ai/dsh-tool-present'

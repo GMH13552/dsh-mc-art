@@ -6,7 +6,7 @@ Mojang 自带 runtime 带 Low 完整性标签 → `Files.isWritable` 对自己�
 `jdk.zipfs` 把 jar 当只读 → ForgeGradle 的 access transformer 必挂（22 字节空 jar）。
 那种 JVM 在 Linux 上造不出来，但**症状类别**能造：让探针往一个不可写的目录里写。
 
-   python3 tools/check_jdk_test.py
+   python tools/check_jdk_test.py
 
 四件事：
   1. 正常情况必须找到 JDK 并自检通过（找不到就红——这台机器上本来就该有 Java）；

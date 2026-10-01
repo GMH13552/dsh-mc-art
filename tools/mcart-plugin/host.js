@@ -746,18 +746,33 @@ return {
       return merged
     }
 
+    // 从参考目录现取回来的**贴图**句柄（`ref:` 给 textureUrlFor 用），按请求名索引。
+    // 空表有两种原因：还没取过，或者刚换了参考目录签名（这时整表作废）。
+    let vanillaTextureHandles = new Map()
+    let vanillaTextureSignature = null
+
     function texturePath(load, reference) {
       let name = String(reference === undefined ? '' : reference)
       let namespace = load.namespace
       const colon = name.indexOf(':')
       if (colon >= 0) { namespace = name.slice(0, colon); name = name.slice(colon + 1) }
-      const own = load.textures.get(namespace + ':' + name)
+      const key = namespace + ':' + name
+      const own = load.textures.get(key)
       if (own !== undefined) return own
       const other = preloads.get(namespace)
-      return other === undefined ? undefined : other.textures.get(namespace + ':' + name)
+      if (other !== undefined) {
+        const hit = other.textures.get(key)
+        if (hit !== undefined) return hit
+      }
+      // 项目模型直接引用原版贴图（`"texture": "block/ladder"`，裸名按 Minecraft 规则
+      // 是 `minecraft:block/ladder`）时，项目包里没有这个文件 —— 但参考目录的 jar 里有，
+      // `fetchVanillaTextures()` 已经把 PNG 取回来存成 `ref:` 句柄。查不到就返回 undefined，
+      // 由 `elementsOf` 把它记进"解不出来的贴图"，绝不再静默丢面。
+      const fetched = vanillaTextureHandles.get(key)
+      return fetched === undefined ? undefined : fetched
     }
 
-    function elementsOf(load, modelName, extra) {
+    function elementsOf(load, modelName, extra, unresolved) {
       let key = modelName
       const colon = key.indexOf(':')
       if (colon >= 0) key = key.slice(colon + 1)
@@ -772,43 +787,137 @@ return {
         if (extra === undefined) return undefined
         // 现取回来的那份表按 `minecraft:block/x` 存，查的时候带不带命名空间都要能命中。
         return extra.get(id) || extra.get(parentKey) || extra.get('minecraft:' + parentKey)
-      }, (reference) => texturePath(load, reference))
+      }, (reference) => {
+        const tex = texturePath(load, reference)
+        // `resolveBlockModel` 在贴图解不出来时会 `continue` 掉那个面（`quads` 于是可能是空的）。
+        // 把解不出来的引用收上来，报告才能说清"是哪几个面、用的是谁"。
+        if (tex === undefined && typeof unresolved === 'function') unresolved(String(reference))
+        return tex
+      })
     }
 
     // 现取回来的原版模型，按"参考目录签名 + 名字"缓存。签名变了（换了版本目录）自然失效。
     const vanillaModels = new Map()
 
     /**
-     * 项目模型链里"项目包没有、内置表也没有"的那几个原版母模型。
+     * 项目模型链上"断掉的地方"，**按命名空间分类**。
      *
-     * 面板内置的原版母模型表只有 7 条（cube/cross 那几种），而楼梯、台阶、墙、栅栏、
-     * 门、活板门、梯子、压力板、按钮继承的原版母模型都不在里面 —— 用户实测：43 个方块
-     * 只能画出 16 个。这里不再靠那张手抄表：缺什么就去参考目录的 jar 里现取什么。
+     * 这是那份自相矛盾报告的根因：旧 `missingParents()` 把"根模型（项目自己的模型文件）
+     * 缺失"也记成"缺的原版母模型"，然后拿一个**项目命名空间**的名字去原版 jar 里现取 ——
+     * 当然取不到，于是报告的上一行说"项目包里没有这个文件"、下一行说"缺的原版母模型"，
+     * 两行互相打架，还把用户引向去改 parent。
+     *
+     * 判据是命名空间，不是名字长得像不像：
+     *   * 根模型名来自 blockstate 的 `model` 字段 —— 不带命名空间时按 Minecraft 的规则
+     *     落在**当前包**的命名空间里，所以裸名 = 项目自己的模型；`minecraft:` 才是原版。
+     *   * `parent` 不带命名空间时按 Minecraft 的规则落在 `minecraft:` 上，所以裸 parent = 原版；
+     *     带别的命名空间 = 那个命名空间的东西（同样不在项目包里，去参考目录现取）。
+     *
+     * 返回值里的两个数组分得清清楚楚，报告就不许再把 project 的写成"缺的原版母模型"。
      */
-    function missingParents(load, modelName, extra, out) {
+    function chainGaps(load, modelName, extra) {
+      const project = []
+      const vanilla = []
       const seen = {}
+      let cycle = false
       let key = String(modelName === undefined ? '' : modelName)
-      let colon = key.indexOf(':')
-      if (colon >= 0) key = key.slice(colon + 1)
-      for (let depth = 0; depth < 12; depth++) {
-        const model = load.models.get(key) || (extra === undefined ? undefined : extra.get(key))
-        if (model === undefined) { if (key !== '') out.push(key); return }
+      let nameNamespace = load.namespace
+      const colon = key.indexOf(':')
+      if (colon >= 0) { nameNamespace = key.slice(0, colon); key = key.slice(colon + 1) }
+      const own = (namespace) => namespace === '' || namespace === load.namespace
+      for (let depth = 0; depth < 24; depth++) {
+        const fromExtra = extra === undefined ? undefined
+          : (extra.get(key) !== undefined ? extra.get(key) : extra.get('minecraft:' + key))
+        const model = load.models.get(key) || fromExtra
+        if (model === undefined) {
+          if (key === '') break
+          const isOwn = own(nameNamespace)
+          const entry = { name: isOwn ? key : nameNamespace + ':' + key, bare: key,
+            namespace: isOwn ? load.namespace : nameNamespace, kind: isOwn ? 'project' : 'vanilla' }
+          if (isOwn) project.push(entry); else vanilla.push(entry)
+          break
+        }
         const parent = model.parent
-        if (typeof parent !== 'string' || parent === '' || seen[parent] === true) return
+        if (typeof parent !== 'string' || parent === '') break
+        if (seen[parent] === true) { cycle = true; break }
         seen[parent] = true
-        const bare = parent.indexOf(':') >= 0 ? parent.slice(parent.indexOf(':') + 1) : parent
-        if (load.models.get(bare) !== undefined) { key = bare; continue }
-        if (extra !== undefined && (extra.get(bare) !== undefined || extra.get(parent) !== undefined)) { key = bare; continue }
-        // 内置表里有就还用内置的（省一次进程），没有才记为"要去 jar 里取"。
-        if (VANILLA_PARENTS[parent] !== undefined || VANILLA_PARENTS[bare] !== undefined) return
-        out.push(bare.indexOf('block/') === 0 || bare.indexOf('/') > 0 ? bare : bare)
-        return
+        let parentNamespace = 'minecraft'
+        let bare = parent
+        const at = parent.indexOf(':')
+        if (at >= 0) { parentNamespace = parent.slice(0, at); bare = parent.slice(at + 1) }
+        if (load.models.get(bare) !== undefined) { key = bare; nameNamespace = parentNamespace; continue }
+        if (extra !== undefined && (extra.get(parent) !== undefined || extra.get(bare) !== undefined)) {
+          key = bare; nameNamespace = parentNamespace; continue
+        }
+        // 内置表里有就还用内置的（省一次进程）。
+        if (VANILLA_PARENTS[parent] !== undefined || VANILLA_PARENTS[bare] !== undefined) break
+        const isOwn = own(parentNamespace)
+        const entry = { name: parent, bare: bare, namespace: parentNamespace,
+          kind: isOwn ? 'project' : 'vanilla' }
+        if (isOwn) project.push(entry); else vanilla.push(entry)
+        break
       }
+      return { project: project, vanilla: vanilla, cycle: cycle }
+    }
+
+    /**
+     * 一条 missing 条目"人能直接照做"的路径（§2.4 硬要求 2）。
+     *
+     * 项目自己的模型：补 `<项目>/pack/assets/<ns>/models/block/<名字>.json`。
+     * 原版母模型：补不了（原版在 jar 里），能照做的是把参考目录指对 / 指对版本。
+     */
+    function fixPathOf(load, entry, directory) {
+      if (entry.kind === 'project') {
+        // 项目方块模型住在 `models/block/`；`block/x` 和裸 `x` 都归到那儿。
+        const rest = entry.bare.replace(/^block\//, '')
+        return 'pack/assets/' + load.namespace + '/models/block/' + rest + '.json'
+      }
+      const where = directory === ''
+        ? '把参考目录指到 .minecraft/versions/<版本>（面板设置里那一栏）'
+        : directory + ' 里的 <版本>.jar'
+      return where + ' → assets/' + (entry.namespace || 'minecraft') + '/models/' + entry.bare + '.json'
+    }
+
+    /**
+     * 这个参考根里到底有没有**能读的东西** —— 用来把"目录/版本不对"和"这个母模型不在"
+     * 分开。两种形态都算：版本 jar（含 mods/、versions/<v>/），或一棵已解包的
+     * `assets/<命名空间>/…` 资源树（抽取器两条都支持）。只看 `.jar` 会把后者误判成
+     * "参考目录没 jar"，而那棵树是完全合法的参考根。
+     */
+    async function referenceLooksReadable(directory) {
+      const hasJar = async (dir) => {
+        for (const entry of await listDir(dir)) {
+          if (entry.type === 'file' && /\.jar$/i.test(entry.name)) return true
+        }
+        return false
+      }
+      const hasTree = async (dir) => {
+        for (const entry of await listDir(dir + '/assets')) {
+          if (entry.type !== 'directory') continue
+          if (entry.name === 'indexes' || entry.name === 'objects' || entry.name === 'skins') continue
+          return true
+        }
+        return false
+      }
+      if (await hasJar(directory)) return true
+      if (await hasJar(directory + '/mods')) return true
+      if (await hasTree(directory)) return true
+      for (const version of await listDir(directory + '/versions')) {
+        if (version.type !== 'directory') continue
+        if (await hasJar(directory + '/versions/' + version.name)) return true
+        if (await hasJar(directory + '/versions/' + version.name + '/mods')) return true
+        if (await hasTree(directory + '/versions/' + version.name)) return true
+      }
+      return false
     }
 
     async function fetchVanillaModels(project, names) {
       const directory = await referenceDirectory(project)
-      if (directory === '') return { models: new Map(), why: '这台机器上还没有设置参考目录（面板设置里指到 .minecraft/versions/<版本>）' }
+      if (directory === '') {
+        return { models: new Map(), reason: 'no-reference-directory',
+          why: '这台机器上还没有设置参考目录（面板设置里指到 .minecraft/versions/<版本>，'
+            + '或写进 mc-art.settings.json 的 reference.directory）' }
+      }
       const signature = await refSignatureOf(directory)
       const want = []
       for (const name of names) {
@@ -818,11 +927,21 @@ return {
       }
       if (want.length > 0) {
         const extractor = await findTool(project.dir, EXTRACT_SCRIPT)
-        if (extractor === null || extractor === undefined) return { models: new Map(), why: '找不到 ' + EXTRACT_SCRIPT }
+        if (extractor === null || extractor === undefined) {
+          return { models: new Map(), reason: 'extractor-failed', why: '找不到 ' + EXTRACT_SCRIPT }
+        }
         const parsed = await runScanner(extractor, ['--root', directory, '--model', want.join(',')],
           120000, project.dir, REFERENCE_MAX_BYTES)
         if (parsed === undefined || parsed.error !== undefined) {
-          return { models: new Map(), why: String(parsed === undefined ? '抽取脚本没有返回任何东西' : parsed.error) }
+          const why = String(parsed === undefined ? '抽取脚本没有返回任何东西' : parsed.error)
+          // 三种"取不到"要分开说，因为修法完全不同：目录/版本不对、这个母模型这个版本没有、
+          // 脚本自己炸了。
+          let reason = 'extractor-failed'
+          if (why.indexOf('路径不存在') >= 0) reason = 'reference-jar-missing'
+          else if (why.indexOf('一个模型都没取到') >= 0) {
+            reason = (await referenceLooksReadable(directory)) ? 'vanilla-parent-missing' : 'reference-jar-missing'
+          }
+          return { models: new Map(), reason: reason, why: why }
         }
         for (const key of Object.keys(parsed.models || {})) {
           // 抽取器回的是 `minecraft:block/slab`，而调用方问的是 `block/slab` ——
@@ -840,22 +959,185 @@ return {
         const hit = vanillaModels.get(signature + '|' + name)
         if (hit !== undefined && hit !== null) out.set(name, hit)
       }
-      return { models: out, why: '' }
+      return { models: out, reason: '', why: '' }
     }
 
-    /** 把项目模型解成元素：缺的原版母模型先去 jar 里取，取不到就带着原因回来。 */
+    /**
+     * 从参考目录现取**贴图**（`--textures`），返回这次真正取到的名字。
+     *
+     * 为什么需要它：项目的模型经常直接引用原版贴图（`"texture": "block/ladder"`，裸名按
+     * Minecraft 规则落在 `minecraft:` 上）。项目包里没有那个 PNG，于是 `resolveBlockModel`
+     * 把那几个面静默丢掉、`quads` 变空 —— 用户看到的就是"取景框一片空白，屏幕上一个字都没有"
+     * （实测 `mist_ladder`）。贴图和模型一样，参考目录的 jar 里就有，走同一条路取回来。
+     */
+    async function fetchVanillaTextures(project, names) {
+      if (names.length === 0) return { fetched: 0, reason: '', why: '' }
+      const directory = await referenceDirectory(project)
+      if (directory === '') {
+        return { fetched: 0, reason: 'no-reference-directory',
+          why: '这台机器上还没有设置参考目录（原版贴图在 .minecraft/versions/<版本> 的 jar 里）' }
+      }
+      const signature = await refSignatureOf(directory)
+      if (vanillaTextureSignature !== signature) {
+        // 换了参考目录 / 换了版本：旧的句柄可能指向别的 jar，整表作废。
+        vanillaTextureHandles = new Map()
+        vanillaTextureSignature = signature
+      }
+      const want = names.filter((name) => vanillaTextureHandles.get(name) === undefined)
+      if (want.length === 0) return { fetched: 0, reason: '', why: '' }
+      const extractor = await findTool(project.dir, EXTRACT_SCRIPT)
+      if (extractor === null || extractor === undefined) {
+        return { fetched: 0, reason: 'extractor-failed', why: '找不到 ' + EXTRACT_SCRIPT }
+      }
+      const parsed = await runScanner(extractor, ['--root', directory, '--textures', want.join(',')],
+        120000, project.dir, REFERENCE_MAX_BYTES)
+      if (parsed === undefined || parsed.error !== undefined) {
+        const why = String(parsed === undefined ? '抽取脚本没有返回任何东西' : parsed.error)
+        let reason = 'extractor-failed'
+        if (why.indexOf('路径不存在') >= 0) reason = 'reference-jar-missing'
+        else if (why.indexOf('一个贴图都没取到') >= 0) {
+          reason = (await referenceLooksReadable(directory)) ? 'textures-unresolved' : 'reference-jar-missing'
+        }
+        return { fetched: 0, reason: reason, why: why }
+      }
+      let fetched = 0
+      for (const key of Object.keys(parsed.textures || {})) {
+        const refKey = 'ref:' + key
+        referenceTextures.set(refKey, 'data:image/png;base64,' + parsed.textures[key])
+        const animation = (parsed.animations || {})[key]
+        if (animation !== undefined && animation !== null) referenceAnimations.set(refKey, animation)
+        // 抽取器按**请求名**回；再把真实落点（textureFiles 推出来的命名空间）也存一份，
+        // 这样同一个 PNG 被别处带命名空间引用时也能命中。
+        vanillaTextureHandles.set(key, refKey)
+        const file = (parsed.textureFiles || {})[key]
+        if (typeof file === 'string') {
+          const parts = file.split('/')
+          if (parts.length > 3 && parts[0] === 'assets') {
+            vanillaTextureHandles.set(parts[1] + ':' + parts.slice(3).join('/').replace(/\.png$/, ''), refKey)
+          }
+        }
+        fetched += 1
+      }
+      return { fetched: fetched, reason: '', why: '' }
+    }
+
+    /**
+     * 把项目模型解成元素。
+     *
+     * **项目自己的模型缺失就地停下**：把项目命名空间的名字交给原版 jar 是纯粹的浪费，
+     * 也正是那份自相矛盾报告的来源（"项目包里没有这个文件" + "缺的原版母模型"）。只有
+     * `minecraft:` / 别的命名空间的母模型才值得去参考目录现取。
+     *
+     * 模型齐了之后还有第二关：**贴图**。解不出来的面会被静默丢掉，所以这里把解不出来的
+     * 引用收进 `unresolvedTextures`，并且先去参考目录现取一次原版贴图再重解。
+     */
     async function projectElements(project, load, modelName) {
       const extra = new Map()
-      const gaps = []
+      let scan = chainGaps(load, modelName, extra)
       for (let round = 0; round < 4; round++) {
-        const need = []
-        missingParents(load, modelName, extra, need)
-        if (need.length === 0) return { elements: elementsOf(load, modelName, extra), extra: extra, gaps: gaps }
-        const fetched = await fetchVanillaModels(project, need)
-        if (fetched.models.size === 0) { gaps.push({ names: need, why: fetched.why }); return { elements: undefined, extra: extra, gaps: gaps } }
+        if (scan.cycle === true) {
+          return { elements: undefined, extra: extra, project: [], vanilla: [], cycle: true,
+            fetchReason: 'parent-cycle', why: '', unresolvedTextures: [], textureWhy: '' }
+        }
+        if (scan.project.length > 0) {
+          return { elements: undefined, extra: extra, project: scan.project, vanilla: [], cycle: false,
+            fetchReason: '', why: '', unresolvedTextures: [], textureWhy: '' }
+        }
+        if (scan.vanilla.length === 0) break
+        const fetched = await fetchVanillaModels(project, scan.vanilla.map((entry) => entry.name))
+        if (fetched.models.size === 0) {
+          return { elements: undefined, extra: extra, project: [], vanilla: scan.vanilla, cycle: false,
+            fetchReason: fetched.reason === undefined ? '' : fetched.reason, why: fetched.why,
+            unresolvedTextures: [], textureWhy: '' }
+        }
         for (const pair of fetched.models.entries()) extra.set(pair[0], pair[1])
+        scan = chainGaps(load, modelName, extra)
       }
-      return { elements: elementsOf(load, modelName, extra), extra: extra, gaps: gaps }
+      let unresolvedTextures = []
+      const collect = (name) => { if (unresolvedTextures.indexOf(name) < 0) unresolvedTextures.push(name) }
+      let elements = elementsOf(load, modelName, extra, collect)
+      let textureWhy = ''
+      if (unresolvedTextures.length > 0) {
+        // 裸名按抽取器的惯例当成"先试项目、再退回 minecraft"，所以带上项目命名空间请求；
+        // 已经是 `ns:path` 的原样请求。
+        const wanted = unresolvedTextures.map((name) =>
+          name.indexOf(':') >= 0 ? name : load.namespace + ':' + name)
+        const fetched = await fetchVanillaTextures(project, wanted)
+        textureWhy = fetched.why
+        if (fetched.fetched > 0) {
+          unresolvedTextures = []
+          elements = elementsOf(load, modelName, extra, collect)
+        }
+      }
+      return { elements: elements, extra: extra, project: scan.project, vanilla: scan.vanilla,
+        cycle: scan.cycle === true, fetchReason: '', why: '',
+        unresolvedTextures: unresolvedTextures, textureWhy: textureWhy }
+    }
+
+    /**
+     * blockstate 里出现的**所有**模型名，去重保序。
+     *
+     * 旧代码只读 `variants` 的第一个 key，于是 multipart 方块（原版墙/栅栏/玻璃板，用户工程里
+     * 的 6 个墙 + fence/fence_gate/trapdoor/button/pressure_plate/ladder）一律回退成猜
+     * `block/<id>` —— 而那个文件根本不存在（multipart 引用的是 `_post` / `_side` 那几件）。
+     * `apply` 可能是对象也可能是数组；`when` 里写什么条件不用管，这里只收集被引用的模型。
+     */
+    function modelsInState(state) {
+      const out = []
+      const seen = {}
+      const push = (value) => {
+        if (value === undefined || value === null) return
+        if (Array.isArray(value)) { for (const item of value) push(item); return }
+        if (typeof value !== 'object') return
+        const model = value.model
+        if (typeof model === 'string' && model !== '' && seen[model] !== true) {
+          seen[model] = true
+          out.push(model)
+        }
+      }
+      if (state === undefined || state === null || typeof state !== 'object') return out
+      if (state.variants !== undefined && state.variants !== null && typeof state.variants === 'object') {
+        for (const key of Object.keys(state.variants)) push(state.variants[key])
+      }
+      if (Array.isArray(state.multipart)) {
+        for (const part of state.multipart) {
+          if (part === null || typeof part !== 'object') continue
+          push(part.apply)
+        }
+      }
+      return out
+    }
+
+    /**
+     * 一个方块引用好几个模型时，单块视图先画哪一个。规则可解释，不是"第一个"：
+     *   0. 名字就是方块自己（`block/<id>`）—— "一个方块一个模型"的常规形状；
+     *   1. `_post`（墙 / 栅栏 / 栅栏门的结构主件）；
+     *   2. `_bottom`（门 / 活板门的下半，比上半更代表这个方块）；
+     *   3. 名字以方块 id 开头（`<id>_stairs_inner` 这类）；
+     *   4. `_side` / `_top` / `_inner` / `_outer` 这些附件。
+     * 只在**项目包里真的存在**的模型里挑；一个都没有时返回第一个引用到的名字 ——
+     * **不再猜 `block/<id>`**，报告要说的是"引用的这些模型不存在"。
+     */
+    function modelRank(id, name) {
+      const base = String(name).replace(/^[^:]*:/, '').replace(/^block\//, '').replace(/\.json$/, '')
+      if (base === id) return 0
+      if (/_post$/.test(base)) return 1
+      if (/_bottom$/.test(base)) return 2
+      if (base.indexOf(id) === 0) return 3
+      return 4
+    }
+
+    function chooseModel(load, id, models) {
+      if (models.length === 0) return { model: 'block/' + id, guessed: true }
+      const inPack = (name) => load.models.get(String(name).replace(/^[^:]*:/, '')) !== undefined
+      let best = null
+      for (const name of models) {
+        if (!inPack(name)) continue
+        const rank = modelRank(id, name)
+        if (best === null || rank < best.rank) best = { model: name, rank: rank }
+      }
+      if (best !== null) return { model: best.model, guessed: false }
+      return { model: models[0], guessed: false }
     }
 
     async function blockIds(load) {
@@ -864,23 +1146,9 @@ return {
         if (entry.type !== 'file' || !/\.json$/.test(entry.name)) continue
         const id = entry.name.replace(/\.json$/, '')
         const state = await readJson(load.assets + '/blockstates/' + entry.name)
-        // 默认按"每个方块一个模型文件"来猜：`models/block/<id>.json`。
-        // 以前这里是裸 id（`mist_fence`），而模型表里的键是 `block/mist_fence` ——
-        // 于是**所有 multipart 方块**（墙、栅栏、门…）都报"项目包里没有这个文件"。
-        // 默认按"每个方块一个模型文件"来猜：`models/block/<id>.json`。
-        // 以前这里是裸 id（`mist_fence`），而模型表里的键是 `block/mist_fence` —— 于是
-        // **所有 multipart 方块**（墙、栅栏、门…）都报"项目包里没有这个文件"。
-        let model = 'block/' + id
-        if (state !== undefined && state.variants !== undefined) {
-          const keys = Object.keys(state.variants)
-          if (keys.length > 0) {
-            let value = state.variants[keys[0]]
-            if (Array.isArray(value)) value = value[0]
-            if (value !== undefined && typeof value.model === 'string') model = value.model
-          }
-        }
-
-        out.push({ id: id, model: model })
+        const models = modelsInState(state)
+        const chosen = chooseModel(load, id, models)
+        out.push({ id: id, model: chosen.model, models: models, guessed: chosen.guessed })
       }
       return out
     }
@@ -966,32 +1234,60 @@ return {
     // instead of two that could disagree about where the repo root is.
     const toolPaths = new Map()
 
-    async function findTool(start, relative) {
-      if (toolPaths.has(relative)) return toolPaths.get(relative)
-      let at = String(start === undefined || start === null ? '' : start)
+    /** 去掉结尾的路径分隔符（`C:/x/` → `C:/x`）。 */
+    function trimTrailing(value) {
+      let at = String(value === undefined || value === null ? '' : value)
       while (at.length > 1 && (at.charAt(at.length - 1) === '/' || at.charAt(at.length - 1) === BACKSLASH)) {
         at = at.slice(0, at.length - 1)
       }
+      return at
+    }
+
+    /**
+     * 把 `start` 归一成**绝对路径**。
+     *
+     * 这是"45 个方块 28 个画不出来"的根因（Lead 实测并复现）：`findTool` 原来把结果按
+     * `relative` 一个键缓存，而 `at + '/' + relative` 里的 `at` 直接来自调用方。
+     * `atlas.env` 不带 root 时用 `'.'`（面板每次开面板都会问一遍），于是缓存里存下的是
+     * `./tools/mcart_extract_block.py`；之后 `runScanner` 用 `cwd = project.dir` 起进程，
+     * Python 去找 `<工程目录>/tools/mcart_extract_block.py` —— 当然没有。
+     * **返回相对路径是根因**：不管缓存怎么改，这里都不许把相对路径交出去。
+     */
+    function absoluteOf(value) {
+      const raw = String(value === undefined || value === null ? '' : value)
+      if (raw === '') return ''
+      if (raw.charAt(0) === '/' || /^[A-Za-z]:[\\/]/.test(raw) || raw.slice(0, 2) === '\\\\') return raw
+      const cwd = (typeof process !== 'undefined' && process !== null && typeof process.cwd === 'function')
+        ? process.cwd() : ''
+      if (cwd === '') return raw
+      return trimTrailing(cwd.split(BACKSLASH).join('/')) + '/' + raw
+    }
+
+    async function findTool(start, relative) {
+      const base = absoluteOf(trimTrailing(start))
+      // 缓存键带上归一后的 start：同一个 relative 在不同工程目录下的答案可以不同。
+      const cacheKey = relative + '|' + base
+      if (toolPaths.has(cacheKey)) return toolPaths.get(cacheKey)
       let found = null
-      for (let depth = 0; depth < 5 && at !== ''; depth++) {
-        const info = await statOf(at + '/' + relative)
-        if (info !== undefined && info.type === 'file') { found = at + '/' + relative; break }
-        at = parentOf(at) || ''
+      // 1) **随包的那份先查**：`<包>/python/` 是唯一保证"别人的机器上也有"的那一份，
+      //    而且它和宿主是**同一个版本**。项目目录里残留一份旧脚本时，不该让它盖住这份
+      //    （宿主和抽取器对不上，是比"找不到"更难查的毛病）。
+      for (const candidate of skillToolCandidates(relative)) {
+        const full = absoluteOf(trimTrailing(candidate))
+        const info = await statOf(full)
+        if (info !== undefined && info.type === 'file') { found = full; break }
       }
-      // 项目目录往上找不到时，再问**包自己带的**那份和用户的 skills 目录。
-      //
-      // 为什么必须这样：这两个脚本原来只从项目目录往上找 5 层 —— 于是"项目不在 mc-art
-      // 仓库里"的机器上，参考目录整条路都是死的：设置存得下，但什么也读不出来
-      // （用户实测："那个用它根本用不了"）。而面板包里**本来就带着**一份完整引擎
-      // （preset/mc-studio/skills/mc-art/tools/…），pnpm 把它装在 profile 的
-      // node_modules 里，是真文件、Python 读得到。
+      // 2) 兜底：从归一后的 start 往上找（工程恰好在本仓库里、或有人真的把 tools/ 放在
+      //    工程里）。返回的路径一定以 base 开头，所以一定是绝对的。
       if (found === null) {
-        for (const candidate of skillToolCandidates(relative)) {
-          const info = await statOf(candidate)
-          if (info !== undefined && info.type === 'file') { found = candidate; break }
+        let at = base
+        for (let depth = 0; depth < 5 && at !== ''; depth++) {
+          const info = await statOf(at + '/' + relative)
+          if (info !== undefined && info.type === 'file') { found = at + '/' + relative; break }
+          at = parentOf(at) || ''
         }
       }
-      toolPaths.set(relative, found)
+      toolPaths.set(cacheKey, found)
       return found
     }
 
@@ -1036,13 +1332,28 @@ return {
     // icons, namespaces) die on a Windows machine: the interpreter there is
     // `python.exe` or the `py` launcher -- there is no `python3`.
     //
-    // The shell service is `bash -c` on every platform, so a probe is the honest
-    // way to ask: run the candidate and see whether it answers.  A working answer
-    // is cached for the life of the plugin; a total failure is NOT cached, so a
-    // machine where Python gets installed mid-session recovers on the next call.
-    const PYTHON_CANDIDATES = ['python3', 'python', 'py -3']
+    // **唯一判据（§2.3）：真的跑一次 `-c "print(1)"`，退出码 0 且 stdout trim 后是 `1`。**
+    // "命令在"、"不是 ENOENT" 都不算数，因为这台机器上两种"看着有、其实没有"都实测到了：
+    //
+    //   * `%LOCALAPPDATA%\Microsoft\WindowsApps\python3.exe` 是 **0 字节的 Store 存根** ——
+    //     起得来、退出码 9009、没有任何输出（BRIEF §1.1）。
+    //   * `py` 启动器的注册表残留指向一个**已被删掉的**解释器 —— 退出码 101，
+    //     `Unable to create process using '…\.tools\python312\python.exe'`。
+    //
+    // 候选带参数（`py -3` 拆成 bin=`py`, args=['-3']）：subprocess 那条路按 argv 起进程，
+    // 把一个整串 `'py -3'` 当成可执行名交给 resolveExecutable 永远解析不出来 ——
+    // 而"只有 py 能用"的 Windows 机器很常见。顺序也按 §2.3：python3 → python → py -3 → py。
+    //
+    // 命中后缓存；**全失败不缓存**，这样中途装上 Python 的机器下一次调用就能自愈。
+    const PYTHON_CANDIDATES = [
+      { bin: 'python3', args: [] },
+      { bin: 'python', args: [] },
+      { bin: 'py', args: ['-3'] },
+      { bin: 'py', args: [] },
+    ]
     let pythonLauncher = ''
     let pythonExe = ''        // 原样的可执行（subprocess 用 argv，shell 用转义过的 launcher）
+    let pythonArgs = []       // 解释器自己的参数（`py -3` 的那个 -3）
     let pythonVia = null      // 'subprocess' | 'shell' —— 出错时要说清走的哪条
     let pythonWhy = null
 
@@ -1095,58 +1406,88 @@ return {
       return out
     }
 
-    /** 候选解释器：环境变量 → 系统 PATH → 桌面端自带的那份。 */
-    function pythonCandidates() {
+    /** 候选解释器：环境变量 → 系统 PATH（§2.3 的顺序）→ 桌面端自带的那份。 */
+    function pythonCandidateList() {
       const out = []
-      const push = (value) => {
-        if (typeof value !== 'string' || value === '') return
-        if (out.indexOf(value) < 0) out.push(value)
+      const seen = {}
+      const push = (bin, args, guess) => {
+        if (typeof bin !== 'string' || bin === '') return
+        const list = Array.isArray(args) ? args : []
+        const key = bin + ' ' + list.join(' ')
+        if (seen[key] === true) return
+        seen[key] = true
+        out.push({ bin: bin, args: list, guess: guess === true })
       }
-      push(envOf('MC_ART_PYTHON'))
-      for (const name of PYTHON_CANDIDATES) push(name)
+      // 显式指定的路径/命令**优先**（§2.3 的"可覆盖"）。
+      push(envOf('MC_ART_PYTHON'), [], false)
+      for (const candidate of PYTHON_CANDIDATES) push(candidate.bin, candidate.args, false)
       for (const dir of bundledPythonDirs()) {
-        push(dir + '/python/python.exe')    // Windows: dependencies/python/python.exe
-        push(dir + '/python/bin/python3')   // POSIX:    dependencies/python/bin/python3
-        push(dir + '/python/bin/python')
+        // 推出来的（guess）：出厂布局在别人的机器上不一定成立，试之前先 stat。
+        push(dir + '/python/python.exe', [], true)    // Windows: dependencies/python/python.exe
+        push(dir + '/python/bin/python3', [], true)   // POSIX:    dependencies/python/bin/python3
+        push(dir + '/python/bin/python', [], true)
       }
       return out
     }
+
+    /** 只给诊断看的字符串形状（`atlas.env.pythonCandidates`，协议不变）。 */
+    function pythonCandidates() {
+      return pythonCandidateList().map((candidate) =>
+        candidate.bin + (candidate.args.length === 0 ? '' : ' ' + candidate.args.join(' ')))
+    }
+
+    /** 一件候选在报告里的写法：`py -3`。 */
+    const pythonLabel = (candidate) =>
+      candidate.bin + (candidate.args.length === 0 ? '' : ' ' + candidate.args.join(' '))
 
     async function resolvePython(workspaceRoot) {
       if (pythonLauncher !== '') return pythonLauncher
       const dialect = await currentShell(workspaceRoot)
       const tried = []
-      for (const candidate of pythonCandidates()) {
-        const pathLike = isPathLike(candidate)
+      for (const candidate of pythonCandidateList()) {
+        const pathLike = isPathLike(candidate.bin)
+        // 从出厂布局猜出来的捆绑运行时路径**先 stat 再试**：猜错的位置既不能命中，
+        // 也不该把失败文案塞满垃圾路径（实测会推出 `<node>/resources/runtime/...`）。
+        if (candidate.guess === true && pathLike) {
+          const info = await statOf(candidate.bin)
+          if (info === undefined || info.type !== 'file') continue
+        }
+        const probe = ['-c', 'print(1)']
         // 第一条：subprocess + argv。绝对路径直接用；裸名字先让它解析 PATH。
         if (pathLike || subprocessOf() !== undefined) {
-          const exe = pathLike ? candidate : await resolveExecutable(candidate)
+          const exe = pathLike ? candidate.bin : await resolveExecutable(candidate.bin)
           if (exe !== null) {
-            const done = await runProcess([exe, '-c', 'print(1)'], { maxBytes: 4096 })
+            const done = await runProcess([exe].concat(candidate.args, probe), { maxBytes: 4096 })
             if (done !== null) {
               if (done.exitCode === 0 && String(done.text).trim() === '1') {
                 pythonExe = exe
+                pythonArgs = candidate.args
                 pythonVia = 'subprocess'
-                pythonLauncher = exe
+                pythonLauncher = pythonLabel(candidate)
                 return pythonLauncher
               }
-              tried.push(candidate + '(subprocess exit=' + String(done.exitCode) +
+              // 退出码和它自己的抱怨都要留下：9009 是 Store 存根、101 是 py 的坏注册表，
+              // 光写"没找到"会让人以为这台机器上根本没有 Python。
+              tried.push(pythonLabel(candidate) + '(subprocess exit=' + String(done.exitCode) +
                 (String(done.err).trim() === '' ? '' : ' ' + String(done.err).trim().slice(0, 60)) + ')')
               continue
             }
           }
         }
         // 第二条：shell（老路；服务不在时 exitCode 是 null —— 把这个事实也写进去）
-        const command = (pathLike ? dialect.word(candidate) : candidate) + ' -c "print(1)"'
-        const probe = await runShell(command, 20000, policyFor(workspaceRoot), 4096)
-        if (probe.exitCode === 0 && String(probe.text).trim() === '1') {
-          pythonExe = candidate
+        const head = pathLike ? dialect.word(candidate.bin) : candidate.bin
+        const words = [head].concat(candidate.args.map((arg) => dialect.word(arg)))
+        const probeShell = await runShell(words.join(' ') + ' -c "print(1)"', 20000,
+          policyFor(workspaceRoot), 4096)
+        if (probeShell.exitCode === 0 && String(probeShell.text).trim() === '1') {
+          pythonExe = candidate.bin
+          pythonArgs = candidate.args
           pythonVia = 'shell'
-          pythonLauncher = pathLike ? dialect.word(candidate) : candidate
+          pythonLauncher = pythonLabel(candidate)
           return pythonLauncher
         }
-        tried.push(candidate + '(shell exit=' + String(probe.exitCode) +
-          (String(probe.err).trim() === '' ? '' : ' ' + String(probe.err).trim().slice(0, 60)) + ')')
+        tried.push(pythonLabel(candidate) + '(shell exit=' + String(probeShell.exitCode) +
+          (String(probeShell.err).trim() === '' ? '' : ' ' + String(probeShell.err).trim().slice(0, 60)) + ')')
       }
       pythonWhy = tried.join('、')
       return null
@@ -1154,7 +1495,7 @@ return {
 
     /** The launcher for a message the user reads, without probing. */
     function pythonHint() {
-      return pythonLauncher === '' ? PYTHON_CANDIDATES[0] : pythonLauncher
+      return pythonLauncher === '' ? pythonLabel(PYTHON_CANDIDATES[0]) : pythonLauncher
     }
 
     // 参数一律当作**原始字符串数组**交进来，只在这里按方言转义——转义点只有这一个，
@@ -1172,7 +1513,12 @@ return {
         // `-X utf8`：Windows 上 Python 的 stdio 默认是系统区域编码（GBK），
         // 而我们按 UTF-8 解它的输出 —— 中文名字会变成 `����ʯ`（用户实测）。
         // 脚本自己也把 stdout 钉成 UTF-8（reconfigure），这里是第二层。
-        const argv = [pythonExe, '-X', 'utf8', scanner].concat(tokens === undefined ? [] : tokens)
+        //
+        // `-B` = `PYTHONDONTWRITEBYTECODE=1`（subprocess 的契约里没有 env 通道，argv 里
+        // 这一条两条路都管用）：抽取器 `import mcart_scan_refs`，默认会在 **随包发布的**
+        // `panel/python/` 里写下 `__pycache__/*.pyc`，而每个 .pyc 里都嵌着源码字符串 ——
+        // 既是路径泄漏，也是只读安装下的隐患（`entry-test` 实测留过一次）。
+        const argv = [pythonExe].concat(pythonArgs, ['-B', '-X', 'utf8', scanner], tokens === undefined ? [] : tokens)
         const done = await runProcess(argv, { cwd: workspaceRoot, maxBytes: maxBytes === undefined ? 8 * 1024 * 1024 : maxBytes })
         if (done !== null) {
           if (done.exitCode !== 0) {
@@ -1188,7 +1534,7 @@ return {
       }
       const dialect = await currentShell(workspaceRoot)
       const argument = (tokens === undefined ? [] : tokens).map((token) => dialect.word(token)).join(' ')
-      const result = await runShell(python + ' -X utf8 ' + dialect.word(scanner) +
+      const result = await runShell(python + ' -B -X utf8 ' + dialect.word(scanner) +
         (argument === '' ? '' : ' ' + argument), timeoutMs, policyFor(workspaceRoot), maxBytes)
       if (result.exitCode !== 0) {
         const detail = beforeStderr(result.err === undefined || result.err === null ? '' : result.err)
@@ -1652,8 +1998,9 @@ return {
       const tokens = ['--root', directory, '--block', blockArg]
       if (wanted !== null) tokens.push('--variant', wanted)
       // 展示给人看的那条命令也按方言拼，免得用户拿去手跑时报"找不到命令"。
+      // `-B` 和真跑的那条一样：别在随包的 `panel/python/` 边上留 .pyc。
       const dialect = await currentShell(project.dir)
-      const command = pythonHint() + ' ' + dialect.word(extractor) + ' ' +
+      const command = pythonHint() + ' -B ' + dialect.word(extractor) + ' ' +
         tokens.map((token) => dialect.word(token)).join(' ')
       const parsed = await runScanner(extractor, tokens, 120000, project.dir, REFERENCE_MAX_BYTES)
       if (parsed === undefined || parsed.error !== undefined) {
@@ -2126,6 +2473,12 @@ return {
       // `quadsFromElements` -- see `quadsOfEntry`.
       const quads = quadsOfEntry(load, entry, note, keep)
       if (quads === undefined) return { error: '找不到 ' + String(block) + ' 的模型' }
+      // 幽灵预览同样是取景框：**推导出来**的空结果（multipart 条件全不成立）是正常答案，
+      // 但整条链一个面都解不出来时必须说一句，不能给一块空白板。
+      if (quads.length === 0 && keep === undefined) {
+        return { error: '找不到 ' + String(block) + ' 的模型（整条模型链一个面都解不出来，'
+          + '通常是贴图在项目包里没有、参考目录也没取到）' }
+      }
       // Two things the viewer needs and only the extraction has: the 朝向
       // choices, and whether the ghost itself is a block that a neighbour
       // decides (so it can say "按邻居" next to it).
@@ -2134,6 +2487,150 @@ return {
         variants: entry.variantKeys || [], axes: axes, defaults: entry.variantDefaults || {},
         variant: entry.rotation === null || entry.rotation === undefined ? null : variant,
         multipart: entry.multipart === true, derived: keep !== undefined && keep !== null }
+    }
+
+    /**
+     * "画不出来"时给客户端 / 人的那份东西（BRIEF §2.4 的冻结契约）。
+     *
+     * 结构化部分（reason / missing / tried / referenceDirectory）由客户端渲染；人读文本
+     * 满足四条硬要求：① `kind:'project'` 的绝不许写成"缺的原版母模型"；② 每条都给能直接
+     * 照做的路径；③ 没设参考目录时 reason 必须是 no-reference-directory 并说清去哪设；
+     * ④ 只在屏幕上、可复制、≤20 行、同样的输入给同样的文本（人不被刷屏，客户端好去重）。
+     */
+    /** 一条贴图引用的缺失条目：`kind` / `name` / `fixPath`，和模型那条同一个形状。 */
+    function textureMissingOf(load, name, directory) {
+      const colon = name.indexOf(':')
+      const explicit = colon >= 0
+      const namespace = explicit ? name.slice(0, colon) : load.namespace
+      const path = explicit ? name.slice(colon + 1) : name
+      const kind = explicit && namespace !== load.namespace ? 'vanilla' : 'project'
+      const where = directory === ''
+        ? '把参考目录指到 .minecraft/versions/<版本>（面板设置里那一栏）'
+        : directory + ' 里的 <版本>.jar'
+      return {
+        kind: kind,
+        name: explicit ? name : load.namespace + ':' + name,
+        fixPath: kind === 'project'
+          ? 'pack/assets/' + load.namespace + '/textures/' + path + '.png'
+          : where + ' → assets/' + namespace + '/textures/' + path + '.png',
+      }
+    }
+
+    function blockDiagnostic(load, namespace, id, found, built, directory) {
+      const project = Array.isArray(built.project) ? built.project : []
+      const vanilla = Array.isArray(built.vanilla) ? built.vanilla : []
+      const textures = Array.isArray(built.unresolvedTextures) ? built.unresolvedTextures : []
+      const missing = project.concat(vanilla).map((entry) => ({
+        kind: entry.kind === 'project' ? 'project' : 'vanilla',
+        name: String(entry.name),
+        fixPath: fixPathOf(load, entry, directory),
+      })).concat(textures.map((name) => textureMissingOf(load, name, directory)))
+      let reason = 'unknown'
+      if (built.cycle === true) reason = 'parent-cycle'
+      else if (project.length > 0) reason = 'project-model-missing'
+      else if (typeof built.fetchReason === 'string' && built.fetchReason !== '') reason = built.fetchReason
+      else if (vanilla.length > 0) reason = directory === '' ? 'no-reference-directory' : 'vanilla-parent-missing'
+      // 模型链是完整的、面也都解出来了，只是**贴图**解不出来（原版贴图不在项目包里）
+      // 或者整条链一个面都没有 —— 这两种以前会返回一个"成功但 quads 是空"的对象，
+      // 屏幕上什么都不说，取景框一片空白。
+      else if (textures.length > 0) reason = directory === '' ? 'no-reference-directory' : 'textures-unresolved'
+      else if (built.noQuads === true) reason = 'no-quads'
+      // 结构化字段一律非 undefined：宿主的运行时会拒收含 undefined 的返回值。
+      const allowed = { 'project-model-missing': 1, 'vanilla-parent-missing': 1,
+        'no-reference-directory': 1, 'reference-jar-missing': 1, 'extractor-failed': 1,
+        'parent-cycle': 1, 'textures-unresolved': 1, 'no-quads': 1, 'unknown': 1 }
+      if (allowed[reason] !== 1) reason = 'unknown'
+
+      const bareModel = String(found.model).replace(/^[^:]*:/, '')
+      const tried = [
+        '项目包：' + load.assets + '/models/'
+          + (bareModel.indexOf('block/') === 0 ? bareModel : 'block/' + bareModel) + '.json',
+        '面板内置的原版母模型表：'
+          + (vanilla.length === 0 ? '（这次没走到）' : vanilla.map((entry) => entry.name).join('、')),
+        directory === '' ? '参考目录：没设，从 jar 现取这条路没走'
+          : '参考目录的 jar 现取：' + directory,
+      ]
+      if (textures.length > 0) {
+        tried.push('贴图现取（--textures）：' + (directory === '' ? '没设参考目录，没走' : directory))
+      }
+
+      const lines = ['[MC 资产面板] 画不出 ' + namespace + ':' + id]
+      if (found.guessed === true) {
+        lines.push('· blockstate 里一个模型名都没有，按惯例找 ' + String(found.model) + '（这一条是猜的）')
+      } else {
+        lines.push('· blockstate 引用的模型（' + found.models.length + ' 个）：'
+          + found.models.slice(0, 6).join('、') + (found.models.length > 6 ? ' …' : ''))
+      }
+      lines.push('· 选用的模型：' + String(found.model))
+      if (project.length > 0) {
+        lines.push('· 项目自己的模型文件缺失（' + project.length + ' 个）：')
+        for (const entry of project) lines.push('  - ' + entry.name + ' → 补 ' + fixPathOf(load, entry, directory))
+      }
+      if (vanilla.length > 0) {
+        lines.push('· 原版母模型缺失（' + vanilla.length + ' 个）：')
+        for (const entry of vanilla) lines.push('  - ' + entry.name + ' → ' + fixPathOf(load, entry, directory))
+      }
+      if (textures.length > 0) {
+        lines.push('· 面引用的贴图解不出来（' + textures.length + ' 个，这些面被丢掉了）：')
+        for (const name of textures.slice(0, 4)) {
+          const entry = textureMissingOf(load, name, directory)
+          lines.push('  - ' + entry.name + ' → ' + entry.fixPath)
+        }
+        if (textures.length > 4) lines.push('  - …（还有 ' + (textures.length - 4) + ' 个，见结构化诊断）')
+      }
+      if (project.length === 0 && vanilla.length === 0 && textures.length === 0) {
+        lines.push('· 模型链是完整的，但整条链里一个面都没画出来（这个方块可能靠方块实体渲染）')
+      }
+      lines.push('· 原因：' + reason)
+      if (typeof built.why === 'string' && built.why !== '') lines.push('· 现取失败的原因：' + built.why)
+      if (typeof built.textureWhy === 'string' && built.textureWhy !== '') {
+        lines.push('· 贴图现取失败的原因：' + built.textureWhy)
+      }
+      lines.push('· 参考目录：' + (directory === '' ? '（没设）' : directory))
+      lines.push('· 已试过的路：' + tried.join(' → '))
+      lines.push('· 修法：' + fixTextOf(reason))
+      lines.push('· 这份报告只在屏幕上，不写进会话 / inbox / 日志；可以整段复制走')
+      if (lines.length > 20) {
+        lines.splice(20, lines.length - 20)
+        lines[19] = '· …（还省略了一些行；结构化诊断里有全部内容）'
+      }
+      return { reason: reason, missing: missing, tried: tried, lines: lines }
+    }
+
+    /** §2.4 的修法文本：每种 reason 一句能直接照做的。 */
+    function fixTextOf(reason) {
+      if (reason === 'project-model-missing') {
+        return '把上面列出的项目自己的模型文件补上（路径已经给出）；blockstate 里写什么名字，'
+          + '文件名就必须是什么（multipart 方块要补的是 _post / _side 那几件，不是 <方块名>.json）'
+      }
+      if (reason === 'no-reference-directory') {
+        return '面板设置里把参考目录指到 .minecraft/versions/<版本>（或写进 mc-art.settings.json 的 '
+          + 'reference.directory）；原版母模型都在那个版本的 jar 里'
+      }
+      if (reason === 'vanilla-parent-missing') {
+        return '参考目录指的那个版本里没有这些原版母模型：核对版本号（1.16 之后墙是 template_wall_post / '
+          + 'template_wall_side / template_wall_side_tall），或把 parent 改成该版本真实存在的名字'
+      }
+      if (reason === 'reference-jar-missing') {
+        return '参考目录里没找到能读的 jar：指到 .minecraft/versions/<版本>（里面应有 <版本>.jar），'
+          + '不要指到 .minecraft 本身'
+      }
+      if (reason === 'extractor-failed') {
+        return '抽取脚本自己失败了：看上面"现取失败的原因"那一行，先确认 Python 与脚本路径'
+      }
+      if (reason === 'textures-unresolved') {
+        return '这些面引用的贴图在项目包里没有、参考目录里也没取到：把参考目录指对版本，'
+          + '或者在项目包里补上同名的 PNG（路径已经给出）'
+      }
+      if (reason === 'no-quads') {
+        return '模型链是完整的但一个面都没画出来：这个方块很可能靠方块实体在代码里渲染，'
+          + '面板画不出它的实体模型；要 3D 预览就得在项目包里补一个带 elements 的模型'
+      }
+      if (reason === 'parent-cycle') {
+        return '模型 parent 成环了：把链上重复出现的那个 parent 去掉'
+      }
+      return '模型链完整却没有 elements：这个方块可能靠方块实体渲染（没有几何模型），'
+        + '或者在项目包里补一个带 elements 的模型'
     }
 
     async function payload(root, project, kind, id, have, cellsOverride, neighbours) {
@@ -2149,44 +2646,36 @@ return {
       let refs = []
       let palette = []
       let cells = null
+      // kind==='block' 时回给客户端的"这个方块一共有哪几个模型"，方便逐个看。
+      let blockModel = null
+      let blockModels = []
 
       if (kind === 'block') {
         const found = (await blockIds(load)).filter((block) => block.id === id)[0]
         if (found === undefined) return { error: 'block not found: ' + id }
+        blockModel = found.model
+        blockModels = found.models
         const built = await projectElements(project, load, found.model)
         const elements = built.elements
-        if (elements === undefined) {
-          // 画不出来时**不要只说一句英文**：把"哪一层断的、试过哪些路、抽取器原话"
-          // 整理成一份报告，注入当前会话那个 agent 的上下文（下一个 step 边界它就看见），
-          // 同时也作为错误文本回给面板 —— 拿不到 agent 时人还能自己看到原因。
+        quads = elements === undefined ? undefined : quadsFromElements(elements, note)
+        // **空 quads 也是画不出来。** 以前这里返回一个"成功"对象、`quads` 是 `[]`，
+        // 于是取景框一片空白、屏幕上一个字都没有（实测 `mist_ladder`：模型是零厚度平面、
+        // 两个面用的都是原版贴图 `block/ladder`，贴图在项目包里没有 → 面被静默丢掉）。
+        // 任何"取不到"都必须上报告，不许静默。
+        if (elements === undefined || quads.length === 0) {
+          if (elements !== undefined) built.noQuads = true
+          // 画不出来时给一份**准确**的报告：结构化诊断（客户端按它渲染）+ ≤20 行可复制文本。
+          //
+          // **0.1.26 的教训：绝不注入。** 那时这里 `agent.steer({role:'user', content:[…]})`
+          // 写了一条没有 `source` 的消息，宿主把它当合法输入落进持久化日志的
+          // `agent/inbox/spliced`，那个会话**再也加载不了**。往别人的持久化日志里写字，
+          // 形状不对不是"没生效"，是**把日志写坏**。所以这条路上不写任何东西：报告只在屏幕上。
           const directory = await referenceDirectory(project)
-          const lines = ['[MC 资产面板] 画不出 ' + namespace + ':' + id]
-          lines.push('· 它自己的模型：' + String(found.model)
-            + (load.models.get(String(found.model).replace(/^[^:]*:/, '').replace(/^block\//, 'block/')) === undefined
-              ? '（项目包里没有这个文件）' : '（在项目包里）'))
-          lines.push('· 缺的原版母模型：' + (built.gaps.length === 0
-            ? '（链上没缺，是别的原因）'
-            : built.gaps.map((gap) => gap.names.join('、')).join('；')))
-          for (const gap of built.gaps) if (gap.why !== '') lines.push('· 现取失败的原因：' + gap.why)
-          lines.push('· 已试过的路：项目包 → 面板内置的原版母模型表 → 从参考目录的 jar 现取')
-          lines.push('· 参考目录：' + (directory === '' ? '（没设）' : directory))
-          lines.push('· 修法：补上 <命名空间>:block/<名字> 的模型文件，或把 parent 改成原版真实存在的名字'
-            + '（1.16 之后墙是 template_wall_post/side/side_tall）；参考目录没设的话先在面板里指到 .minecraft/versions/<版本>。')
-          const report = lines.join('\n')
-          // **0.1.27：注入停用。** 0.1.26 这里 `agent.steer({role:'user', content:[…]})` 写的
-          // 那条消息没有 `source`（v4 要求 producer-owned source kind），宿主把它当合法输入
-          // 落进了持久化日志的 `agent/inbox/spliced`，于是那个会话**再也加载不了**
-          // （"历史加载失败：stored log is corrupt"，甚至整个窗口消失）。
-          // 往别人的持久化日志里写字，形状不对不是"没生效"，是**把日志写坏** ——
-          // 在拿真实校验器验过一条 UserMessage 之前，这条路上不再写任何东西，
-          // 报告只留在屏幕上（人自己决定要不要交给 AI）。
-          const notice = { sent: false, via: null,
-            why: '注入已停用（0.1.26 写坏了会话日志）；报告在屏幕上，人自己决定怎么用' }
-          const how = notice.sent === true ? '已经发给 AI（' + notice.via + '）'
-            : '这条报告没有注入到 AI 上下文（' + String(notice.why) + '）'
-          return { error: report + '\n· ' + how, notified: notice.sent === true, notifyVia: notice.via || null }
+          const failed = blockDiagnostic(load, namespace, id, found, built, directory)
+          return { error: failed.lines.join('\n'), notified: false, notifyVia: null,
+            diagnostic: { reason: failed.reason, block: namespace + ':' + id, missing: failed.missing,
+              tried: failed.tried, referenceDirectory: directory } }
         }
-        quads = quadsFromElements(elements, note)
         refs = [rel(root, load.assets + '/textures/block/' + id + '.png'),
           rel(root, load.assets + '/models/block/' + id + '.json'),
           rel(root, load.assets + '/blockstates/' + id + '.json')]
@@ -2345,6 +2834,8 @@ return {
         quads: quads, textureIds: textureIds, textures: textures,
         animations: animationsFor(textureIds),
         cells: cells, faceStep: FACE_STEP,
+        // 只有 kind==='block' 有值；结构 / 实体是 null / []（形状恒定，客户端好处理）。
+        model: blockModel, models: blockModels,
         refs: refs, ref: refs[0], palette: palette, box: boxOfQuads(quads), errors: errors.slice(0, 8) }
     }
 

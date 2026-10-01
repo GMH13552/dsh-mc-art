@@ -50,17 +50,17 @@ async function main() {
     process.exit(failures === 0 ? 0 : 1)
   }
 
-  const made = await handlers['atlas.createProject']({ root: WORK, id: 'fleshland', namespace: 'fleshland' })
+  const made = await handlers['atlas.createProject']({ root: WORK, id: 'examplemod', namespace: 'examplemod' })
   check('建项目成功', made && made.created === true, JSON.stringify(made))
   const after = await scan()
   check('扫得到刚建的项目，命名空间正确',
-    after.length === 1 && after[0].id === 'fleshland' && after[0].namespace === 'fleshland',
+    after.length === 1 && after[0].id === 'examplemod' && after[0].namespace === 'examplemod',
     JSON.stringify(after.map((p) => p.id + ':' + p.namespace)))
   check('骨架目录真的落在盘上',
-    nodeFs.existsSync(nodePath.join(WORK, 'fleshland', 'pack', 'assets', 'fleshland', 'textures', 'block')),
-    nodePath.join(WORK, 'fleshland', 'pack'))
+    nodeFs.existsSync(nodePath.join(WORK, 'examplemod', 'pack', 'assets', 'examplemod', 'textures', 'block')),
+    nodePath.join(WORK, 'examplemod', 'pack'))
 
-  const again = await handlers['atlas.createProject']({ root: WORK, id: 'fleshland' })
+  const again = await handlers['atlas.createProject']({ root: WORK, id: 'examplemod' })
   check('同一目录再建一次 → 拒绝（不会覆盖）', again && typeof again.error === 'string', JSON.stringify(again))
 
   // 真实场景：有人手写了 pack/assets/alpha（没有 atlas），这时不许再给它塞第二个命名空间。

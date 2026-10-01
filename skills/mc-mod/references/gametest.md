@@ -5,8 +5,10 @@ game test and then **exits, with the exit code equal to the number of failed
 required tests**. No window, no keyboard, no screenshots — a number the game itself
 produced. That is why it, and not a bot, is the primary way to check a mod.
 
-- Introduced in **1.17**; Forge support needs **1.18.1+ / Forge 39.0.88+**;
-  Fabric API ships `fabric-gametest` with its own entrypoint.
+- Introduced in **1.17** as part of the vanilla game; on Forge it needs
+  **1.18.1+ / Forge 39.0.88+**; other loaders ship their own entrypoint, annotations
+  and gradle task name (one example: `fabric-gametest`). Check the loader's own docs for
+  the task name rather than reusing Forge's.
 - Tests are Java methods that assert on a real world: block interactions, entity
   behaviour, item functionality, capabilities.
 - Tests need a **template structure** (see below). An empty 3×3×3 is enough for
@@ -23,12 +25,12 @@ python tools/mcmod_gametest.py --fault         # inject a false assertion: it MU
 echo $?                                         # = failed required tests
 ```
 
-Measured (1.18.2 / Forge 40.2.0, this workspace):
+Measured once (1.18.2 / Forge 40.2.0, one machine):
 
 ```
 clean    →  [minecraft/GameTestServer]: All 2 required tests passed :)          exit 0
 --fault  →  [minecraft/LogTestReporter]: <测试名> failed! <断言里的那句话> at 1,-59,1 (relative: 1,1,1)
-#   （这行的形状来自一次真实运行；测试名与消息换成了占位符——那是作者自己的示例项目）
+#   （这行的形状来自一次真实运行；测试名与消息换成了占位符）
             [minecraft/GameTestServer]: 1 required tests failed :(             exit 1
 ```
 
@@ -74,9 +76,12 @@ by running `scripts/JvmWriteSelfTest.java` — write a file, ask `isWritable`, w
 through zipfs — and reports every candidate it rejected and why:
 
 ```bash
-python3 scripts/check_jdk.py                       # find one; exit 3 = none usable
-python3 scripts/check_jdk.py --java-home 'C:\Program Files\\Eclipse Adoptium\\jdk-17…'
+python scripts/check_jdk.py                       # find one; exit 3 = none usable
+python scripts/check_jdk.py --java-home 'C:\Program Files\Eclipse Adoptium\jdk-17…'
 ```
+
+On Windows the interpreter is usually `python` or `py -3`, not `python3` (which is
+often a zero-byte Store stub). The probe is "it really runs" — `windows.md`.
 
 A copy of the same JDK placed in an ordinary directory inherits **Medium** and works, which is
 one cheap repair when the only 17 on the machine is the game's.
@@ -211,6 +216,6 @@ in its context.
 
 - **Look.** It asserts behaviour; whether the thing looks right, feels right, or
   reads well in a tooltip is a human stage (`workflow.md` stage 6).
-- **Run with the pack.** A dev run is bare (vanilla + Forge + our mod). "Does it
-  survive next to 40 other mods" needs a real instance — that is a separate,
+- **Run with the pack.** A dev run is bare (vanilla + one loader + the mod under test).
+  "Does it survive next to 40 other mods" needs a real instance — that is a separate,
   deliberate step.

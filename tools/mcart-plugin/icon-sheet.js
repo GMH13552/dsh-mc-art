@@ -2,7 +2,7 @@
 // thing under discussion can be looked at instead of argued about.
 //
 //   node tools/mcart-plugin/icon-sheet.js [--out /tmp/icons.png] [--size 64]
-//        [--project fleshland] [--root /home/gmh/mc-art]
+//        [--project examplemod] [--root <仓库根>]
 //        [--source project|reference] [--namespace minecraft] [--items a,b] [--limit 40]
 //
 // It runs the REAL host handlers (one extractor process for the page) and the
@@ -225,8 +225,8 @@ function asciiOf(pixels, size, cells, x0) {
 }
 
 function parseArgs(argv) {
-  const out = { out: path.join(os.tmpdir(), 'mcart-icons.png'), size: 64, project: 'fleshland',
-    root: '/home/gmh/mc-art', source: 'project', namespace: '', items: '', limit: 40,
+  const out = { out: path.join(os.tmpdir(), 'mcart-icons.png'), size: 64, project: 'examplemod',
+    root: process.cwd(), source: 'project', namespace: '', items: '', limit: 40,
     pair: false, plain: false, ascii: false, patch: [] }
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i]

@@ -6,7 +6,7 @@ shipped broken: the local file was fine, the emitted copy had a typo.  The only
 proof that the running package matches the repository is to pull the arguments
 back out of the session transcript and diff them.
 
-  python3 tools/verify_emitted.py [session-dir-or-jsonl]
+  python tools/verify_emitted.py [session-dir-or-jsonl]
 
 With no argument, the newest session under the workspace that contains a
 `cordis_define` call is used.
@@ -237,7 +237,7 @@ def main(argv):
             # 不然门禁红了也没人知道下一步做什么。
             print("       修法：在**能批准客户端半边**的会话里重发一次 cordis_define，"
                   "code.%s 用 tools/mcart-plugin/loader.%s.js 的去注释版"
-                  "（python3 -c \"import sys;sys.path.insert(0,'tools');"
+                  "（python -c \"import sys;sys.path.insert(0,'tools');"
                   "from strip_comments import strip;print(strip(open('…').read()))\"）。"
                   "或者删掉这两个加载器文件（那就没有动态插件这条路了，本门禁也一并删）。" % (name, name))
         if want_loader is not None:

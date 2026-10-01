@@ -21,19 +21,45 @@
 const nodeFs = require('fs')
 const nodePath = require('path')
 const cp = require('child_process')
+const os = require('os')
 
 const HOST = nodePath.join(__dirname, 'host.js')
 const FAULT = process.argv.includes('--fault')
-const HAS_WINDOWS = nodeFs.existsSync('/mnt/c/Windows/system32/cmd.exe')
-const WORK_WIN = 'C:/Temp/mcart-dialect'
-const WORK = '/mnt/c/Temp/mcart-dialect'
+// 「共享的 shell 桩也得是 Windows 形状」：`run.js` 那个桩被 icon / engine / … 一堆门禁共用，
+// 在 win32 上它必须是 pwsh 形状 —— 给它 `bash -c` 等于把宿主扔进一个 WSL 世界
+// （它会"找到" WSL 的 python3，再把 `C:\...` 拼进 `/mnt/c/...`）。
+// `--fault-shared-shell` 强制退回旧形状，用来证明这条断言能红。必须在 require('./run.js') 之前设。
+if (process.argv.includes('--fault-shared-shell')) process.env.MCART_FAKE_SHELL = 'wsl'
+// 这台机器上**有没有真的 Windows PowerShell 可以跑**。两种布局都要认：
+//   * 原生 Windows（`process.platform === 'win32'`）—— 现在是主战场；
+//   * WSL（`/mnt/c/...` 在）—— 原来的形态，保持能跑。
+// 只认 `/mnt/c` 会让原生 Windows 一律落到"模拟执行"，C/D 段的端到端保存就永远是红的。
+const IS_WIN = process.platform === 'win32'
+const WSL = !IS_WIN && nodeFs.existsSync('/mnt/c/Windows/system32/cmd.exe')
+const HAS_WINDOWS = IS_WIN || WSL
+// 工作目录：原生 Windows 用系统临时目录；WSL 沿用 C:/Temp（两边都必须是 Windows 可见的路径）。
+const WORK_NATIVE = IS_WIN ? nodePath.join(os.tmpdir(), 'mcart-dialect') : '/mnt/c/Temp/mcart-dialect'
+const WORK_WIN = WORK_NATIVE.split('\\').join('/')
+const WORK = WORK_NATIVE
 const PROJECT = 'proj'
 const NS = 'dialect'
 const TEXTURE_WIN = WORK_WIN + '/' + PROJECT + '/pack/assets/' + NS + '/textures/block/probe.png'
 const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
 const PNG_BYTES = Buffer.from(PNG_BASE64, 'base64')
 
-const TO_POSIX = (p) => String(p).replace(/^([A-Za-z]):\//, (m, drive) => '/mnt/' + drive.toLowerCase() + '/')
+// 把"宿主/命令里那种 Windows 形式的路径"转成本机 nodeFs 读得到的路径。
+// 原生 Windows 上斜杠两种都认，只是统一成正斜杠；WSL 上要转成 /mnt/<盘>/。
+const TO_POSIX = IS_WIN
+  ? (p) => String(p).split('\\').join('/')
+  : (p) => String(p).replace(/^([A-Za-z]):\//, (m, drive) => '/mnt/' + drive.toLowerCase() + '/')
+
+/** 本机那个真的 powershell.exe（原生 Windows 用绝对路径，找不到就让 PATH 去解析）。 */
+function windowsPowerShellExe() {
+  if (!IS_WIN) return 'powershell.exe'
+  const root = (process.env.SystemRoot || 'C:/Windows').split('\\').join('/')
+  const absolute = root + '/System32/WindowsPowerShell/v1.0/powershell.exe'
+  return nodeFs.existsSync(TO_POSIX(absolute)) ? absolute : 'powershell.exe'
+}
 
 let failures = 0
 function check(label, ok, detail) {
@@ -82,12 +108,21 @@ function execute(command, record) {
   stepCounter += 1
   const winScript = WORK_WIN + '/step-' + stepCounter + '.ps1'
   nodeFs.writeFileSync(TO_POSIX(winScript), '\ufeff' + command)
-  // `-File` 的路径**不要加引号**：经 cmd.exe 传过去时引号会被一起交给 PowerShell，
-  // 它报"路径中具有非法字符"（实测）。cwd 也要落在 Windows 侧，否则 cmd 会把
-  // UNC 当前目录的警告和真错误混在一起。
-  const done = cp.spawnSync('/mnt/c/Windows/system32/cmd.exe',
-    ['/d', '/c', 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' + winScript],
-    { encoding: 'utf8', timeout: 120000, cwd: '/mnt/c/Temp' })
+  let done
+  if (IS_WIN) {
+    // 原生 Windows：argv 直接交给 powershell.exe，不经 cmd.exe、不用拼引号。
+    done = cp.spawnSync(windowsPowerShellExe(),
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', TO_POSIX(winScript)],
+      { encoding: 'utf8', timeout: 120000, cwd: TO_POSIX(WORK_WIN) })
+  } else {
+    // WSL：经 cmd.exe 交给 Windows 侧的 powershell.exe。
+    // `-File` 的路径**不要加引号**：经 cmd.exe 传过去时引号会被一起交给 PowerShell，
+    // 它报"路径中具有非法字符"（实测）。cwd 也要落在 Windows 侧，否则 cmd 会把
+    // UNC 当前目录的警告和真错误混在一起。
+    done = cp.spawnSync('/mnt/c/Windows/system32/cmd.exe',
+      ['/d', '/c', 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' + winScript],
+      { encoding: 'utf8', timeout: 120000, cwd: '/mnt/c/Temp' })
+  }
   record.executed.push({ command: command, exitCode: done.status, stderr: String(done.stderr || '').trim() })
   return {
     exitCode: done.status === null ? 124 : done.status,
@@ -222,27 +257,33 @@ function buildHost(record) {
   }
 
   // ── 服务晚到：宿主半不能把 shell 缓存在 apply 那一刻 ────────────────────────
-  console.log('--- C. shell 服务晚到（宿主半比它先挂载）')
-  const lateHandlers = buildHost(shellLiveLater)
-  // buildHost 里 apply 已经跑完（那时 get('shell') 是 undefined）；现在服务出现了。
-  shellLiveLater.arriveShell()
-  const lateSaved = await lateHandlers['atlas.saveTexture']({
-    root: WORK_WIN, project: PROJECT, path: TEXTURE_WIN, base64: PNG_BASE64,
-  })
-  check('服务晚到也能写贴图（缓存住就会说"宿主没有 shell 服务"）',
-    lateSaved && lateSaved.saved === true, JSON.stringify(lateSaved))
+  // 这一段（以及 D）量的是"端到端真的写下去了"，必须有真的 PowerShell 执行；
+  // 摸不到就明说 SKIP，不假装验过（以前这两段在原生 Windows 上是红的，因为按 WSL 判）。
+  if (!HAS_WINDOWS) {
+    console.log('--- C/D. SKIP 本机没有可执行的 Windows PowerShell，C/D 的端到端保存没法真跑')
+  } else {
+    console.log('--- C. shell 服务晚到（宿主半比它先挂载）')
+    const lateHandlers = buildHost(shellLiveLater)
+    // buildHost 里 apply 已经跑完（那时 get('shell') 是 undefined）；现在服务出现了。
+    shellLiveLater.arriveShell()
+    const lateSaved = await lateHandlers['atlas.saveTexture']({
+      root: WORK_WIN, project: PROJECT, path: TEXTURE_WIN, base64: PNG_BASE64,
+    })
+    check('服务晚到也能写贴图（缓存住就会说"宿主没有 shell 服务"）',
+      lateSaved && lateSaved.saved === true, JSON.stringify(lateSaved))
 
-  // ── D. 只有 execute() 的 shell（0.2.0-rc 桌面端那代）────────────────────────
-  console.log('--- D. 只有 execute() 的服务（桌面端那代，实测报过 run is not a function）')
-  const execOnly = { commands: [], fsWrites: [], executed: [], shellApi: 'execute', platform: '' }
-  buildFixture()
-  const execHandlers = buildHost(execOnly)
-  const execSaved = await execHandlers['atlas.saveTexture']({
-    root: WORK_WIN, project: PROJECT, path: TEXTURE_WIN, base64: PNG_BASE64,
-  })
-  check('只有 execute() 时也能写贴图（兼容 run/execute 两代）',
-    execSaved && execSaved.saved === true, JSON.stringify(execSaved))
-  check('确实没有走 run()（证明这条对照测的是新形状）', typeof execOnly.commands.length === 'number')
+    // ── D. 只有 execute() 的 shell（0.2.0-rc 桌面端那代）────────────────────────
+    console.log('--- D. 只有 execute() 的服务（桌面端那代，实测报过 run is not a function）')
+    const execOnly = { commands: [], fsWrites: [], executed: [], shellApi: 'execute', platform: '' }
+    buildFixture()
+    const execHandlers = buildHost(execOnly)
+    const execSaved = await execHandlers['atlas.saveTexture']({
+      root: WORK_WIN, project: PROJECT, path: TEXTURE_WIN, base64: PNG_BASE64,
+    })
+    check('只有 execute() 时也能写贴图（兼容 run/execute 两代）',
+      execSaved && execSaved.saved === true, JSON.stringify(execSaved))
+    check('确实没有走 run()（证明这条对照测的是新形状）', typeof execOnly.commands.length === 'number')
+  }
 
   // ── E. 平台是 win32、但探针跑不通（用户那句错提示的根因）──────────────────────
   //
@@ -300,6 +341,28 @@ function buildHost(record) {
   check('发出去的宿主里不再有那句错的断言（"既没有 powershell.exe"）',
     nodeFs.existsSync(emitted) && nodeFs.readFileSync(emitted, 'utf8').indexOf('既没有 powershell.exe') < 0,
     nodeFs.existsSync(emitted) ? '产物里还有' : '还没 build（先跑 node panel/build.mjs）')
+
+  // ── G. 其他门禁共用的 shell 桩也得是 Windows 形状 ───────────────────────────
+  //
+  // icon-test / engine-test 这些门禁用的是 `run.js` 里那个**共享** shell 桩。它在 Windows 上
+  // 如果是 `bash -c`，宿主就被扔进 WSL 世界：它"找到" WSL 的 python3，然后把 `C:\...` 拼进
+  // `/mnt/c/...`（实测：`python3: can't open file '/mnt/c/.../C:\...\panel/python/mcart_extract_block.py'`），
+  // 于是那些门禁红得莫名其妙，而真机上的宿主根本不是那样。形状是判据，不是"跑绿了"。
+  console.log('--- G. 共享 shell 桩（run.js）在 win32 上也是 pwsh 形状')
+  {
+    const shared = require('./run.js')
+    const want = process.platform === 'win32' ? 'pwsh' : 'posix'
+    check('共享 shell 桩的形状跟着平台（win32 → pwsh，不是 WSL bash）',
+      shared.shellShape === want, 'shape=' + shared.shellShape + '，平台=' + process.platform + '，期望=' + want)
+    if (process.platform === 'win32') {
+      const probe = await shared.shellService.run({
+        command: 'echo "mcart-shape:$($PSVersionTable.PSVersion.Major)"', timeoutMs: 30000,
+      })
+      check('共享 shell 桩真的执行 PowerShell（不是 bash 在模拟）',
+        /mcart-shape:\d/.test(String(probe.stdout.text)),
+        JSON.stringify({ exit: probe.exitCode, out: String(probe.stdout.text).trim().slice(0, 60) }))
+    }
+  }
 
   nodeFs.rmSync(WORK, { recursive: true, force: true })
   console.log(failures === 0 ? '全部通过' : failures + ' 项失败')

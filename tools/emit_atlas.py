@@ -15,8 +15,8 @@ exactly as the game falls back to the translation key.
 The entity model specs are still imported from
 `vanilla3d/tools/render_entity_model.py` -- no model number is typed here.
 
-    python3 tools/emit_atlas.py            # write both artifacts
-    python3 tools/emit_atlas.py --check    # exit 1 when either is stale
+    python tools/emit_atlas.py            # write both artifacts
+    python tools/emit_atlas.py --check    # exit 1 when either is stale
 """
 
 import argparse
@@ -45,14 +45,14 @@ SCHEMA = "mc-art.atlas/1"
 # ---------------------------------------------------------------------------
 
 DISPLAY = {
-    "fleshland": {
-        "project": "血肉之地",
+    "examplemod": {
+        "project": "Example Land",
         "block": {
-            "flesh_block": "血肉块",
-            "flesh_grass": "血肉草皮",
-            "flesh_soil": "血肉泥土",
-            "flesh_stone": "血肉石",
-            "flesh_wool": "血肉羊毛",
+            "example_block": "血肉块",
+            "example_grass": "血肉草皮",
+            "example_soil": "血肉泥土",
+            "example_stone": "血肉石",
+            "example_wool": "血肉羊毛",
             "vein_block": "筋膜块",
             "eyeball_block": "眼球块",
             "congealed_blood": "凝血块",
@@ -60,11 +60,11 @@ DISPLAY = {
             "blood_crystal_ore": "血晶矿石",
             "blood_eye_sprout": "血眼芽",
             "blood_sac": "血囊",
-            "flesh_tendril": "血肉触须",
+            "example_tendril": "血肉触须",
         },
         "item": {"blood_crystal": "血晶"},
         "entity": {"blood_sheep": "畸变羊", "blood_slime": "血滴史莱姆"},
-        "biome": {"fleshland": "血肉之地"},
+        "biome": {"examplemod": "Example Land"},
     },
     "eyeballtree": {
         "project": "眼球树",
@@ -126,8 +126,8 @@ def model_of(spec):
 # cells: the declarative scenes.  World coordinates, one cell = one block.
 # ---------------------------------------------------------------------------
 
-def fleshland_biome_cells():
-    """A 7x7 patch of the Flesh Land: mostly grass, worn soil, bare stone.
+def examplemod_biome_cells():
+    """A 7x7 patch of the Example Land: mostly grass, worn soil, bare stone.
 
     The ground goes into a coordinate map first so an ore can REPLACE the ground
     it sits in.  Appending it at the same `at` instead puts two blocks in one
@@ -138,11 +138,11 @@ def fleshland_biome_cells():
     ground = {}
     for x in range(-3, 4):
         for z in range(-3, 4):
-            block = "flesh_grass"
+            block = "example_grass"
             if (x + z) % 3 == 0:
-                block = "flesh_soil"
+                block = "example_soil"
             if (x * 3 + z * 5) % 11 == 0:
-                block = "flesh_stone"
+                block = "example_stone"
             ground[(x, z)] = block
     ground[(2, -2)] = "blood_crystal_ore"      # a vein is IN the ground
     cells = [
@@ -152,7 +152,7 @@ def fleshland_biome_cells():
     # growths stand ON the ground, one level up -- never inside it
     cells += [
         {"block": "blood_eye_sprout", "at": [1, 1, -1]},
-        {"block": "flesh_tendril", "at": [-2, 1, 1]},
+        {"block": "example_tendril", "at": [-2, 1, 1]},
         {"block": "blood_sac", "at": [2, 1, 2]},
         {"block": "eyeball_block", "at": [-3, 1, -3]},
     ]
@@ -180,7 +180,7 @@ def eyeball_tree_cells(offset=(0, 0, 0)):
 
 # ---------------------------------------------------------------------------
 
-def fleshland_atlas(namespace):
+def examplemod_atlas(namespace):
     return {
         "schema": SCHEMA,
         "namespace": namespace,
@@ -210,9 +210,9 @@ def fleshland_atlas(namespace):
             },
         ],
         "biomes": [
-            {"id": "fleshland",
-             "cells": fleshland_biome_cells(),
-             "refs": ["tools/build_flesh.py", "tools/render_ensemble.py"]},
+            {"id": "examplemod",
+             "cells": examplemod_biome_cells(),
+             "refs": ["tools/build_example.py", "tools/render_ensemble.py"]},
         ],
         # No `structures` key at all, on purpose.  The eyeball tree belongs to
         # the `eyeballtree` project, which already declares it; a second copy in
@@ -237,7 +237,7 @@ def eyeball_tree_atlas(namespace):
 
 
 PROJECTS = {
-    "fleshland": fleshland_atlas,
+    "examplemod": examplemod_atlas,
     "eyeball_tree": eyeball_tree_atlas,
 }
 

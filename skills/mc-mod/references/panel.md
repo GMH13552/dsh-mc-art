@@ -69,8 +69,11 @@ MC 资产            [物品列表] [⚙]
 
 参考目录有三条路进去，面板不再依赖那条会**静默失败**的路：
 
-* **把路径贴进输入框**（旁边是 `用这个路径`）—— 永远能用；`.minecraft`、某个版本目录、
-  `mods` 目录、单个 jar 都接受；
+* **把路径贴进输入框**（旁边是 `用这个路径`）—— 永远能用；**版本目录**
+  `.minecraft/versions/<版本>`、`.minecraft` 本身、`mods` 目录、单个 jar 都接受，
+  但**最稳的是版本目录**（里面有 `<版本>.jar`，版本被钉死）。指到 `.minecraft`
+  本身只有在它下面能唯一定位到一个版本 jar 时才读得出来；宿主的失败提示也是
+  "指到 `.minecraft/versions/<版本>`，不要指到 `.minecraft` 本身"；
 * **`用它`** —— 面板按平台的标准位置找过（`%APPDATA%\.minecraft`、
   `~/Library/Application Support/minecraft`、`~/.minecraft`）、也看过**工程旁边**
   （`.minecraft`、`run`）、还展开过启动器实例容器（CurseForge / Prism / MultiMC）一层，
@@ -80,9 +83,14 @@ MC 资产            [物品列表] [⚙]
   永久停在"对话框已打开…"、界面一个字都不变。
 
 失败现在一定会写在设置卡里，所以"点了没反应、也没有报错"不再是能出现的状态。
-检测为空时可以问 `atlas.gameRoots`：它回候选列表与最终采用的目录。
+检测为空时可以问 `atlas.gameRoots`：它回 `candidates`（它找过的地方）与 `detected`
+（**真的存在**的那些）—— 采用 `detected` 里的，或你在磁盘上亲眼确认过的路径，
+**不要手打一个猜的路径**。
 
-- **参考目录**：游戏目录或某个版本目录（`.minecraft` / `versions/<版本>`）。
+- **参考目录**：**版本目录**（`.minecraft/versions/<版本>`，里面应有 `<版本>.jar`）；
+  `.minecraft` 本身也接受，但要能唯一定位到某个版本 jar。可读的参考根有三种形态：
+  版本 jar、带 jar 的 `mods/`、或一棵已解包的 `assets/<命名空间>/…` 资源树；
+  三种都不满足时报告会说 `reference-jar-missing`。
   "选择目录…"优先用系统自己的对话框；识别出形状（版本、贴图数、资源文件数）后
   还会列几个**检测到的**候选让你一键采用。
 - **includeGenerated**（把项目自己已产出的贴图也当参考，避免新方块向原版石头的
@@ -105,10 +113,10 @@ outside `[a-z0-9_]{2,32}`, and any id carrying path separators.
 
 ### Host services can be absent — every write has a fallback
 
-`fs` and `shell` are rows that may not be composed in a given runtime. On the Windows desktop
-app (0.2.0-rc.2) a user saw the panel scan a directory and open the native picker, then fail to
-create the project with `宿主没有 shell 服务时建不出目录`. That message was a **guess**: the old
-`ensureDir` looked only at the exit code.
+`fs` and `shell` are rows that may not be composed in a given runtime. On one DSH
+0.2.0-rc.x desktop build a user saw the panel scan a directory and open the native picker,
+then fail to create the project with `宿主没有 shell 服务时建不出目录`. That message was a
+**guess**: the old `ensureDir` looked only at the exit code.
 
 Every panel write now walks a chain and **reports which link it used** (the panel says
 「目录用 … 建的」):
@@ -155,7 +163,7 @@ ForgeGradle 的 `downloadAssets` 装的是**它自己**的资源库（`GRADLE_US
 {
   "schema": "mc-art.settings/1",
   "reference": {
-    "directory": "C:/Users/<你的用户名>/AppData/Roaming/.minecraft",
+    "directory": "<game dir, or one version dir under it>",
     "includeGenerated": true,
     "includeMods": true,
     "mods": { "<命名空间>": true }
@@ -193,9 +201,9 @@ process alive); on a `dsh web` instance, stop it and start it again.
 
 ## Two ways it reaches you (and the one rule that bites)
 
-The panel ships as a real DSH package (`GMH13552/dsh-mc-art`, `panel/`) and can also
-be launched per-session as a dynamic Cordis plugin. Both are generated from **one
-source** (`tools/mcart-plugin/{host,client}.js`) by `panel/build.mjs`.
+The panel ships as a real DSH package (built from this repository's `panel/` directory)
+and can also be launched per-session as a dynamic Cordis plugin. Both are generated from
+**one source** (`tools/mcart-plugin/{host,client}.js`) by `panel/build.mjs`.
 
 The rule: the client bundle's `window.__ModuleLoader__.load({ id })` **must be the
 package name** (`dsh-mc-art-panel`). dsh's client-modules looks modules up by the id
@@ -209,15 +217,16 @@ failed batch got re-executed.
 So after installing it into a profile, check delivery — not just installation:
 
 ```bash
-dsh plugin --profile mcart-check add /path/to/dsh-mc-art/panel
+dsh plugin --profile mcart-check add <this repository>/panel
 # then add "@deepseek-ai/dsh-web-app" to that profile's dsh.profile.bundles
 # (a profile created this way only has dsh-base, and will not serve a web UI)
 dsh --profile mcart-check --port 3099 --no-open     # the startup line prints the token URL
 node panel/serve-check.mjs --url http://127.0.0.1:3099 --token <token>
-rm -rf ~/.dsh/profiles/mcart-check                  # it is a throwaway
+# throwaway: delete the profile directory (POSIX: rm -rf ~/.dsh/profiles/mcart-check;
+# Windows: remove %USERPROFILE%\.dsh\profiles\mcart-check)
 ```
 
-`serve-check.mjs` reads our row out of the boot graph, byte-compares the served bundle
-against `panel/lib/client.js`, then loads the page in a real headless browser and
-requires our activation marker (`<style data-plugin="dsh-mc-art-panel">`, which the
+`serve-check.mjs` reads the panel's row out of the boot graph, byte-compares the served
+bundle against `panel/lib/client.js`, then loads the page in a real headless browser and
+requires its activation marker (`<style data-plugin="dsh-mc-art-panel">`, which the
 plugin's `apply` inserts). A clean run prints `全部通过`; a wrong id makes 4 checks fail.

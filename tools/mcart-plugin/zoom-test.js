@@ -6,8 +6,23 @@
 // attaches onWheel as a PASSIVE listener, so preventDefault() inside it is a
 // no-op and the page zooms.  The fix is a non-passive native listener on the
 // element.  Remove that and this must fail.
+//
+// 取景框的另一半：**2D 回退那张方图**。用户实测过"物品只有 2D 的时候，图被拉成
+// 面板那么宽"。同一件事在 `panel/ui-test.mjs` 里是**行为**量出来的（真挂面板、量
+// poster canvas 的 width/height）；这里再钉一次形状，并且给它 A/B：把"取较窄那条边"
+// 改成"取宽度"，下面那一条必须红。
 const fs = require('fs')
-const client = fs.readFileSync(process.env.MCART_CLIENT || require('path').join(__dirname, 'client.js'), 'utf8')
+const FAULT = process.argv.includes('--fault')
+const raw = fs.readFileSync(process.env.MCART_CLIENT || require('path').join(__dirname, 'client.js'), 'utf8')
+const POSTER_SIDE = 'Math.max(48, Math.min(size[0], size[1]) - 24)'
+let client = raw
+if (FAULT) {
+  client = raw.replace(POSTER_SIDE, 'Math.max(48, size[0] - 24)')
+  if (client === raw) {
+    console.log('  FAIL --fault 没生效：源码里找不到 posterSide 那一句（门禁要跟着改）')
+    process.exit(1)
+  }
+}
 
 let failures = 0
 function check(label, ok, detail) {
@@ -39,6 +54,16 @@ check('角标容器是 position:relative',
   client.indexOf('.mcart-viewport{position:relative') >= 0)
 check('角标是 position:absolute',
   client.indexOf('.mcart-zoom{position:absolute') >= 0)
+
+// --- 2D 回退（3D 没东西可看时放在取景框里的那张图）---------------------------
+check('2D 回退画在取景框里（poster canvas 在 viewport 之内）',
+  client.indexOf("'mcart-poster'") >= 0 && /mcart-viewport[\s\S]{0,2000}mcart-poster/.test(client))
+check('那张图是方的：宽和高是同一个数（不是拉长的矩形）',
+  /width: posterSide, height: posterSide/.test(client))
+check('方形边长取的是取景框**较窄**那条边（不然会被拉成面板那么宽）',
+  client.indexOf(POSTER_SIDE) >= 0, POSTER_SIDE)
+check('那张图按像素画（image-rendering:pixelated），不被浏览器糊掉',
+  /\.mcart-poster\{[^}]*image-rendering:pixelated/.test(client))
 
 console.log(failures === 0 ? '\n全部通过' : '\n' + failures + ' 项失败')
 process.exit(failures === 0 ? 0 : 1)

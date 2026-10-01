@@ -5,6 +5,16 @@ are written by the panel; the third (`lang`) is written by whoever names things.
 Confusing their roles is how an asset ends up existing but nameless, or named but
 invisible.
 
+`<项目>` / `<project>` below is the project directory — the folder holding
+`mc-art.atlas.json` and the pack. It is a path, not a fixed location: a project can live
+anywhere, and the panel is pointed at it.
+
+**Who decides what here:** the *model* decides which ids exist, what they are called,
+and which family they belong to; the *files* have a fixed shape that a tool validates.
+Getting the shape wrong is a tool error (the panel refuses it); deciding that
+`example_ore` and `example_deep_ore` are one family is a taste decision the tool must
+not make for you.
+
 | file | the question it answers | written by |
 |---|---|---|
 | `<项目>/mc-art.atlas.json` | **what exists**, and where its files are | the panel (structures/biomes), generators |
@@ -45,7 +55,7 @@ as written.
 {
   "schema": "mc-art.settings/1",
   "reference": {
-    "directory": "/mnt/c/…/versions/1.18.2-Forge_40.2.0",
+    "directory": "<game dir, or one version dir under it>",
     "includeGenerated": true,
     "includeMods": true,
     "mods": { "minecraft": true, "examplemod": true, … }

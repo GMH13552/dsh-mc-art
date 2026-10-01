@@ -59,8 +59,8 @@ script is not allowed to be clever about code.  Inline `/* ... */` pairs (the
 `catch (error) { /* not fatal */ }` shape) are left alone too, for the same
 reason: they do not begin a line, so no rule here can mistake them for code.
 
-   python3 tools/strip_comments.py <file> [<file> ...]
-   python3 tools/strip_comments.py --check <annotated> <stripped>
+   python tools/strip_comments.py <file> [<file> ...]
+   python tools/strip_comments.py --check <annotated> <stripped>
 """
 import re
 import sys
@@ -94,6 +94,16 @@ def rstrip_lines(text):
 
 
 def main(argv):
+    # Windows：Python 默认按**控制台代码页**（本机 cp936/GBK）编码 stdout，而宿主/客户端
+    # 源码里有 `⚙` 这类字符 —— 直接 write 会
+    # `UnicodeEncodeError: 'gbk' codec can't encode character '\u2699'`，退出码 1，
+    # 调用方（panel/build.mjs）只看到一段 traceback。生成物本身是 UTF-8，
+    # 所以这里把两个输出流都钉死成 UTF-8（Linux/macOS 上本来就是 UTF-8，无副作用）。
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError, OSError):
+            pass
     if len(argv) >= 3 and argv[0] == "--check":
         with open(argv[1], "r", encoding="utf-8") as handle:
             annotated = handle.read()

@@ -25,6 +25,10 @@ const { execFileSync } = require('child_process')
 const REPO = nodePath.resolve(__dirname, '..', '..')
 const PANEL = nodePath.join(REPO, 'panel')
 const FAULT = process.argv.includes('--fault')
+// 「包里那份脚本」的判据：宿主有的地方用 `/`、有的地方用 `\`（moduleDir 来自 path.join），
+// 写死 `nodePath.join('panel','python')` 在 Windows 上等于找 `panel\python`，而宿主给的是
+// `panel/python` —— 一条看着对、在原生 Windows 上必红的断言。
+const PACK_PYTHON = /(^|[\\/])panel[\\/]python[\\/]/
 
 let failures = 0
 function check(label, ok, detail) {
@@ -74,13 +78,19 @@ function makeJar(path, namespace) {
 function makeSubprocess() {
   const childProcess = require('child_process')
   const reader = (chunks) => ({ readFrom: () => ({ text: Buffer.concat(chunks).toString('utf8'), nextOffset: 0, lossy: false }) })
+  // Windows 上可执行名要带扩展名去 PATH 里找（`python` 其实是 `python.exe`）。
+  // 少了这一层，这个桩在原生 Windows 上一个都解析不出来，那条"没有 shell 服务"的
+  // 用例就红成了假的（桌面端真机上 bundled python 本来就是绝对路径）。
+  const exts = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', '.com'] : ['']
   return {
     async resolveExecutable(command) {
-      if (command.includes('/')) return command
+      if (command.includes('/') || command.includes('\\')) return command
       for (const dir of String(process.env.PATH || '').split(nodePath.delimiter)) {
         if (dir === '') continue
-        const candidate = nodePath.join(dir, command)
-        if (nodeFs.existsSync(candidate)) return candidate
+        for (const ext of exts) {
+          const candidate = nodePath.join(dir, command + ext)
+          if (nodeFs.existsSync(candidate)) return candidate
+        }
       }
       throw new Error('not found: ' + command)
     },
@@ -129,9 +139,10 @@ async function main() {
   if (process.argv.includes('--fault-utf8')) {
     // 还原编码修复：去掉宿主的 -X utf8，并要求脚本里的 reconfigure 也被去掉（模拟旧版本）
     const before = patched
-    patched = patched.replace("const argv = [pythonExe, '-X', 'utf8', scanner]", "const argv = [pythonExe, scanner]")
-    patched = patched.replace("const result = await runShell(python + ' -X utf8 ' + dialect.word(scanner) +",
-      "const result = await runShell(python + ' ' + dialect.word(scanner) +")
+    patched = patched.replace("const argv = [pythonExe].concat(pythonArgs, ['-X', 'utf8', scanner], tokens === undefined ? [] : tokens)",
+      "const argv = [pythonExe].concat(pythonArgs, [scanner], tokens === undefined ? [] : tokens)")
+    patched = patched.replace("const result = await runShell(python + ' -B -X utf8 ' + dialect.word(scanner) +",
+      "const result = await runShell(python + ' -B ' + dialect.word(scanner) +")
     if (patched === before) {
       console.log('  FAIL --fault-utf8 没生效：宿主里找不到 -X utf8（门禁要跟着改）')
       process.exit(1)
@@ -184,10 +195,10 @@ async function main() {
       a === b ? '' : '先跑 node panel/build.mjs')
   }
   check('扫描脚本找到了，而且用的是**包里**那一份',
-    typeof env.scanner === 'string' && env.scanner.indexOf(nodePath.join('panel', 'python')) >= 0,
+    typeof env.scanner === 'string' && PACK_PYTHON.test(String(env.scanner)),
     String(env.scanner))
   check('抽取脚本也找到了（包里那份）',
-    typeof env.extractor === 'string' && env.extractor.indexOf(nodePath.join('panel', 'python')) >= 0,
+    typeof env.extractor === 'string' && PACK_PYTHON.test(String(env.extractor)),
     String(env.extractor))
   check('Python 解释器解析出来了', typeof env.python === 'string' && env.python !== '', String(env.python))
   check('shell 方言是按平台定的（不再靠一次可能失败的探针）',
@@ -264,7 +275,7 @@ async function main() {
     typeof noShellEnv.python === 'string' && noShellEnv.python !== '' && noShellEnv.pythonVia === 'subprocess',
     'python=' + String(noShellEnv.python) + ' via=' + String(noShellEnv.pythonVia))
   check('没有 shell 服务时脚本也是从包里找到的',
-    typeof noShellEnv.scanner === 'string' && noShellEnv.scanner.indexOf(nodePath.join('panel', 'python')) >= 0,
+    typeof noShellEnv.scanner === 'string' && PACK_PYTHON.test(String(noShellEnv.scanner)),
     String(noShellEnv.scanner))
   await noShellHandlers['atlas.saveSettings']({
     root: WORK, project: 'proj', directory: ref, includeGenerated: true, includeMods: true, mods: {},

@@ -69,14 +69,34 @@ function graphEntry(html) {
   return { url, inject: inject === null ? '(没读到)' : inject[1] }
 }
 
+/**
+ * 找一个 Chromium 内核的浏览器。**Windows 上原来一个候选都没有** —— 于是"真浏览器"
+ * 那一步在原生 Windows 上永远 SKIP（等于没测），而这里恰恰是最容易静默出事的一层。
+ * 现在把 Windows / macOS 的常规安装位也列上（Chrome 优先，Edge 也是 Chromium、支持 CDP）。
+ */
 function findChrome() {
   const explicit = arg('chrome', '')
   if (explicit !== '') return explicit
+  const home = process.env.HOME ?? process.env.USERPROFILE
+  const programFiles = process.env.ProgramFiles ?? ''
+  const programFilesX86 = process.env['ProgramFiles(x86)'] ?? ''
+  const localAppData = process.env.LOCALAPPDATA ?? ''
   const candidates = [
     process.env.CHROME_PATH,
-    ...(process.env.HOME === undefined ? [] : [
-      join(process.env.HOME, '.cache/ms-playwright/chromium-1243/chrome-linux-arm64/chrome'),
-      join(process.env.HOME, '.cache/ms-playwright/chromium-1243/chrome-linux/chrome'),
+    // Windows
+    join(programFiles, 'Google/Chrome/Application/chrome.exe'),
+    join(programFilesX86, 'Google/Chrome/Application/chrome.exe'),
+    join(localAppData, 'Google/Chrome/Application/chrome.exe'),
+    join(programFiles, 'Microsoft/Edge/Application/msedge.exe'),
+    join(programFilesX86, 'Microsoft/Edge/Application/msedge.exe'),
+    // macOS
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    // Linux / playwright 缓存
+    ...(home === undefined || home === '' ? [] : [
+      join(home, '.cache/ms-playwright/chromium-1243/chrome-linux-arm64/chrome'),
+      join(home, '.cache/ms-playwright/chromium-1243/chrome-linux/chrome'),
     ]),
     '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
   ].filter((value) => value !== undefined && value !== '')
@@ -142,8 +162,20 @@ async function browserCheck(chrome) {
     check('没有与这个包相关的控制台错误', ours.length === 0, ours.join(' | '))
     return { errors, state }
   } finally {
-    child.kill('SIGKILL')
-    rmSync(profile, { recursive: true, force: true })
+    try { child.kill('SIGKILL') } catch (error) { /* 已经退了就算了 */ }
+    // Windows：Chrome 被杀掉之后**文件句柄还要过一会儿才释放**，立刻 rmSync 会
+    // `EPERM, Permission denied`（实测：八项检查全绿，然后门禁自己崩在这里，退出码 1）。
+    // 所以先等它真的退出，再带重试地删；真删不掉也只是留个临时目录，**不许**打挂结论。
+    const started = Date.now()
+    while (child.exitCode === null && child.signalCode === null && Date.now() - started < 8000) {
+      await wait(200)
+    }
+    try {
+      rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
+    } catch (error) {
+      console.log('  · 临时 profile 没删掉（' + (error.code ?? error.message) + '）：' + profile +
+        ' —— 只是临时目录，不影响上面的结论')
+    }
   }
 }
 

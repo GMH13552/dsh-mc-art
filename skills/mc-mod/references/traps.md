@@ -14,7 +14,7 @@ that cannot be fixed.
 → Found by reading the jar: `item/generated.json` says `"parent": "builtin/generated"`
 and `namelist` has no `builtin/` entry at all.
 
-**"My project's item has no icon, but the same item in the jar is fine."**
+**"The project's item has no icon, but the same item in the jar is fine."**
 → An unqualified `parent` means `minecraft:` — a project pack does not ship the
 vanilla bases, so the chain dead-ends unless the **game root** is also given.
 → Pass **two roots**: the project pack first, the game root second.
@@ -70,6 +70,42 @@ stayed on screen and rotation/zoom appeared dead.
 → Clear the viewport when there is nothing to draw, and say why underneath.
 → Reported by a user as "the 3D froze"; the fix is measurable (painted pixels → 0).
 
+## Art and reference
+
+**"The new block does not look like its neighbours, and it is not obvious why."**
+→ The reference was chosen by **name**, not by family: a deep-layer block sampled a
+shallow-layer texture because both are called "stone".
+→ Choose by role, layer and value (`art-direction.md` §1); prefer a member of the
+family that is already in the project.
+→ Found by rendering the family side by side: the new sheet's background and palette
+were unrelated to its siblings.
+
+**"One or two pixels jut out / the ore looks like confetti."**
+→ Per-pixel randomness instead of structure, and an accent with no budget.
+→ Bands and connected clusters, one accent hue per family, accent share around a tenth
+of the surface at most (`art-direction.md` §2–3).
+→ Found by measuring: isolated-pixel count high, accent share far above the budget.
+
+**"I only asked for the colours to match, and the shape changed too."**
+→ "Make the colours match" was read as "redraw it", so the silhouette moved.
+→ A colour-only request leaves the shape **pixel-identical**; measure the silhouette
+before and after and show it did not move.
+→ Found by diffing the two silhouettes; they were not equal.
+
+**"The old placeholder is in the new texture."**
+→ A leftover placeholder asset was still in the project and was picked up as a
+reference (`includeGenerated` makes that easy).
+→ Delete placeholders before authoring; if one is found, say so instead of shipping its
+shapes.
+→ Found by comparing the new texture with the placeholder's silhouette.
+
+**"Dark wood table with a paper on it — is that really a table?"**
+→ The block entity had no model of its own: the plank texture was edited instead, so the
+3D view showed a plank with a mark on it.
+→ Give it a model with real boxes and a texture authored in **UV space**, with separate
+UV regions for parts that are different materials (`art-direction.md` §6).
+→ Found by opening it in the 3D view and asking the question out loud.
+
 ## Process and tooling
 
 **"The exit code says 1, so one test failed."**
@@ -81,8 +117,8 @@ and never call a compile failure a test failure.
 **"A check passes, so it must be fine."**
 → Look at how the check is written for evidence, not for structure: a check that
 asserts on *code text* is not a check, and an injection that does not change behaviour
-is decoration. Two real examples from this work: an "injection" that only renamed a
-key, and one that read a property without calling it.
+is decoration. Two examples from the work that produced this skill: an "injection"
+that only renamed a key, and one that read a property without calling it.
 → For every claim, name the fault that would make it fail, then inject it.
 
 **"The fixture breaks the next test in the file."**

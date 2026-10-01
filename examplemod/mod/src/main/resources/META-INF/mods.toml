@@ -15,32 +15,32 @@ license="All rights reserved"
 # A list of mods - how many allowed here is determined by the individual mod loader
 [[mods]] #mandatory
 # The modid of the mod
-modId="fleshland" #mandatory
+modId="examplemod" #mandatory
 # The version number of the mod - there's a few well known ${} variables useable here or just hardcode it
 # ${file.jarVersion} will substitute the value of the Implementation-Version as read from the mod's JAR file metadata
 # see the associated build.gradle script for how to populate this completely automatically during a build
 version="${file.jarVersion}" #mandatory
  # A display name for the mod
-displayName="血肉之地 Fleshland" #mandatory
+displayName="Example Land" #mandatory
 # A URL to query for updates for this mod. See the JSON update specification https://mcforge.readthedocs.io/en/latest/gettingstarted/autoupdate/
 #updateJSONURL="https://change.me.example.invalid/updates.json" #optional
 # A URL for the "homepage" for this mod, displayed in the mod UI
 #displayURL="https://change.me.to.your.mods.homepage.example.invalid/" #optional
 # A file name (in the root of the mod JAR) containing a logo for display
-#logoFile="fleshland.png" #optional
+#logoFile="examplemod.png" #optional
 # A text field displayed in the mod UI
 credits="mc-art 全链路工程" #optional
 # A text field displayed in the mod UI
 authors="mc-art" #optional
 # The description text for the mod (multi line!) (#mandatory)
 description='''
-血肉之地：由 mc-art 全链路生成的模组。
+Example Land：由 mc-art 全链路生成的模组。
 
-这一版只有代码，没有资源——本项目的贴图/模型来自 fleshland/pack/（atlas 那一份真相），
+这一版只有代码，没有资源——本项目的贴图/模型来自 examplemod/pack/（atlas 那一份真相），
 以后由 datagen 生成，绝不在这里再手写第二份。
 '''
 # A dependency - use the . to indicate dependency for a specific modid. Dependencies are optional.
-[[dependencies.fleshland]] #optional
+[[dependencies.examplemod]] #optional
     # the modid of the dependency
     modId="forge" #mandatory
     # Does this dependency have to exist - if not, ordering below must be specified
@@ -52,7 +52,7 @@ description='''
     # Side this dependency is applied on - BOTH, CLIENT or SERVER
     side="BOTH"
 # Here's another dependency
-[[dependencies.fleshland]]
+[[dependencies.examplemod]]
     modId="minecraft"
     mandatory=true
 # This version range declares a minimum of the current minecraft version up to but not including the next major version

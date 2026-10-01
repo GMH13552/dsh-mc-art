@@ -24,7 +24,7 @@ import {
   entityQuads, faceCorners, quadsFromElements, resolveBlockModel, translateQuads,
 } from './atlas_core.mjs';
 
-const ROOT = process.argv[2] || '/home/gmh/mc-art';
+const ROOT = process.argv[2] || process.cwd();
 const failures = [];
 const rows = [];
 

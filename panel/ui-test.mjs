@@ -30,6 +30,22 @@ const FAULT_JSON = process.argv.includes('--fault-json')
 const FAULT_REFRESH = process.argv.includes('--fault-refresh')
 // 第四个故障模式：清缓存但**不踢纪元**（用户实测："刷新完了之后 2D 贴图没有了"）。
 const FAULT_EPOCH = process.argv.includes('--fault-epoch')
+// ↑ 四条是老门禁。下面这些是这一轮新增的，每条都对应一个用户实测过的症状：
+const FAULT_FORGET = process.argv.includes('--fault-forget')       // 六张缓存表少清一张
+const FAULT_INJECT = process.argv.includes('--fault-inject')       // 红线：把文本塞进会话/agent
+const FAULT_DIAGNOSTIC = process.argv.includes('--fault-diagnostic') // 项目自己的缺失说成"缺的原版母模型"
+const FAULT_VERSION = process.argv.includes('--fault-version')     // 报错不带版本号
+const FAULT_COPY = process.argv.includes('--fault-copy')           // 复制报告不设防
+const FAULT_SCENE = process.argv.includes('--fault-scene')         // 畸形场景不归一化 → 白屏
+const FAULT_SIDEBAR = process.argv.includes('--fault-sidebar')     // 右侧栏没服务时两处都没有
+const FAULT_PNG = process.argv.includes('--fault-png')             // 非 PNG 也发给宿主
+const FAULT_SAVEPATH = process.argv.includes('--fault-savepath')   // 不挡绝对路径句柄
+const FAULT_FACES = process.argv.includes('--fault-faces')         // 按面编辑退化
+const FAULT_POSTER = process.argv.includes('--fault-poster')       // 2D 回退被拉宽
+// 未知 reason 的兜底：把"原值照贴"改回"只说原因不明"，要求新契约取值在屏幕上没有原值。
+const FAULT_REASON = process.argv.includes('--fault-reason')
+// 「不许覆盖用户正在写的东西」这条去掉 → 草稿非空时也会被报告冲掉。
+const FAULT_AUTOFILL = process.argv.includes('--fault-autofill')
 
 let failures = 0
 function check(label, ok, detail) {
@@ -38,11 +54,22 @@ function check(label, ok, detail) {
 }
 
 // ── 假 React：只实现这个面板用到的那三个 API，行为对齐真 React 的语义 ────────────
+//
+// hook 状态按**渲染归属**分桶：同一个面板里有两个注册点（`main` 里的 Atlas 和
+// `conversation.input.dock` 里的引用条）。真 React 里它们是两棵子树、状态互不干扰；
+// 用一个数组存就会互相踩（引用条的 useState 读到 Atlas 的第 0 个状态），
+// 于是"插入输入框只是写输入框"这条根本没法真跑。所以 store 按 owner 分。
 function createReact() {
-  const store = []
-  const effects = []
-  let cursor = 0
+  const stores = new Map()
+  const effectStores = new Map()
+  const cursors = new Map()
+  let owner = 'main'
   let dirty = false
+  const bucket = (map) => {
+    if (!map.has(owner)) map.set(owner, [])
+    return map.get(owner)
+  }
+  const at = () => { const index = cursors.get(owner) || 0; cursors.set(owner, index + 1); return index }
   return {
     api: {
       Component: class Component {
@@ -60,32 +87,41 @@ function createReact() {
           children: kids }
       },
       useState: (initial) => {
-        const at = cursor++
-        if (!(at in store)) store[at] = typeof initial === 'function' ? initial() : initial
-        return [store[at], (next) => {
-          const value = typeof next === 'function' ? next(store[at]) : next
-          if (value !== store[at]) { store[at] = value; dirty = true }
+        const store = bucket(stores)
+        const index = at()
+        if (!(index in store)) store[index] = typeof initial === 'function' ? initial() : initial
+        return [store[index], (next) => {
+          const value = typeof next === 'function' ? next(store[index]) : next
+          if (value !== store[index]) { store[index] = value; dirty = true }
         }]
       },
       useEffect: (fn, deps) => {
-        const at = cursor++
-        const previous = effects[at]
+        const store = bucket(effectStores)
+        const index = at()
+        const previous = store[index]
         const same = previous !== undefined && Array.isArray(deps) && Array.isArray(previous.deps) &&
-          deps.length === previous.deps.length && deps.every((item, index) => item === previous.deps[index])
-        if (!same) effects[at] = { deps: deps, pending: fn, previous: previous }
+          deps.length === previous.deps.length && deps.every((item, at) => item === previous.deps[at])
+        if (!same) store[index] = { deps: deps, pending: fn, previous: previous }
       },
     },
-    beginPass: () => { cursor = 0; dirty = false },
+    /** 下一遍渲染算谁的 hook（`main` / `dock` 各算各的）。 */
+    beginPass: (name) => {
+      owner = name === undefined ? 'main' : name
+      cursors.set(owner, 0)
+      dirty = false
+    },
     isDirty: () => dirty,
     /** 跑这一遍登记下来的 effect；返回有没有跑（跑过就要再渲染一遍）。 */
     flushEffects: () => {
       let ran = false
-      for (const slot of effects) {
-        if (slot === undefined || slot.pending === undefined) continue
-        const stop = slot.pending()
-        slot.pending = undefined
-        slot.cleanup = typeof stop === 'function' ? stop : undefined
-        ran = true
+      for (const store of effectStores.values()) {
+        for (const slot of store) {
+          if (slot === undefined || slot.pending === undefined) continue
+          const stop = slot.pending()
+          slot.pending = undefined
+          slot.cleanup = typeof stop === 'function' ? stop : undefined
+          ran = true
+        }
       }
       return ran
     },
@@ -109,6 +145,66 @@ function textOf(node) {
   return (node.children || []).map(textOf).join('')
 }
 
+// ── 假画布 / 假 <img>：让"像素真的解码了"在 Node 里也能跑 ────────────────────────
+//
+// 3D 视图和像素编辑器的路是：宿主送 base64 贴图 → 面板画一个隐藏 <img> → 解码 effect
+// 把 <img> 画进隐藏 canvas 再读回像素（`decoded`）。Node 里没有浏览器，所以这里给 ref
+// 一个够用的假件。有了它，"手动修改 → 按面编辑 → 保存发出去的确实是 PNG"才能用**行为**
+// 验，而不是只搜源码里的字符串（字符串在、路不通，正是这个仓库吃过的亏）。
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+const PNG_DATA_URL = 'data:image/png;base64,'
+  + Buffer.from(PNG_MAGIC.concat([0, 0, 0, 0, 0, 0, 0, 0])).toString('base64')
+const JPEG_DATA_URL = 'data:image/jpeg;base64,'
+  + Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]).toString('base64')
+
+function fakeContext() {
+  return {
+    imageSmoothingEnabled: false,
+    createImageData: (width, height) => ({ width: width, height: height, data: new Uint8ClampedArray(width * height * 4) }),
+    getImageData: (x, y, width, height) => ({ width: width, height: height, data: new Uint8ClampedArray(width * height * 4) }),
+    putImageData: () => {},
+    clearRect: () => {},
+    drawImage: () => {},
+    beginPath: () => {},
+    moveTo: () => {},
+    lineTo: () => {},
+    stroke: () => {},
+    fillRect: () => {},
+  }
+}
+function fakeCanvas() {
+  return {
+    width: 256, height: 256, clientWidth: 340, clientHeight: 240,
+    getContext: () => fakeContext(),
+    toDataURL: (mime) => (mime === 'image/png' ? PNG_DATA_URL : JPEG_DATA_URL),
+    addEventListener: () => {}, removeEventListener: () => {},
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 340, height: 240 }),
+    setPointerCapture: () => {},
+  }
+}
+/** 把屏幕上所有 canvas / img 的 ref 都喂上假件，报告喂了几个。 */
+function wireRefs(ui) {
+  let canvases = 0, images = 0
+  for (const node of ui.nodes()) {
+    if (typeof node.props.ref !== 'function') continue
+    if (node.type === 'canvas') { node.props.ref(fakeCanvas()); canvases += 1 }
+    else if (node.type === 'img') { node.props.ref({ complete: true, naturalWidth: 16, naturalHeight: 16 }); images += 1 }
+  }
+  return { canvases: canvases, images: images }
+}
+/** 反复喂 ref + 等稳定：解码 effect 要下一遍渲染才读得到刚登记的节点。 */
+async function decodeTextures(ui) {
+  const wired = { canvases: 0, images: 0 }
+  for (let pass = 0; pass < 3; pass++) {
+    await ui.settle()
+    const now = wireRefs(ui)
+    wired.canvases += now.canvases
+    wired.images += now.images
+    await ui.settle()
+  }
+  return wired
+}
+
 /**
  * 渲染一个组件，并把"点某个按钮"做成可调用：`click(label)` 会找到按钮点下去，
  * 然后继续把 effect / promise 抽干，直到界面稳定。
@@ -124,8 +220,9 @@ function makeHost(hostCalls) {
   }
 }
 
-async function mount(component, props, host, react) {
+async function mount(component, props, host, react, owner) {
   let tree = null
+  const me = owner === undefined ? 'main' : owner
   /**
    * 沿"组件链"下降：槽里注册的包装 → 渲染边界（类组件）→ Atlas（函数组件），
    * 直到遇到宿主元素（div 之类）为止。**不递归调用树里的其他函数组件** ——
@@ -161,6 +258,12 @@ async function mount(component, props, host, react) {
         const instance = stack[boundaryAt]
         instance.state = instance.constructor.getDerivedStateFromError(error)
         stack.length = boundaryAt + 1
+        // 真 React 在提交阶段还会调 `componentDidCatch(error, info)`。面板的边界在这里
+        // 把报告放进输入框草稿（"渲染失败不能只是死在那里"），所以这一步必须仿真出来，
+        // 否则那条路在门禁里永远跑不到。
+        if (typeof instance.componentDidCatch === 'function') {
+          try { instance.componentDidCatch(error, { componentStack: '' }) } catch (ignored) { /* 边界自己抛了也不该带走渲染 */ }
+        }
         node = instance.render()
       }
     }
@@ -170,7 +273,7 @@ async function mount(component, props, host, react) {
   async function settle(limit) {
     let quiet = 0
     for (let pass = 0; pass < (limit === undefined ? 60 : limit); pass++) {
-      react.beginPass()
+      react.beginPass(me)
       tree = renderChain(component(props), [])
       const ran = react.flushEffects()
       // 抽干 effect 里发出的 host.call：它们大多要两三个 tick 才有结果，
@@ -193,6 +296,7 @@ async function mount(component, props, host, react) {
   return {
     settle: settle,
     text: () => textOf(tree),
+    nodes: () => nodes(),
     buttons: () => buttons().map((button) => textOf(button)),
     has: (label) => nodes().some((node) => textOf(node).indexOf(label) >= 0),
     inputs: () => nodes().filter((node) => node.type === 'input'),
@@ -207,6 +311,17 @@ async function mount(component, props, host, react) {
     async clickLabel(fragment) {
       const button = buttons().filter((node) => textOf(node).indexOf(fragment) >= 0)[0]
       if (button === undefined) throw new Error('屏幕上没有文字包含「' + fragment + '」的按钮。现在有：' + buttons().map(textOf).join(' / '))
+      await button.props.onClick()
+      await settle()
+    },
+    /** 按 title 点按钮：物品栏/九宫格那几格是 <button><canvas/></button>，文字是空的，
+     *  名字只在 `title` 里。 */
+    async clickTitle(fragment) {
+      const button = buttons().filter((node) => String(node.props.title || '').indexOf(fragment) >= 0)[0]
+      if (button === undefined) {
+        throw new Error('屏幕上没有 title 包含「' + fragment + '」的按钮。现在有：'
+          + buttons().map((node) => String(node.props.title || textOf(node))).join(' / '))
+      }
       await button.props.onClick()
       await settle()
     },
@@ -226,11 +341,12 @@ let savedSettings = null
 let handlers = async () => ({})
 
 function makeHandlers(options) {
+  const o = options || {}
   const settings = {
     path: 'ui_probe/mc-art.settings.json', project: PROJECT.id, title: PROJECT.title,
     file: CWD + '/ui_probe/mc-art.settings.json', directory: '',
     shape: '', textures: 0, sources: [], scanError: null, scanner: null,
-    detected: options.detected || [], includeGenerated: true, includeMods: false, mods: [],
+    detected: o.detected || [], includeGenerated: true, includeMods: false, mods: [],
   }
   return async (name, args) => {
     if (name === 'atlas.session') return { cwd: CWD }
@@ -248,6 +364,9 @@ function makeHandlers(options) {
     if (name === 'atlas.saveSettings') { savedSettings = (args || {}).directory; return { saved: true, file: settings.file, path: settings.path, via: 'fs' } }
     if (name === 'atlas.pickDirectory') return pickerReply
     if (name === 'atlas.scene') {
+      // 这个用例要哪一份就答哪一份：`sceneReply` 可以是对象，也可以是拿请求算的
+      // 函数（"画不出来 / 畸形 JSON / 逐面贴图"三段各要一份不同的答案）。
+      if (o.sceneReply !== undefined) return typeof o.sceneReply === 'function' ? o.sceneReply(args) : o.sceneReply
       // 结构/群系才会走 `openVoxel()`（它就认这两种），`voxel` 有值之后左边菜单的
       // 方块图标那条 effect（`atlas.icons`）才会真的跑 —— "刷新清完有没有人再填"
       // 的行为检查要靠它。别的一律按方块答（quads 空、cells 空）。
@@ -257,21 +376,28 @@ function makeHandlers(options) {
       return { kind: wantStructure ? 'structure' : 'block', id: '', quads: [],
         textureIds: [], textures: {}, animations: {},
         cells: wantStructure ? [] : null, refs: [], box: null, errors: [],
+        // `@ 提意见` 要有东西可引用：`ref` 空的时候那条引用栏根本不出现。
+        ref: o.sceneRef === undefined ? null : o.sceneRef,
         choices: [{ name: 'example_block', title: '示例方块' }] }
     }
-    if (name === 'atlas.itemIcons' || name === 'atlas.icons' || name === 'atlas.refIcons') return { icons: {}, items: {}, names: {}, failed: [] }
+    if (name === 'atlas.itemIcons' || name === 'atlas.icons' || name === 'atlas.refIcons') {
+      if (o.iconReply !== undefined) return o.iconReply
+      return { icons: {}, items: {}, names: {}, failed: [] }
+    }
     // 物品浏览器要"有东西可选"，`ensureItemPage` 才会真的去取配方（它要求 facts 非空）。
     if (name === 'atlas.refItems') {
-      return { items: [{ id: 'example_item', title: '示例物品' }], version: '1.20.1' }
+      return { items: [{ id: 'example_item', name: '示例物品', form: 'flat', family: '材料' }], version: '1.20.1' }
     }
     if (name === 'atlas.refNamespaces') return { namespaces: [], directory: '', reason: '没有设置参考目录' }
+    if (name === 'atlas.saveTexture') return { saved: true, bytes: 96 }
     return {}
   }
 }
 const Project_dir = () => ({ root: CWD, id: PROJECT.id, title: PROJECT.title, namespace: PROJECT.namespace, dir: CWD + '/' + PROJECT.id })
 
-/** 用（可被 --fault 改写的）源码搭出插件，并拿到它注册的那个组件。 */
-function buildPanel(source, host, reactApi) {
+/** 用（可被 --fault 改写的）源码搭出插件，并拿到它注册的那些组件。 */
+function buildPanel(source, host, reactApi, options) {
+  const o = options || {}
   const seen = []
   const slots = {
     inject: (slot, callback) => callback(),
@@ -279,11 +405,17 @@ function buildPanel(source, host, reactApi) {
       seen.push({ settings: settings, component: component })
       return () => {}
     },
-    entries: () => [],
+    entries: (name) => (o.slotEntries === undefined || o.slotEntries[name] === undefined
+      ? [] : o.slotEntries[name]),
   }
   const ctx = {
-    get: (name) => (name === 'slots' ? slots : undefined),
-    inject: () => () => {},
+    // 右侧栏的判据是"服务在，或者那个槽已经有条目"——所以这里的 `get` 要能按用例
+    // 只给槽、不给服务（用户实测过的那个形状：面板两处都不见了）。
+    get: (name) => {
+      if (name === 'slots') return slots
+      return o.services === undefined ? undefined : o.services[name]
+    },
+    inject: (names, callback) => { if (o.fireInject === true && typeof callback === 'function') callback(); return () => {} },
     effect: (fn) => { fn(); return () => {} },
     timer: { interval: () => () => {}, timeout: async () => {} },
   }
@@ -292,40 +424,102 @@ function buildPanel(source, host, reactApi) {
     reactApi, host, styles, console, '0.0.0-test')
   plugin.apply(ctx)
   const main = seen.filter((item) => item.settings.name === 'main')[0]
-  if (main === undefined) throw new Error('客户端没有注册 main 槽：' + seen.map((i) => i.settings.name).join(','))
-  return main.component
+  if (o.allowMissingMain !== true && main === undefined) throw new Error('客户端没有注册 main 槽：' + seen.map((i) => i.settings.name).join(','))
+  const dock = seen.filter((item) => item.settings.name === 'conversation.input.dock')[0]
+  return {
+    main: main === undefined ? null : main.component,
+    dock: dock === undefined ? null : dock.component,
+    registered: seen.map((item) => item.settings.name),
+  }
 }
 
 async function main() {
+  // 浏览器替身：缩略图那一格（`itemIconUrl`）用 `document.createElement('canvas')` 烘图，
+  // Node 里没有 document。给它一个够用的替身，那条路才跑得起来（复制报告的兜底也用它）。
+  globalThis.document = {
+    createElement: (tag) => (tag === 'canvas' ? fakeCanvas() : { value: '', setAttribute: () => {}, select: () => {} }),
+    execCommand: () => true,
+    body: { appendChild: () => {}, removeChild: () => {} },
+  }
   const source = readFileSync(SOURCE_PATH, 'utf8')
   let faulted = source
-  if (FAULT_JSON) {
-    faulted = source.replace('const ids = idsOf(asset.recipe)',
-      "const ids = asset.recipe === null ? [] : (asset.recipe.textureIds || [])")
-    if (faulted === source) {
-      console.log('  FAIL --fault-json 没生效：找不到 idsOf(asset.recipe) 那一处（门禁要跟着改）')
-      process.exit(1)
-    }
-  } else if (FAULT_REFRESH) {
-    faulted = source.replace('onClick: () => { forgetTextures(); setTexEpoch(texEpoch + 1); scan(root, true, null) }',
-      'onClick: () => scan(root, true, null)')
-    if (faulted === source) {
-      console.log('  FAIL --fault-refresh 没生效：找不到刷新按钮里那句 forgetTextures()（门禁要跟着改）')
-      process.exit(1)
-    }
-  } else if (FAULT_EPOCH) {
+  // A/B 表。每条门禁都得有**能红**的那一半：注入该缺陷、要求对应的断言变红。
+  // 一次只跑一个，好让"哪一条红了"说话。
+  const FAULTS = [
+    { flag: FAULT_JSON, name: '--fault-json', hint: '源码里找不到 idsOf(asset.recipe) 那一处',
+      apply: (src) => src.replace('const ids = idsOf(asset.recipe)',
+        "const ids = asset.recipe === null ? [] : (asset.recipe.textureIds || [])") },
+    { flag: FAULT_REFRESH, name: '--fault-refresh', hint: '找不到刷新按钮里那句 forgetTextures()',
+      apply: (src) => src.replace('onClick: () => { forgetTextures(); setTexEpoch(texEpoch + 1); scan(root, true, null) }',
+        'onClick: () => scan(root, true, null)') },
     // 只删纪元那一脚，缓存照旧清 —— 用户实测的那个回归就是这个形状：
     // 表清空了，可没人再把它填回来（物品浏览器/九宫格/左边菜单全空白）。
-    faulted = source.replace('forgetTextures(); setTexEpoch(texEpoch + 1); scan(root, true, null)',
-      'forgetTextures(); scan(root, true, null)')
+    { flag: FAULT_EPOCH, name: '--fault-epoch', hint: '找不到刷新按钮里那句 setTexEpoch',
+      apply: (src) => src.replace('forgetTextures(); setTexEpoch(texEpoch + 1); scan(root, true, null)',
+        'forgetTextures(); scan(root, true, null)') },
+    { flag: FAULT, name: '--fault', hint: '源码里找不到设置卡的手输框那一段',
+      apply: (src) => src.replace(/rows\.push\(React\.createElement\('div', \{ className: 'mcart-bar', key: 'dirinput' \}[\s\S]*?\)\)\n/, '') },
+    // 六张缓存表少清一张（用户实测："3D 换了、菜单图标还是旧的"）。
+    { flag: FAULT_FORGET, name: '--fault-forget', hint: '找不到 forgetTextures 里清 itemRecipes 那一句',
+      apply: (src) => src.replace('  for (const key of Object.keys(itemRecipes)) delete itemRecipes[key]\n', '') },
+    // 红线：把"插入输入框"改成往 agent 里塞消息（0.1.26 那条写坏会话日志的形状）。
+    { flag: FAULT_INJECT, name: '--fault-inject', hint: '找不到"插入输入框"里写进 draft 的那一句',
+      apply: (src) => src.replace("if (props.inputActions !== undefined) props.inputActions.setDraft(base + tail + ' ')",
+        "host.call('agent.steer', { text: base + tail })") },
+    // 项目自己的缺失被说成"缺的原版母模型" —— 用户贴的那份报告就是这么指错方向的。
+    { flag: FAULT_DIAGNOSTIC, name: '--fault-diagnostic', hint: '找不到 DIAG_KIND 那一行',
+      apply: (src) => src.replace("{ project: '项目里缺', vanilla: '缺的原版母模型' }",
+        "{ project: '缺的原版母模型', vanilla: '缺的原版母模型' }") },
+    // 「取不到」不带版本号：用户报问题时说不清是哪一版。
+    { flag: FAULT_VERSION, name: '--fault-version', hint: '找不到 versionTag 的定义',
+      apply: (src) => src.replace("const versionTag = () => '（MC 资产面板 ' + String(PANEL_VERSION) + '）'",
+        "const versionTag = () => ''") },
+    // 复制报告不设防：没有剪贴板的地方当场抛（点击没反应/面板炸）。
+    { flag: FAULT_COPY, name: '--fault-copy', hint: '找不到 copyReport 的定义',
+      apply: (src) => src.replace('function copyReport(text) {',
+        'function copyReport(text) { return navigator.clipboard.writeText(String(text))') },
+    // 畸形场景（JSON 丢字段/类型不对）不再归一化 → 渲染时抛 → 白屏。
+    { flag: FAULT_SCENE, name: '--fault-scene', hint: '找不到 sceneOf 里归一化 errors 的那一句',
+      apply: (src) => src.replace('errors: arrayOf(payload.errors),', 'errors: payload.errors,') },
+    // 右侧栏只有槽、没有 tabs 服务时直接进右栏 → 两处都没有（用户实测"右边栏一片空白"）。
+    { flag: FAULT_SIDEBAR, name: '--fault-sidebar', hint: '找不到 apply 里那句 inRightColumn 的判断',
+      apply: (src) => src.replace('if (inRightColumn) placeRight()',
+        "if (slotHasEntries('sidebar.right.pane.tab')) placeRight()") },
+    // 画布给的不是 PNG 也照发（宿主就无从"先验是 PNG 再替换"）。
+    { flag: FAULT_PNG, name: '--fault-png', hint: '找不到 saveEdit 里取 PNG 的那一句',
+      apply: (src) => src.replace("editScratch.toDataURL('image/png')", "editScratch.toDataURL('image/jpeg')") },
+    // 不挡绝对路径 / `..` 的贴图句柄 → 可能写到项目包外面去。
+    { flag: FAULT_SAVEPATH, name: '--fault-savepath', hint: '找不到 saveEdit 里的句柄守卫',
+      apply: (src) => src.replace('if (!safeTextureHandle(target)) {', 'if (false && !safeTextureHandle(target)) {') },
+    // 按面编辑退化：贴图与面的对应关系丢掉（草方块会开在泥土那一面）。
+    { flag: FAULT_FACES, name: '--fault-faces', hint: '找不到 facesForScene 的定义',
+      apply: (src) => src.replace('function facesForScene() {', 'function facesForScene() { return {}') },
+    // 2D 回退被拉成面板那么宽（不是方图）——用户要的是"方方正正那张图"。
+    { flag: FAULT_POSTER, name: '--fault-poster', hint: '找不到 posterSide 那一句',
+      apply: (src) => src.replace('Math.max(48, Math.min(size[0], size[1]) - 24)', 'Math.max(48, size[0] - 24)') },
+    // 契约会长新 reason（宿主比面板新是常态）：把兜底链整条改回旧的"只说原因不明"
+    // （连同 `diagnosticOf` 里把"没给 reason"折成 `unknown` 那一句）。
+    { flag: FAULT_REASON, name: '--fault-reason', hint: '找不到 reasonLine 的两条兜底',
+      apply: (src) => src
+        .replace("  if (raw !== '') return '原因：' + raw + '（面板不认识这个 reason，把原值照贴出来）'\n"
+          + "  return '原因：unknown（宿主没有给 reason）'",
+          "  return '原因：' + (DIAG_REASON[raw] || DIAG_REASON.unknown)")
+        .replace("typeof raw.reason === 'string' && raw.reason !== '' ? raw.reason : 'unknown'",
+          "typeof raw.reason === 'string' ? raw.reason : ''") },
+    // 「不许覆盖用户正在写的东西」：去掉守卫 → 用户草稿被报告冲掉。
+    { flag: FAULT_AUTOFILL, name: '--fault-autofill', hint: '找不到 autoFillDraft 里的"不覆盖草稿"守卫',
+      apply: (src) => src.replace("  if (manual !== true && current.trim() !== '') { lastAutoVerdict = 'busy'; return 'busy' }",
+        "  if (false && manual !== true && current.trim() !== '') { lastAutoVerdict = 'busy'; return 'busy' }") },
+  ]
+  const chosen = FAULTS.filter((entry) => entry.flag)
+  if (chosen.length > 1) {
+    console.log('  FAIL 一次只跑一个 --fault（现在：' + chosen.map((entry) => entry.name).join(' ') + '）')
+    process.exit(1)
+  }
+  if (chosen.length === 1) {
+    faulted = chosen[0].apply(source)
     if (faulted === source) {
-      console.log('  FAIL --fault-epoch 没生效：找不到刷新按钮里那句 setTexEpoch（门禁要跟着改）')
-      process.exit(1)
-    }
-  } else if (FAULT) {
-    faulted = source.replace(/rows\.push\(React\.createElement\('div', \{ className: 'mcart-bar', key: 'dirinput' \}[\s\S]*?\)\)\n/, '')
-    if (faulted === source) {
-      console.log('  FAIL --fault 没生效：源码里找不到设置卡的手输框那一段（门禁要跟着改）')
+      console.log('  FAIL ' + chosen[0].name + ' 没生效：' + chosen[0].hint + '（门禁要跟着改）')
       process.exit(1)
     }
   }
@@ -339,7 +533,10 @@ async function main() {
   // 插件（组件闭包）和渲染循环用的是同一对，否则 hook 状态和调用记录会分家。
   const react = createReact()
   const host = makeHost(calls)
-  const component = buildPanel(faulted, host, react.api)
+  // 一个实例：`main` 和 `conversation.input.dock` 必须来自同一次 build（模块级状态
+  // —— 输入框把手、去重账、解码表 —— 都在那次 build 的闭包里）。
+  const panel0 = buildPanel(faulted, host, react.api)
+  const component = panel0.main
   const ui = await mount(component, { sessionId: 'ui-test' }, host, react)
 
   // 进到"有项目"的状态：先用本会话目录，再点 ⚙。
@@ -387,11 +584,28 @@ async function main() {
   console.log('--- 渲染异常：边界要把话画出来（而不是一片空白）')
   globalThis.__MCART_FORCE_RENDER_ERROR__ = true
   try {
+    // 引用条先挂上：输入框的把手只有它拿得到。渲染失败的这一路要能把报告放进草稿，
+    // 靠的就是它 —— 也就是说这一条测的是真壳里的顺序。
+    const boundaryDrafts = []
+    const callsBeforeBoom = calls.length
+    await mount(panel0.dock, { sessionId: 'ui-test',
+      useInput: (selector) => selector({ draft: '' }),
+      inputActions: { setDraft: (text) => boundaryDrafts.push(text) },
+    }, host, react, 'dock')
     const boom = await mount(component, { sessionId: 'ui-test' }, host, react)
     check('渲染抛异常时，屏幕上出现错误文字（不是空白）',
       boom.text().indexOf('面板渲染失败') >= 0 && boom.text().indexOf('注入的渲染错误') >= 0,
       boom.text().slice(0, 160) || '（空白）')
     check('并且带着可报的版本号', boom.text().indexOf('0.0.0-test') >= 0, boom.text().slice(0, 200))
+    check('渲染失败也把报告放进输入框草稿（只放草稿、不发送），并且告诉用户放好了',
+      boundaryDrafts.length === 1
+      && boundaryDrafts[0].indexOf('面板渲染失败：注入的渲染错误') >= 0
+      && boundaryDrafts[0].indexOf('0.0.0-test') >= 0
+      && boundaryDrafts[0].indexOf('只放进草稿') >= 0
+      && boom.text().indexOf('已把这份报告放进输入框') >= 0,
+      JSON.stringify(boundaryDrafts).slice(0, 200))
+    check('渲染失败这一路没有向宿主发任何东西（更不是写会话）',
+      calls.length === callsBeforeBoom, '多了 ' + (calls.length - callsBeforeBoom) + ' 个 host 调用')
   } finally {
     globalThis.__MCART_FORCE_RENDER_ERROR__ = false
   }
@@ -483,7 +697,7 @@ async function main() {
     /\{ forgetTextures\(\); setTexEpoch\(texEpoch \+ 1\) \}/].every((re) => re.test(faulted)))
   check('取不到图标时屏幕上有话（静默失败 = 图标凭空消失，没人知道为什么）',
     /itemFetchError = '取不到物品图标：' \+ failed/.test(faulted)
-    && /itemFetchError === '' \? '点一格就放到上面的 3D 里看' : itemFetchError/.test(faulted))
+    && /itemFetchError === '' \? '点一格就放到上面的 3D 里看' : withVersion\(itemFetchError\)/.test(faulted))
   check('图标"问过了"的账在请求失败时会退回来（一次抖动不该让图标永久不出现）',
     /for \(const name of batch\) delete iconTried\[name\]/.test(faulted))
 
@@ -536,6 +750,411 @@ async function main() {
   check('刷新之后方块图标会再取一次（不然左边菜单只剩空框）',
     countOf('atlas.icons') > iconsBefore,
     '刷新前 ' + iconsBefore + ' 次，刷新后 ' + countOf('atlas.icons') + ' 次')
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 下面这一段是这一轮加的。每一条都对着用户实测过的一个症状，而且每一条都有
+  // 对应的 `--fault-*`（见表头）能把它打红。
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ── 红线：报告只上屏 / 只进输入框，绝不写会话或 agent ────────────────────────
+  //
+  // 这不是功能，是信任：0.1.26 面板往 agent 里塞了一条没有 `source` 的消息，用户的
+  // 会话日志被写坏、那个会话再也打不开。静态+行为两头盯着：
+  //   1. 客户端源码里没有会话 / agent 的写入口；
+  //   2. 「@ 提意见」「插入输入框」真的只写输入框 —— 宿主一个字节都没收到。
+  console.log('--- 红线：报告只上屏 / 只进输入框，绝不写会话或 agent')
+  const injections = []
+  for (const line of faulted.split('\n')) {
+    if (/^\s*(\*|\/\/)/.test(line)) continue   // 注释里出现这些词是说明，不是调用
+    if (/steer|inbox|notifyAgent|agentNotices|lastSessionId|\.append\s*\(|\bsessions\s*\(|\bagents\s*\(/.test(line)) {
+      injections.push(line.trim().slice(0, 90))
+    }
+  }
+  check('客户端里没有会话 / agent 的写入口（steer / inbox / append / sessions / agents）',
+    injections.length === 0, injections.join(' ｜ '))
+  check('报告的去向只有剪贴板（有「复制报告」，走 writeText，且有 execCommand 兜底）',
+    faulted.indexOf("'复制报告'") >= 0 && faulted.indexOf('writeText') >= 0
+    && faulted.indexOf('execCommand') >= 0)
+  check('报告卡自己写着"不会把它发进任何会话"',
+    faulted.indexOf('面板不会把它发进任何会话') >= 0)
+
+  const injectCalls = []
+  const draftCalls = []
+  handlers = makeHandlers({ sceneRef: 'pack/assets/ui_probe/models/block/example_block.json' })
+  const reactA = createReact()
+  const hostA = makeHost(injectCalls)
+  const builtA = buildPanel(faulted, hostA, reactA.api)
+  const uiA = await mount(builtA.main, { sessionId: 'ui-test' }, hostA, reactA, 'main')
+  if (uiA.buttonProps('用本会话目录') !== undefined) await uiA.click('用本会话目录')
+  await uiA.settle()
+  const beforeComplain = injectCalls.length
+  const couldComplain = await uiA.click('@ 提意见').then(() => true).catch(() => false)
+  check('资产旁边有「@ 提意见」（没有它，用户只能自己描述问题）',
+    couldComplain === true, uiA.buttons().join(' / '))
+  check('点「@ 提意见」不向宿主发一个字（更没有任何会话写入）',
+    injectCalls.length === beforeComplain, injectCalls.slice(beforeComplain).map((call) => call.name).join(' / '))
+
+  check('客户端注册了输入框上方那条引用栏（conversation.input.dock）',
+    builtA.dock !== null && builtA.dock !== undefined, builtA.registered.join(','))
+  const uiDock = builtA.dock === null || builtA.dock === undefined ? null : await mount(builtA.dock, {
+    sessionId: 'ui-test',
+    useInput: (selector) => selector({ draft: '我本来打了一半的话 ' }),
+    inputActions: { setDraft: (text) => draftCalls.push(text) },
+  }, hostA, reactA, 'dock')
+  check('引用栏画出来了，并且写着引用的是哪个文件',
+    uiDock !== null && uiDock.text().indexOf('引用给 AI') >= 0
+    && uiDock.text().indexOf('@pack/assets/ui_probe/models/block/example_block.json') >= 0,
+    uiDock === null ? '没注册 dock' : uiDock.text().slice(0, 160))
+  const beforeInsert = injectCalls.length
+  const inserted = uiDock !== null && await uiDock.click('插入输入框').then(() => true).catch(() => false)
+  check('点「插入输入框」只把文本放进输入框（@路径 + 一句话，用户自己按发送）',
+    inserted === true && draftCalls.length === 1
+    && draftCalls[0].indexOf('@pack/assets/ui_probe/models/block/example_block.json') >= 0
+    && draftCalls[0].indexOf('我本来打了一半的话') >= 0,
+    JSON.stringify(draftCalls))
+  check('「插入输入框」同样不向宿主发任何东西（尤其没有 agent.steer / inbox）',
+    injectCalls.length === beforeInsert, injectCalls.slice(beforeInsert).map((call) => call.name).join(' / '))
+
+  // ── 画不出来：结构化 diagnostic 要看得懂、能复制、太长能折叠 ─────────────────
+  function sceneMount(reply) {
+    handlers = makeHandlers({ sceneReply: reply })
+    const callsHere = []
+    const reactHere = createReact()
+    const hostHere = makeHost(callsHere)
+    return { calls: callsHere, host: hostHere, react: reactHere,
+      built: buildPanel(faulted, hostHere, reactHere.api) }
+  }
+  console.log('--- 画不出来：结构化 diagnostic 看得懂 / 能复制 / 太长能折叠')
+  const SHORT_DIAG = {
+    reason: 'project-model-missing',
+    block: 'ui_probe:mist_door_lower',
+    missing: [{ kind: 'project', name: 'ui_probe:block/mist_door_lower',
+      fixPath: 'pack/assets/ui_probe/models/block/mist_door_lower.json' }],
+    tried: ['项目包 pack/assets/ui_probe → 没有 models/block/mist_door_lower.json'],
+    referenceDirectory: '',
+  }
+  const LONG_DIAG = {
+    reason: 'vanilla-parent-missing',
+    block: 'ui_probe:many_things',
+    missing: Array.from({ length: 12 }, (unused, index) => ({
+      kind: index === 0 ? 'project' : 'vanilla',
+      name: (index === 0 ? 'ui_probe:' : 'minecraft:') + 'block/missing_' + index,
+      fixPath: 'pack/assets/ui_probe/models/block/missing_' + index + '.json',
+    })),
+    tried: ['项目包 → 没有', '面板内置的原版母模型表 → 没有', '参考目录的 jar → 没有', '抽取器 → 退出码 2'],
+    referenceDirectory: '',
+  }
+  const diagA = sceneMount({ error: '画不出 ui_probe:mist_door_lower', diagnostic: SHORT_DIAG })
+  const uiDiag = await mount(diagA.built.main, { sessionId: 'ui-test' }, diagA.host, diagA.react, 'main')
+  if (uiDiag.buttonProps('用本会话目录') !== undefined) await uiDiag.click('用本会话目录')
+  await uiDiag.settle()
+  const diagSaid = uiDiag.text()
+  check('画不出来时屏幕上有报告卡（不是一片安静）', diagSaid.indexOf('画不出来 · 报告') >= 0, diagSaid.slice(0, 200))
+  check('原因写成人话，并留下机器可判的 reason',
+    diagSaid.indexOf('项目包里缺这个模型文件') >= 0 && diagSaid.indexOf('project-model-missing') >= 0)
+  check('点名是哪一件资产', diagSaid.indexOf('ui_probe:mist_door_lower') >= 0)
+  check('项目自己的缺失写成"项目里缺"，并给能直接照做的文件路径',
+    diagSaid.indexOf('项目里缺：ui_probe:block/mist_door_lower') >= 0
+    && diagSaid.indexOf('pack/assets/ui_probe/models/block/mist_door_lower.json') >= 0,
+    diagSaid.slice(0, 400))
+  check('项目自己的缺失**不许**写成"缺的原版母模型"（用户贴的那份报告就是这么指错方向的）',
+    diagSaid.indexOf('缺的原版母模型：ui_probe:block/mist_door_lower') < 0)
+  check('没设参考目录时明说去哪设（⚙ → 参考目录）',
+    diagSaid.indexOf('参考目录：没设') >= 0 && diagSaid.indexOf('⚙') >= 0)
+  check('报告带面板版本号（报问题时能一句说清是哪一版）', diagSaid.indexOf('0.0.0-test') >= 0)
+  check('短报告不出现折叠按钮（能一眼看完的东西不该多一次点击）',
+    uiDiag.buttonProps('展开全部') === undefined, uiDiag.buttons().join(' / '))
+  const callsBeforeCopy = diagA.calls.length
+  const copied = await uiDiag.click('复制报告').then(() => true).catch(() => false)
+  check('点「复制报告」不炸（没有剪贴板的地方也只是让人手动选中）',
+    copied === true && /已复制|没复制成/.test(uiDiag.text()), uiDiag.text().slice(-160))
+  check('复制只到剪贴板 / 选中，宿主一个调用都没有（更不是"发给 AI"）',
+    diagA.calls.length === callsBeforeCopy, diagA.calls.slice(callsBeforeCopy).map((call) => call.name).join(' / '))
+
+  const diagB = sceneMount({ error: '画不出 ui_probe:many_things', diagnostic: LONG_DIAG })
+  const uiLong = await mount(diagB.built.main, { sessionId: 'ui-test' }, diagB.host, diagB.react, 'main')
+  if (uiLong.buttonProps('用本会话目录') !== undefined) await uiLong.click('用本会话目录')
+  await uiLong.settle()
+  check('长报告默认折叠，并且有「展开全部」', uiLong.buttonProps('展开全部') !== undefined, uiLong.buttons().join(' / '))
+  check('折叠时不会一次铺满屏幕（后面的条目还看不到）',
+    uiLong.text().indexOf('block/missing_11') < 0, uiLong.text().slice(0, 200))
+  await uiLong.click('展开全部')
+  check('展开后能看到后面的条目', uiLong.text().indexOf('block/missing_11') >= 0)
+  // 同一条报告再发生一次（点刷新会重新取同一个资产）：屏幕上只留一条，不重复刷屏。
+  await uiLong.click('刷新')
+  await uiLong.settle()
+  const repeatText = uiLong.text()
+  check('同一条报告不重复刷屏（第二次只说一句"同一条"）',
+    repeatText.indexOf('同一条报告') >= 0 && (repeatText.split('原因：').length - 1) === 1,
+    '屏幕上出现 ' + (repeatText.split('原因：').length - 1) + ' 次"原因："')
+
+  // ── 诊断契约会长新取值：不认识的 reason 也要把原值显示出来 ─────────────────────
+  //
+  // 宿主（A 流）后来加了 `textures-unresolved` / `no-quads`。面板比宿主旧是常态，
+  // 所以**兜底分支**才是硬要求：不认识的取值必须把原值照抄在屏幕上，绝不许空白 /
+  // `undefined`，也绝不许因为不认识就一条都不画（那正好是用户看到的"白屏且没有字"）。
+  console.log('--- 诊断契约新增/未知取值：屏幕上一定有字，且原值照贴')
+  const reasonCases = [
+    { reason: 'textures-unresolved', zh: '面上引用的贴图取不到' },
+    { reason: 'no-quads', zh: '一个面都没产出' },
+    { reason: 'a-future-reason-this-panel-does-not-know', zh: null },
+  ]
+  for (const entry of reasonCases) {
+    const one = sceneMount({ error: '画不出 ui_probe:mist_ladder', diagnostic: {
+      reason: entry.reason, block: 'ui_probe:mist_ladder', missing: [],
+      tried: ['项目包 → 模型找到了', '贴图 minecraft:block/oak_planks → 没取到'],
+      referenceDirectory: '',
+    } })
+    const uiOne = await mount(one.built.main, { sessionId: 'ui-test' }, one.host, one.react, 'main')
+    if (uiOne.buttonProps('用本会话目录') !== undefined) await uiOne.click('用本会话目录')
+    await uiOne.settle()
+    const said = uiOne.text()
+    check('reason=' + entry.reason + '：屏幕上有报告卡，不是一个字都没有',
+      said.indexOf('画不出来 · 报告') >= 0 && said.length > 0, said.slice(0, 200))
+    check('reason=' + entry.reason + '：原值原样出现在屏幕上（兜底不是空白）',
+      said.indexOf(entry.reason) >= 0 && said.indexOf('原因：') >= 0, said.slice(0, 240))
+    check('reason=' + entry.reason + '：屏幕上没有 undefined / null 这种机器味',
+      said.indexOf('undefined') < 0 && said.indexOf('原因：null') < 0)
+    if (entry.zh !== null) {
+      check('reason=' + entry.reason + '：有对应的中文说明', said.indexOf(entry.zh) >= 0, said.slice(0, 240))
+    } else {
+      check('reason=' + entry.reason + '：不认识的取值也要说清"面板不认识、照原样贴出来"',
+        said.indexOf('面板不认识这个 reason') >= 0, said.slice(0, 240))
+    }
+  }
+  // 老契约：宿主连 reason 都没给时，也要有字（`unknown` 这条兜底同样不许空白）。
+  const noReason = sceneMount({ error: '画不出 ui_probe:mist_ladder', diagnostic: { block: 'ui_probe:mist_ladder' } })
+  const uiNoReason = await mount(noReason.built.main, { sessionId: 'ui-test' }, noReason.host, noReason.react, 'main')
+  if (uiNoReason.buttonProps('用本会话目录') !== undefined) await uiNoReason.click('用本会话目录')
+  await uiNoReason.settle()
+  check('宿主没给 reason 时也有一句话（绝不空白）',
+    uiNoReason.text().indexOf('原因：原因不明（unknown）') >= 0 && uiNoReason.text().indexOf('undefined') < 0,
+    uiNoReason.text().slice(0, 200))
+
+  // ── 出错不让 AI 干等：报告只进「输入框草稿」，永不发送 ──────────────────────────
+  //
+  // 用户原话："太依赖脚本了，导致很多灵活的内容或者出错的内容会立刻死掉而无法通知 agent"。
+  // 而 0.1.26 的教训是宿主写会话会写坏日志 —— 所以正确的形态在**客户端**这一侧：
+  // 把报告放进输入框的**草稿**，用户按一次回车才发。这一节要证的就是：
+  //   草稿空 → 自动放；草稿非空 → 一个字节都不动（只留按钮）；永远到不了"发送"。
+  console.log('--- 出错不让 AI 干等：报告只进「输入框草稿」，永不发送')
+  const AI_DIAG = {
+    reason: 'textures-unresolved',
+    block: 'ui_probe:mist_ladder',
+    missing: [{ kind: 'vanilla', name: 'minecraft:block/oak_planks',
+      fixPath: '(原版贴图：设了参考目录就从游戏 jar 现取)' }],
+    tried: ['项目包 → 模型在', '贴图 minecraft:block/oak_planks → 没取到'],
+    referenceDirectory: '',
+  }
+  function autoRun(draftStart) {
+    const callsHere = []
+    const drafts = []
+    const state = { draft: draftStart }
+    const reactHere = createReact()
+    const hostHere = makeHost(callsHere)
+    return { calls: callsHere, drafts: drafts, state: state, react: reactHere, host: hostHere,
+      built: buildPanel(faulted, hostHere, reactHere.api) }
+  }
+  /** 引用条先挂（输入框的把手只有它拿得到），再让资产失败 —— 这就是真壳里的顺序。 */
+  async function fireFailure(run) {
+    handlers = makeHandlers({ sceneReply: { error: '画不出 ui_probe:mist_ladder', diagnostic: AI_DIAG } })
+    await mount(run.built.dock, { sessionId: 'ui-test',
+      useInput: (selector) => selector({ draft: run.state.draft }),
+      inputActions: { setDraft: (text) => { run.state.draft = text; run.drafts.push(text) } },
+    }, run.host, run.react, 'dock')
+    const ui = await mount(run.built.main, { sessionId: 'ui-test' }, run.host, run.react, 'main')
+    if (ui.buttonProps('用本会话目录') !== undefined) await ui.click('用本会话目录')
+    await ui.settle()
+    return ui
+  }
+  const autoEmpty = autoRun('')
+  const uiAuto = await fireFailure(autoEmpty)
+  check('草稿是空的时候：报告自动进了草稿（用户按回车才发）',
+    autoEmpty.drafts.length === 1, JSON.stringify(autoEmpty.drafts))
+  const wroteDraft = autoEmpty.drafts.length === 0 ? '' : autoEmpty.drafts[0]
+  check('自动放进草稿的报告是自包含的：面板版本 + 资产身份 + reason',
+    wroteDraft.indexOf('0.0.0-test') >= 0 && wroteDraft.indexOf('ui_probe:mist_ladder') >= 0
+    && wroteDraft.indexOf('textures-unresolved') >= 0, wroteDraft.slice(0, 240))
+  check('自包含：缺什么 + 能照做的路径（fixPath）+ 参考目录状态 + 一句"这是报告"',
+    wroteDraft.indexOf('minecraft:block/oak_planks') >= 0 && wroteDraft.indexOf('设了参考目录') >= 0
+    && wroteDraft.indexOf('参考目录') >= 0 && wroteDraft.indexOf('MC 资产面板') >= 0,
+    wroteDraft.slice(0, 420))
+  const nonAtlas = autoEmpty.calls.filter((call) => !/^atlas\./.test(call.name))
+  const writeish = autoEmpty.calls.filter((call) => /agent|steer|inbox|append|send|message/i.test(call.name))
+  check('自动放报告 = 零 host 调用（没有 agent.* / session.*，也没有任何"发送"）',
+    nonAtlas.length === 0 && writeish.length === 0,
+    nonAtlas.concat(writeish).map((call) => call.name).join(','))
+  const beforeManual = autoEmpty.calls.length
+  await uiAuto.click('把报告放进输入框')
+  check('点「把报告放进输入框」还是只写草稿：没有再发一个 host 调用',
+    autoEmpty.calls.length === beforeManual && autoEmpty.drafts.length >= 2,
+    'host 调用 +' + (autoEmpty.calls.length - beforeManual) + '，草稿写了 ' + autoEmpty.drafts.length + ' 次')
+  check('报告卡自己写着"不会自动发送 / 不会发进任何会话"',
+    uiAuto.text().indexOf('不会自动发送') >= 0 && uiAuto.text().indexOf('不会把它发进任何会话') >= 0,
+    uiAuto.text().slice(0, 200))
+
+  // 草稿里有用户正在写的东西 → 一个字节都不动，只留按钮让他自己点。
+  const autoBusy = autoRun('我正在写别的东西 ')
+  const uiBusy = await fireFailure(autoBusy)
+  check('草稿里有用户写的字时：自动那一次**没有**动它',
+    autoBusy.drafts.length === 0, JSON.stringify(autoBusy.drafts))
+  check('但报告卡上给了「把报告放进输入框」按钮（用户自己点）',
+    uiBusy.buttonProps('把报告放进输入框') !== undefined, uiBusy.buttons().join(' / '))
+  await uiBusy.click('把报告放进输入框')
+  check('点了才放，而且把用户写的字留在前面（追加，不冲掉）',
+    autoBusy.drafts.length === 1 && autoBusy.drafts[0].indexOf('我正在写别的东西') >= 0
+    && autoBusy.drafts[0].indexOf('textures-unresolved') >= 0, JSON.stringify(autoBusy.drafts))
+
+  // 设置开关：默认开，位置在 ⚙ 设置卡里。
+  await uiBusy.click('⚙')
+  const autoLabel = uiBusy.nodes().filter((node) => node.type === 'label'
+    && textOf(node).indexOf('出错时自动把报告放进输入框') >= 0)[0]
+  const autoBox = autoLabel === undefined ? undefined : walk(autoLabel, []).filter((node) => node.type === 'input')[0]
+  check('设置卡里有「出错时自动把报告放进输入框」开关，默认是开的',
+    autoBox !== undefined && autoBox.props.checked === true,
+    autoLabel === undefined ? '找不到那一行' : '子节点 ' + autoLabel.children.length)
+
+  // ── 右侧栏：只有槽、没有服务时，不许"两处都没有" ──────────────────────────────
+  //
+  // 用户实测："刷新之后右边栏一片空白"。原因的形状是：`slotHasEntries()` 让
+  // `inRightColumn` 为真、可 `sidebarRightTabs` 服务恰好不在，于是流程进了 `placeRight()`
+  // 又立刻 return —— 左栏那份已经撤了，右栏什么都没挂。
+  console.log('--- 右侧栏：只有槽、没有 tabs 服务时也不许"两处都没有"')
+  const tabsStub = { register: () => () => {} }
+  const sidebarCases = [
+    { label: '只有槽、没有 sidebarRightTabs 服务：面板仍然挂得上（挂不上就是屏幕上什么都没有）',
+      options: { slotEntries: { 'sidebar.right.pane.tab': [{ key: 'mc-art.atlas' }] } },
+      expect: 'main' },
+    { label: '服务和槽都在：面板挂进右栏 pane（不是掉回左栏）',
+      options: { slotEntries: { 'sidebar.right.pane.tab': [{ key: 'mc-art.atlas' }] },
+        services: { sidebarRightTabs: tabsStub, sidebarRight: {} },
+        allowMissingMain: true },
+      expect: 'sidebar.right.pane.tab' },
+  ]
+  handlers = makeHandlers({})
+  for (const entry of sidebarCases) {
+    let built = null, thrown = null
+    try { built = buildPanel(faulted, makeHost([]), createReact().api, entry.options) } catch (error) { thrown = error }
+    if (entry.expect === 'main') {
+      check(entry.label, thrown === null, thrown === null ? '' : String(thrown.message))
+    } else {
+      check(entry.label,
+        thrown === null && built !== null && built.registered.indexOf(entry.expect) >= 0,
+        built === null ? String(thrown && thrown.message) : built.registered.join(','))
+    }
+  }
+
+  // ── 畸形 JSON / 类型不对：一律不许白屏 ───────────────────────────────────────
+  //
+  // 宿主与面板之间走 JSON，`undefined` 字段会被丢掉，"少一个字段"是常态而不是异常。
+  // 这里给一份**每个字段都不对**的答复，要求面板照常画出来（出现渲染边界就算失败）。
+  console.log('--- 畸形 JSON / 类型不对：一律不许白屏')
+  handlers = makeHandlers({ sceneReply: {
+    kind: 'block', id: 'ui_probe:bad', quads: { length: 2 }, textureIds: {},
+    textures: 'nope', animations: [], errors: 'boom', palette: 'x', refs: 0, box: 0, cells: null,
+  } })
+  const reactD2 = createReact()
+  const hostD2 = makeHost([])
+  const builtD2 = buildPanel(faulted, hostD2, reactD2.api)
+  const uiBad = await mount(builtD2.main, { sessionId: 'ui-test' }, hostD2, reactD2, 'main')
+  if (uiBad.buttonProps('用本会话目录') !== undefined) await uiBad.click('用本会话目录')
+  await uiBad.settle()
+  check('缺字段 / 类型不对的场景照常渲染（不是白屏、也不该走渲染边界）',
+    uiBad.text().indexOf('面板渲染失败') < 0 && uiBad.text().indexOf('MC 资产') >= 0 && uiBad.text().length > 0,
+    uiBad.text().slice(0, 160) || '（空白）')
+  check('畸形贴图清单也能老实报数（0 面 · 贴图 0/0，不糊涂）',
+    uiBad.text().indexOf('0 面 · 贴图 0/0') >= 0, uiBad.text().slice(0, 220))
+
+  // ── 像素编辑器：按面编辑 / 保存发出去的是真 PNG / 只写项目自己的包 ───────────
+  const TEX_SIDE = 'ui_probe:block/example_side'
+  const TEX_TOP = 'ui_probe:block/example_top'
+  const quadOf = (tex, face) => ({ p: [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]],
+    uv: [[0, 1], [1, 1], [1, 0], [0, 0]], tex: tex, face: face })
+  const sceneWithTextures = (ids) => ({
+    kind: 'block', id: 'example_block', title: '示例方块',
+    quads: [quadOf(ids[0], 'north'), quadOf(ids[0], 'south'), quadOf(ids[0], 'east'), quadOf(ids[0], 'west'),
+      quadOf(ids[1], 'up')],
+    textureIds: ids,
+    textures: ids.reduce((table, id) => { table[id] = PNG_DATA_URL; return table }, {}),
+    animations: {}, cells: null, refs: [], errors: [], palette: [], box: null,
+  })
+  const ITEM_RECIPE = { shape: 'flat', frames: [], animations: {},
+    textureIds: ['ui_probe:item/example_item'],
+    textures: { 'ui_probe:item/example_item': PNG_DATA_URL },
+    layers: [{ texture: 'ui_probe:item/example_item' }] }
+  function editorHandlers(ids) {
+    return makeHandlers({ sceneReply: sceneWithTextures(ids),
+      iconReply: { icons: {}, names: {}, failed: [], items: { example_item: ITEM_RECIPE } } })
+  }
+  async function openEditorOn(ids) {
+    handlers = editorHandlers(ids)
+    const callsHere = []
+    const reactHere = createReact()
+    const hostHere = makeHost(callsHere)
+    const built = buildPanel(faulted, hostHere, reactHere.api)
+    const ui = await mount(built.main, { sessionId: 'ui-test' }, hostHere, reactHere, 'main')
+    if (ui.buttonProps('用本会话目录') !== undefined) await ui.click('用本会话目录')
+    const wired = await decodeTextures(ui)
+    const opened = await ui.clickLabel('手动修改').then(() => true).catch(() => false)
+    await ui.settle()
+    return { ui: ui, calls: callsHere, wired: wired, opened: opened }
+  }
+  console.log('--- 像素编辑器：按面编辑 / 保存发出去的是真 PNG / 只写项目自己的包')
+  const editRun = await openEditorOn([TEX_SIDE, TEX_TOP])
+  check('假画布 / 假 <img> 接上了（前提：解码链路真的跑过）',
+    editRun.wired.canvases > 0 && editRun.wired.images > 0,
+    'canvas ' + editRun.wired.canvases + ' / img ' + editRun.wired.images)
+  check('贴图解码成功（前提：下面按面编辑才有图可改）',
+    editRun.ui.text().indexOf('· 贴图 2/2') >= 0, editRun.ui.text().slice(0, 200))
+  check('能打开像素编辑器', editRun.opened === true && editRun.ui.text().indexOf('改贴图') >= 0,
+    editRun.ui.buttons().join(' / '))
+  check('按面编辑：哪张贴图盖哪些面写在标签上（草方块不会开在泥土那一面）',
+    editRun.ui.text().indexOf('侧面 · example_side') >= 0
+    && editRun.ui.text().indexOf('顶面 · example_top') >= 0,
+    editRun.ui.text().slice(0, 260))
+  const saved = await editRun.ui.click('保存').then(() => true).catch(() => false)
+  await editRun.ui.settle()
+  const saveCall = editRun.calls.filter((call) => call.name === 'atlas.saveTexture').pop()
+  const sent = saveCall === undefined ? Buffer.alloc(0) : Buffer.from(String(saveCall.args.base64), 'base64')
+  check('保存发出去的是**真 PNG 的字节**（宿主才能"先落临时文件 → 校验 → 再替换"）',
+    saveCall !== undefined && Buffer.from(PNG_MAGIC).equals(sent.slice(0, 8)),
+    saveCall === undefined ? ('没调用 atlas.saveTexture（保存按钮点了 ' + saved + '）') : sent.slice(0, 8).toString('hex'))
+  check('保存用的是项目包内的贴图句柄 + 当前项目（不是绝对路径、不是别的包）',
+    saveCall !== undefined && saveCall.args.path === TEX_SIDE && saveCall.args.project === PROJECT.id,
+    JSON.stringify(saveCall === undefined ? null : { path: saveCall.args.path, project: saveCall.args.project }))
+
+  // 句柄是绝对路径时：一个字节都不许写盘。
+  const editEvil = await openEditorOn(['C:\\Users\\probe\\evil.png', TEX_TOP])
+  await editEvil.ui.click('保存').then(() => true).catch(() => false)
+  await editEvil.ui.settle()
+  check('贴图句柄是绝对路径时一个字节都不写盘，并在屏幕上说清楚（只写项目自己的包）',
+    editEvil.calls.filter((call) => call.name === 'atlas.saveTexture').length === 0
+    && editEvil.ui.text().indexOf('没有写盘') >= 0,
+    editEvil.ui.text().slice(0, 240))
+
+  // ── 3D 没东西可看时放 2D：那张图是方的，不被拉宽 ─────────────────────────────
+  console.log('--- 3D 没东西可看时放 2D：方图，不许被拉成面板那么宽')
+  handlers = editorHandlers([TEX_SIDE, TEX_TOP])
+  const reactP = createReact()
+  const hostP = makeHost([])
+  const builtP = buildPanel(faulted, hostP, reactP.api)
+  const uiP = await mount(builtP.main, { sessionId: 'ui-test' }, hostP, reactP, 'main')
+  if (uiP.buttonProps('用本会话目录') !== undefined) await uiP.click('用本会话目录')
+  await decodeTextures(uiP)
+  if (uiP.buttonProps('物品列表') !== undefined) await uiP.click('物品列表')
+  await uiP.settle()
+  const pickedItem = await uiP.clickTitle('示例物品').then(() => true).catch(() => false)
+  await uiP.settle()
+  await decodeTextures(uiP)
+  const posters = uiP.nodes().filter((node) => node.props && node.props.className === 'mcart-poster')
+  const poster = posters[0]
+  check('选中一个没有方块模型的物品时，2D 那张图出现在取景框里（不是一块黑板）',
+    pickedItem === true && poster !== undefined && uiP.text().indexOf('3D 里没有东西可看') >= 0,
+    pickedItem !== true ? '菜单里没点中物品' : uiP.text().slice(0, 200))
+  check('2D 回退是方的，而且不超出取景框较窄的那条边（不能拉成 1.3:1）',
+    poster !== undefined && poster.props.width === poster.props.height
+    && poster.props.width <= 240 && poster.props.width >= 48,
+    poster === undefined ? '没有 poster canvas' : ('width=' + poster.props.width + ' height=' + poster.props.height))
 
   console.log(failures === 0 ? '全部通过' : failures + ' 项失败')
   process.exit(failures === 0 ? 0 : 1)

@@ -27,20 +27,23 @@
  *   `git clone` 忘了 `--recursive`，于是"装好了"但少了半个引擎。
  *   所以这里**拉它**，并且用 `git pull` 更新它——安装与更新是同一条命令。
  */
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { findPython as probePython, pythonVersion, noPythonMessage, spawnPython } from './tools/python_env.mjs'
 
 export const HERE = dirname(fileURLToPath(import.meta.url))
 const IS_WINDOWS = process.platform === 'win32'
 const ART_REPO = process.env.MC_ART_REPO ?? 'https://github.com/GMH13552/mc-art.git'
-const PYTHON_CANDIDATES = ['python3', 'python', 'py -3']
 /** 装哪个模式。只有一个：不带 tool-cordis 的那个（原因见 tools/check_presets.mjs）。 */
 export const PRESETS = ['mc-studio']
 /** 以前发布过、现在不该再留着的模式目录：装的时候顺手清掉。 */
 export const LEGACY_PRESETS = ['mc-studio-nocordis']
+/** 1.18.2 那一代模组要 JDK 17（21 编译不了）。 */
+export const NEEDED_JDK = 17
+
 
 export function say(line = '') {
   process.stdout.write(line + '\n')
@@ -49,7 +52,7 @@ export function say(line = '') {
 /**
  * 写进 JS 单引号字符串里的路径：反斜杠必须换成正斜杠。
  *
- * 这是 Windows 上安装器最容易出的那个错：`C:\Users\GMH13\mc-art` 一旦进了
+ * 这是 Windows 上安装器最容易出的那个错：`C:\some\dir\mc-art` 一旦进了
  * `const MCART_HOME = '...'`，`\U`、`\G`、`\m` 都被当成转义序列，路径静默变样，
  * 而报错要到用户点了面板才出现。Node 在 Windows 上认正斜杠，所以换成 `/` 最省事。
  */
@@ -64,13 +67,14 @@ function selftest() {
     if (ok) say('  OK   ' + name)
     else { failures += 1; say('  FAIL ' + name + (detail === undefined ? '' : '  ← ' + detail)) }
   }
-  const windowsPath = 'C:\\Users\\GMH13\\mc-art\\tools\\mcart-plugin'
+  // 夹具用**中性的假路径**：self-test 是公开仓库里的一份文件，没必要把谁的机器写进去。
+  const windowsPath = 'C:\\some\\dir\\mc-art\\tools\\mcart-plugin'
   const converted = toJsPath(windowsPath)
   /** 把值放进单引号字符串字面量，再让 JS 真的求值一次——这才是 loader 读到的东西。 */
   const evaluate = (value) => new Function('return ' + "'" + value + "'")()
   check('Windows 路径写成 JS 字符串后没有反斜杠', converted.indexOf('\\') < 0, converted)
-  check('Windows 路径转换结果正确', converted === 'C:/Users/GMH13/mc-art/tools/mcart-plugin', converted)
-  check('POSIX 路径不受影响', toJsPath('/home/gmh/mc-art/tools/mcart-plugin') === '/home/gmh/mc-art/tools/mcart-plugin')
+  check('Windows 路径转换结果正确', converted === 'C:/some/dir/mc-art/tools/mcart-plugin', converted)
+  check('POSIX 路径不受影响', toJsPath('/home/someone/mc-art/tools/mcart-plugin') === '/home/someone/mc-art/tools/mcart-plugin')
   check('转换后的值放进字面量求值，还是同一个路径（loader 真读到的就是它）',
     evaluate(converted) === converted, evaluate(converted))
   // 反过来说：不转换就会坏，而坏法是静默的（路径变样，但要到用户点面板才报错）。
@@ -83,10 +87,30 @@ function selftest() {
 if (process.argv[1] !== undefined && process.argv[1].endsWith('install.mjs') &&
     process.argv.includes('--selftest')) selftest()
 
-/** 跑一条命令，返回 {code, out}；找不到这个程序时 code 为 null 且 missing 为真。 */
+/**
+ * 跑一条命令，返回 `{code, out}`；找不到这个程序时 `code` 为 null 且 `missing` 为真。
+ *
+ * Windows 上有一个必须处理的差别：`.cmd` / `.bat`（例如 dsh 的入口 `dsh.cmd`）
+ * **不能**直接 spawn —— CreateProcess 不执行批处理，Node 回 ENOENT。
+ * 但把它交给 `cmd.exe` 也有个坑：**Node 传给 cmd.exe 的 argv 引号是给 CreateProcess 用的**
+ * （把 `"` 转义成 `\"`），cmd 不认，于是 `spawnSync('cmd.exe', ['/c', '"C:\\… spa ce\\x.cmd"', '-V'])`
+ * 会在 stderr 里说 `'\\"C:\\…' is not recognized`，退出码 1（本机实测）。
+ * 行得通的做法只有一种：**整条命令行作为一个字符串 + `shell: true`**
+ * （Node 会用 `cmd.exe /d /s /c "<字符串>"`，这正是 cmd 的规矩）。
+ */
+export function quoteWindowsArg(arg) {
+  const text = String(arg)
+  return /[\s"&|<>^()%!]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text
+}
+
 export function run(command, args, options = {}) {
-  const done = spawnSync(command, args, { encoding: 'utf8', ...options })
-  if (done.error !== undefined && done.error.code === 'ENOENT') return { code: null, missing: true, out: '' }
+  const isBatch = IS_WINDOWS && /\.(cmd|bat)$/i.test(command)
+  const done = isBatch
+    ? spawnSync([command].concat(args).map(quoteWindowsArg).join(' '), { encoding: 'utf8', shell: true, ...options })
+    : spawnSync(command, args, { encoding: 'utf8', ...options })
+  if (done.error !== undefined) {
+    return { code: null, missing: true, out: String(done.error.message ?? done.error.code) }
+  }
   return { code: done.status, missing: false, out: String(done.stdout ?? '') + String(done.stderr ?? '') }
 }
 
@@ -97,13 +121,80 @@ function copyDir(from, to) {
   cpSync(from, to, { recursive: true })
 }
 
-function findPython() {
-  for (const candidate of PYTHON_CANDIDATES) {
-    const parts = candidate.split(' ')
-    const probe = run(parts[0], parts.slice(1).concat(['-c', 'import sys;print(1)']))
-    if (probe.code === 0 && probe.out.indexOf('1') >= 0) return candidate
+/**
+ * 找到 dsh 可执行文件 —— **并且真跑一次 `dsh -V` 验证它真的能跑**（判据和 Python 一样：
+ * 存在不算数）。顺序：显式 `--dsh-bin` / `DSH_BIN` → PATH → 桌面端安装位。
+ */
+export function findDsh(explicit = '', env = process.env) {
+  const candidates = []
+  const push = (value) => {
+    if (typeof value === 'string' && value !== '' && !candidates.includes(value)) candidates.push(value)
   }
-  return null
+  push(explicit)
+  push(env.DSH_BIN)
+  const file = IS_WINDOWS ? 'dsh.cmd' : 'dsh'
+  if (IS_WINDOWS) {
+    if (env.LOCALAPPDATA) push(join(env.LOCALAPPDATA, 'Programs', 'DeepSeek Harness', 'resources', 'runtime', 'cli', 'bin', file))
+    if (env.ProgramFiles) push(join(env.ProgramFiles, 'DeepSeek Harness', 'resources', 'runtime', 'cli', 'bin', file))
+  } else {
+    if (env.HOME) push(join(env.HOME, '.local', 'share', 'deepseek-harness', 'resources', 'runtime', 'cli', 'bin', file))
+    push('/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh')
+    push('/opt/DeepSeek Harness/resources/runtime/cli/bin/dsh')
+  }
+  // PATH 上的（Windows 让 cmd.exe 按 PATHEXT 解析）
+  push(file)
+  const tried = []
+  for (const candidate of candidates) {
+    const probe = run(candidate, ['-V'])
+    tried.push({ bin: candidate, code: probe.code, out: probe.out.trim().slice(0, 60) })
+    if (probe.code === 0) return { bin: candidate, version: probe.out.trim().split('\n')[0], tried }
+  }
+  return { bin: null, version: '', tried }
+}
+
+/** 这个目录里有 javac 吗、它是哪个 major？（**真跑** `javac -version`，不看名字） */
+export function jdkMajor(home, env = process.env) {
+  const javac = join(home, 'bin', IS_WINDOWS ? 'javac.exe' : 'javac')
+  if (!existsSync(javac)) return { major: null, reason: '没有 javac（不是 JDK）' }
+  const probe = run(javac, ['-version'], { env })
+  if (probe.code !== 0) return { major: null, reason: 'javac 跑不起来：' + (probe.out.trim().slice(0, 100) || '退出码 ' + probe.code) }
+  const match = /javac\s+(\d+)/.exec(probe.out)
+  if (match === null) return { major: null, reason: 'javac -version 的输出认不出：' + probe.out.trim().slice(0, 80) }
+  return { major: Number(match[1]), reason: 'javac ' + match[1] }
+}
+
+/**
+ * 找一份 javac major 对得上的 JDK（1.18.2 要 17；本机默认 `java` 是 21，编译不了）。
+ * 显式 `--java-home` / `JAVA_HOME` 优先，然后常见安装位；每一个都真跑 `javac -version`。
+ */
+export function findJdk(explicit = '', needed = NEEDED_JDK, env = process.env) {
+  const homes = []
+  const push = (value) => {
+    if (typeof value === 'string' && value !== '' && !homes.includes(value)) homes.push(value)
+  }
+  push(explicit)
+  push(env.JAVA_HOME)
+  const programFiles = env.ProgramFiles ?? env['ProgramFiles(x86)'] ?? ''
+  const bases = IS_WINDOWS
+    ? [join(programFiles, 'Java'), join(programFiles, 'Eclipse Adoptium'), join(programFiles, 'Microsoft'),
+       join(programFiles, 'Zulu'), join(programFiles, 'Amazon Corretto'), join(programFiles, 'BellSoft'),
+       join(env.LOCALAPPDATA ?? '', 'Programs', 'Eclipse Adoptium'), join(env.LOCALAPPDATA ?? '', 'Programs', 'Microsoft')]
+    : ['/usr/lib/jvm', '/opt/java', '/Library/Java/JavaVirtualMachines']
+  for (const base of bases) {
+    if (base === '' || !existsSync(base)) continue
+    for (const entry of readdirSync(base)) {
+      push(join(base, entry))
+      // macOS 的 JDK 在 <bundle>/Contents/Home。
+      push(join(base, entry, 'Contents', 'Home'))
+    }
+  }
+  const tried = []
+  for (const home of homes) {
+    const result = jdkMajor(home, env)
+    tried.push({ home, ...result })
+    if (result.major === needed) return { home, tried, reason: result.reason }
+  }
+  return { home: null, tried, reason: '' }
 }
 
 /** `--name value`；没给就给默认。 */
@@ -127,6 +218,8 @@ export function install(argv = process.argv.slice(2)) {
   const profile = option(argv, 'profile', 'web')
   const withPanel = !argv.includes('--no-panel')
   const panelSpec = option(argv, 'panel-spec', join(HERE, 'panel'))
+  const dshBin = option(argv, 'dsh-bin', '')
+  const javaHome = option(argv, 'java-home', '')
   const skills = join(dshRoot, 'skills')
   const presetsDir = join(dshRoot, '.agent-presets')
   const wanted = PRESETS
@@ -189,59 +282,71 @@ export function install(argv = process.argv.slice(2)) {
 
   // ── 5) 面板包：装进 profile，重启后就在（不用动态发射）───────────────────
   if (withPanel) {
-    const probe = run('dsh', ['--version'])
-    if (probe.missing === true) {
-      say(`！面板   PATH 里没有 dsh，装不了。手动跑一次：`)
+    const dsh = findDsh(dshBin)
+    if (dsh.bin === null) {
+      say('！面板   找不到能跑的 dsh（PATH、桌面端安装位、DSH_BIN 都试过，每次都真跑 `dsh -V`）。手动跑一次：')
       say(`        dsh plugin --profile ${profile} add ${panelSpec}`)
+      for (const item of dsh.tried.slice(0, 6)) say(`        · ${item.bin} → 退出码 ${item.code}`)
     } else {
+      say(`面板用 dsh：${dsh.bin}（${dsh.version}）`)
       say(`装面板进 profile ${profile}（${panelSpec}）…`)
-      const added = run('dsh', ['plugin', '--profile', profile, 'add', panelSpec], { stdio: 'inherit' })
+      const added = run(dsh.bin, ['plugin', '--profile', profile, 'add', panelSpec], { stdio: 'inherit' })
       if (added.code === 0) say(`✓ 面板   已装进 profile ${profile}（重启 DSH 后右侧栏出现「MC 资产」）`)
       else {
         say(`！面板   装失败（dsh 退出码 ${added.code}）。手动跑一次看报错：`)
-        say(`        dsh plugin --profile ${profile} add ${panelSpec}`)
+        say(`        ${dsh.bin} plugin --profile ${profile} add ${panelSpec}`)
       }
     }
   } else {
     say('（--no-panel：没装面板包）')
   }
 
-  // ── 5) 依赖自检：只说事实 ───────────────────────────────────────────────
+  // ── 6) 依赖自检：只说事实（每一项都是**真跑一次**，不是看目录）───────────
   say('')
   say('依赖自检：')
   const git = run('git', ['--version'])
   if (git.code === 0) say('  ✓ ' + git.out.trim())
   else say('  ！git 没找到（拉 mc-art、装模组工程都要用）')
 
-  const python = findPython()
-  if (python !== null) {
-    const parts = python.split(' ')
-    const version = run(parts[0], parts.slice(1).concat(['-c', 'import sys;print(".".join(map(str,sys.version_info[:3])))']))
-    say(`  ✓ ${python} ${version.out.trim()}`)
-    const pillow = run(parts[0], parts.slice(1).concat(['-c', 'import PIL;print(PIL.__version__)']))
-    if (pillow.code === 0 && pillow.out.trim() !== '') say(`  ✓ Pillow ${pillow.out.trim()}（mc-art 需要）`)
-    else say(`  ！mc-art 需要 Pillow：${python} -m pip install pillow`)
+  const python = probePython()
+  if (python.found) {
+    say(`  ✓ Python ${pythonVersion(python) || '?'}：${python.bin}` +
+      (python.prefix.length > 0 ? ' ' + python.prefix.join(' ') : '') + `（来源：${python.source}）`)
+    const pillow = spawnPython(['-c', 'import PIL;print(PIL.__version__)']).done
+    if (pillow.status === 0 && String(pillow.stdout).trim() !== '') {
+      say(`  ✓ Pillow ${String(pillow.stdout).trim()}（mc-art 需要）`)
+    } else {
+      say(`  ！mc-art 需要 Pillow：${python.spec} -m pip install pillow`)
+    }
+    for (const item of python.rejected.slice(0, 4)) say(`      （已排除 ${item.spec}：${item.reason}）`)
+    if (python.rejected.length > 4) say(`      （还有 ${python.rejected.length - 4} 条候选没通过，用 node tools/python_env.mjs 看全）`)
   } else {
-    say(`  ！没找到 Python（试过 ${PYTHON_CANDIDATES.join(' / ')}）——抽取器、判定工具、mc-art 都要它`)
+    say('  ！' + noPythonMessage(python).split('\n').join('\n     '))
     if (IS_WINDOWS) say('        Windows 上装完 Python 通常叫 python 或 py；装的时候勾上 "Add to PATH"。')
     else say('        装一个 Python 3，或者用你发行版的包管理器。')
   }
 
-  const java = run('java', ['-version'])
-  if (java.code === 0) {
-    // `java -version` 把版本写在 stderr 里，形如 openjdk version "17.0.20.1" 2026-08-18；
-    // 早先的写法把引号后面的日期也吞了进去，于是"自检"那行本身就是个坏示范。
-    const quoted = /version "([^"]+)"/.exec(java.out)
-    const version = quoted === null ? java.out.trim().split('\n')[0] : quoted[1]
-    say(`  ✓ java ${version}（1.18.2 模组要 17；1.20.5+ 要 21）`)
+  const jdk = findJdk(javaHome)
+  const anyJava = run('java', ['-version'])
+  if (jdk.home !== null) {
+    say(`  ✓ JDK ${NEEDED_JDK}：${jdk.home}（${jdk.reason}，真跑过）`)
   } else {
-    say('  ！没找到 java（编译/运行模组要用）')
+    const quoted = /version "([^"]+)"/.exec(anyJava.out)
+    if (anyJava.code === 0) {
+      say(`  ！PATH 上的 java 是 ${quoted === null ? anyJava.out.trim().split('\n')[0] : quoted[1]}，` +
+        `但 1.18.2 模组要 **JDK ${NEEDED_JDK}**（21 编译不了）`)
+    } else {
+      say('  ！没找到 java（编译/运行模组要用）')
+    }
+    for (const item of jdk.tried.slice(0, 6)) say(`      · ${item.home} → ${item.reason}`)
+    say(`      装一个 JDK ${NEEDED_JDK}，或用 --java-home <JDK 目录> 指给我` +
+      '（mcmod_gametest.py 也认 JAVA_HOME / --java-home）。')
   }
 
+  const mcModScript = toJsPath(join(HERE, 'tools', 'mcmod_gametest.py'))
   const loaderHint = IS_WINDOWS
     ? 'tools\\mcart-plugin\\loader.host.js'
     : 'tools/mcart-plugin/loader.host.js'
-  const pythonHint = python === null ? (IS_WINDOWS ? 'python' : 'python3') : python
   say('')
   say('下一步：')
   say('  1. 重启 DSH：模式名单里有「MC 模组工作室」，右侧栏里应当出现「MC 资产」面板')
@@ -249,7 +354,8 @@ export function install(argv = process.argv.slice(2)) {
   say(`       dsh plugin --profile ${profile} add ${panelSpec}`)
   say(`     （开发面板时才用动态发射那条路：${loaderHint} 作为 code.host、`)
   say('     loader.client.js 作为 code.client，交给 cordis_define + cordis_run）')
-  say('  3. 判定一次：cd fleshland/mod && ' + pythonHint + ' ../../tools/mcmod_gametest.py')
+  say('  3. 判定一次（--project 指你自己的 Forge 工程；不指就用仓库里的示例工程）：')
+  say(`       ${IS_WINDOWS ? 'python' : 'python3'} ${mcModScript} --project <工程目录>`)
   return 0
 }
 
@@ -257,7 +363,8 @@ if (process.argv[1] !== undefined && process.argv[1].endsWith('install.mjs') &&
     !process.argv.includes('--selftest')) {
   if (process.argv.includes('-h') || process.argv.includes('--help')) {
     say('用法：node install.mjs [--no-panel] [--profile <名>] [--panel-spec <spec>]' +
-      ' [--dsh-home <路径>] [--art-repo <git 地址>] [--selftest]')
+      ' [--dsh-home <路径>] [--dsh-bin <dsh 可执行文件>] [--java-home <JDK 目录>]' +
+      ' [--art-repo <git 地址>] [--selftest]')
     process.exit(0)
   }
   process.exit(install())

@@ -3,7 +3,7 @@
 
 WHY IT IS A WHITELIST, NOT A BLOCKLIST.  A blocklist can only catch leaks somebody already
 noticed.  The ones that actually shipped — `blood_sheep`, `crystal_bow_pulling_1`, `aoa3`,
-`flesh_soil` — were none of them on the list at the time; a new project invents new nouns.
+`example_soil` — were none of them on the list at the time; a new project invents new nouns.
 Inverting it means **a new noun fails by default**, and adding an allowlist entry is a
 deliberate act ("this is vanilla / an API / a format token" — the review the leak needs).
 
@@ -18,22 +18,31 @@ WHAT IS SCANNED.  Prose: every `.md` file of both skills (code fences included �
 exactly where example ids live), plus `.py` comments and docstrings (the engine's code
 identifiers are the program itself and are not examples; its *comments* are prose).
 
-   python3 tools/skill_vocab_test.py          # audit both skills
-   python3 tools/skill_vocab_test.py --fault  # plant a foreign noun; the gate MUST catch it
+   python tools/skill_vocab_test.py          # audit both skills
+   python tools/skill_vocab_test.py --fault  # plant a foreign noun; the gate MUST catch it
 """
 from __future__ import annotations
 
 import argparse
 import ast
 import io
+import json
 import os
 import re
+import subprocess
 import sys
 import tokenize
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
+# Windows：stdout 默认按控制台代码页（本机 cp936）编码，中文输出在 pwsh / CI 里会变成乱码。
+# 门禁的输出是给人看的，统一钉成 UTF-8（Linux/macOS 上本来就一致，无副作用）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError, OSError):
+        pass
 ALLOW_FILE = HERE / "skill_vocab_allow.txt"
 SKILLS = [REPO / "skills" / "mc-mod",
           Path(os.environ.get("MC_ART_SKILL_DIR") or (Path.home() / ".dsh" / "skills" / "mc-art"))]
@@ -102,6 +111,27 @@ def tokens_of(text: str) -> dict[str, set[str]]:
     return found
 
 
+JUNK_DIRS = {".git", "__pycache__", ".cache", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+             ".venv", "node_modules", ".DS_Store", ".ipynb_checkpoints"}
+JUNK_SUFFIX = (".pyc", ".pyo", ".egg-info", ".log", ".swp")
+
+
+def publishes(path: Path) -> bool:
+    """这个文件会不会**随包发出去**？判据必须和 `panel/build.mjs` 的 isSkipped/isJunk 同一份。
+
+    为什么要共用：门禁如果对"根本不出门的文件"报红，就会用一堆改不改都无所谓的噪声
+    掩盖真正的泄漏；反过来，如果它悄悄把某个真会发出去的文件跳掉，那才是灾难。
+    `tests/` 不随包发（`panel/build.mjs:isSkipped`），所以这里也不看它 ——
+    但 `--fault` 会用 node 真调一次那两个函数，对同一组路径逐条比对，防止两边漂移。
+    """
+    parts = path.parts
+    if "tests" in parts:
+        return False
+    if any(part in JUNK_DIRS for part in parts):
+        return False
+    return not str(path).endswith(JUNK_SUFFIX)
+
+
 def scan(roots: list[Path], allow: dict[str, str]) -> dict[str, set[str]]:
     offenders: dict[str, set[str]] = {}
     for root in roots:
@@ -110,7 +140,7 @@ def scan(roots: list[Path], allow: dict[str, str]) -> dict[str, set[str]]:
         for path in sorted(root.rglob("*")):
             if not path.is_file() or path.suffix not in (".md", ".py"):
                 continue
-            if any(part in {".cache", "tests", ".git", "__pycache__", ".pytest_cache"} for part in path.parts):
+            if not publishes(path):
                 continue
             text = prose_of(path)
             for token in tokens_of(text):
@@ -120,6 +150,87 @@ def scan(roots: list[Path], allow: dict[str, str]) -> dict[str, set[str]]:
     return offenders
 
 
+PREDICATE_SAMPLES = [
+    "skills/mc-mod/SKILL.md",
+    "skills/mc-mod/references/windows.md",
+    "mc_art/style.py",
+    "skills/mc-mod/tests/test_leak.py",
+    "mc-art/tests/test_shape_lock.py",
+    "mc_art/__pycache__/style.cpython-312.pyc",
+    "mc_art/.cache/whatever.py",
+    "mc_art/node_modules/pkg/index.js",
+    "mc_art/notes.log",
+    "mc_art/style.pyc",
+]
+
+
+def build_predicate(samples: list[str]) -> tuple[list[bool] | None, str]:
+    """跑 `panel/build.mjs` 的 isSkipped/isJunk，拿到"这些路径会不会发出去"的 JS 答案。"""
+    script = ("import(process.env.MCART_BUILD_URL).then((m)=>{"
+              "const paths=JSON.parse(process.env.MCART_PATHS);"
+              "process.stdout.write(JSON.stringify(paths.map((p)=>!(m.isSkipped(p)||m.isJunk(p)))))"
+              "}).catch((e)=>{console.error(String((e&&e.message)||e));process.exit(1)})")
+    build = (REPO / "panel" / "build.mjs").resolve()
+    env = dict(os.environ, MCART_BUILD_URL=build.as_uri(), MCART_PATHS=json.dumps(samples))
+    try:
+        done = subprocess.run(["node", "--input-type=module", "-e", script],
+                              capture_output=True, text=True, env=env, timeout=120)
+    except FileNotFoundError:
+        return None, "没有 node"
+    if done.returncode != 0:
+        return None, (done.stderr or "").strip()[:200]
+    return json.loads(done.stdout), ""
+
+
+def fault() -> int:
+    """A/B：门禁必须能红，而且**只对会发出去的文件**红。"""
+    failures = 0
+    allow = allowed()
+
+    def check(label: str, ok: bool, detail: str = "") -> None:
+        nonlocal failures
+        if not ok:
+            failures += 1
+        print("  " + ("OK  " if ok else "FAIL") + " " + label +
+              ("" if ok or detail == "" else "  -> " + detail))
+
+    publishable = SKILLS[0] / "references" / ".vocab-fault.md"
+    skipped_dir = SKILLS[0] / "tests"
+    skipped = skipped_dir / ".vocab-fault.md"
+    publishable.write_text("这个方块叫 bloodstone_lantern，实体叫 BloodLanternBeast。\n", encoding="utf-8")
+    skipped_dir.mkdir(parents=True, exist_ok=True)
+    skipped.write_text("这个方块叫 skiptest_lantern，实体叫 SkippedBeast。\n", encoding="utf-8")
+    try:
+        offenders = scan(SKILLS, allow)
+    finally:
+        publishable.unlink(missing_ok=True)
+        skipped.unlink(missing_ok=True)
+        try:
+            skipped_dir.rmdir()
+        except OSError:
+            pass
+
+    caught = "bloodstone_lantern" in offenders and "BloodLanternBeast" in offenders
+    check("会随包发出去的文件里种一个外来名词 → 抓到（门禁能红）", caught,
+          "" if caught else "只抓到：" + ", ".join(sorted(offenders)[:8]))
+    ignored = "skiptest_lantern" not in offenders and "SkippedBeast" not in offenders
+    check("tests/ 里的记号不算泄漏（它不随包发，报了只会掩盖真问题）", ignored,
+          "居然报成了泄漏：" + ", ".join(sorted(set(offenders) & {"skiptest_lantern", "SkippedBeast"})))
+
+    # 跨语言判据一致：Python 这边的 publishes() 与 build.mjs 的 isSkipped/isJunk 必须一致。
+    js, why = build_predicate(PREDICATE_SAMPLES)
+    if js is None:
+        check("与 panel/build.mjs 的'什么会发出去'判据对齐（真的各问一次）", False,
+              "调不动 node/build.mjs：" + why)
+    else:
+        mine = [publishes(Path(sample)) for sample in PREDICATE_SAMPLES]
+        agree = mine == js
+        check("与 panel/build.mjs 的'什么会发出去'判据对齐（真的各问一次）", agree,
+              "python=" + str(mine) + " js=" + str(js))
+    print("全部通过" if failures == 0 else "%d 项失败" % failures)
+    return 1 if failures else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="skills 的散文词汇白名单门禁")
     parser.add_argument("--fault", action="store_true", help="种一个外来名词，要求门禁抓到")
@@ -127,17 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     allow = allowed()
 
     if args.fault:
-        target = SKILLS[0] / "references" / ".vocab-fault.md"
-        target.write_text("这个方块叫 bloodstone_lantern，实体叫 BloodLanternBeast。\n", encoding="utf-8")
-        try:
-            offenders = scan(SKILLS, allow)
-        finally:
-            target.unlink(missing_ok=True)
-        caught = "bloodstone_lantern" in offenders and "BloodLanternBeast" in offenders
-        print("  " + ("OK  " if caught else "FAIL") + " 故障注入的外来名词被抓到（门禁能红）"
-              + ("" if caught else "  -> 只抓到：" + ", ".join(sorted(offenders)[:8])))
-        print("全部通过" if caught else "1 项失败")
-        return 0 if caught else 1
+        return fault()
 
     offenders = scan(SKILLS, allow)
     total = sum(len(items) for items in offenders.values())

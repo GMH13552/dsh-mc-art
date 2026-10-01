@@ -10,7 +10,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 /**
@@ -40,7 +40,10 @@ const ctx = {
   on: () => () => {},
   provide: () => () => {},
 }
-const host = await import(join(HERE, 'lib', 'index.js'))
+// Windows 上绝对路径**必须**先过 pathToFileURL：`import('C:\\…\\lib\\index.js')` 会被
+// 当成一个 scheme 为 `c:` 的 URL，Node 直接抛
+// `ERR_UNSUPPORTED_ESM_URL_SCHEME: … Received protocol 'c:'`（这条门禁在 WSL 里看不见）。
+const host = await import(pathToFileURL(join(HERE, 'lib', 'index.js')).href)
 check('模块导出了 name / inject / apply',
   host.name === 'mcart-panel' && Array.isArray(host.inject) && typeof host.apply === 'function')
 /** 每个 ctx 的 effect disposer 都收着，好在测试里"卸载"某个实例。 */
@@ -193,9 +196,22 @@ check('factory 能执行（React 通过 require 拿到）', clientFailed === nul
 check('导出的是 Cordis 插件（inject + apply）',
   moduleExports !== null && Array.isArray(moduleExports.inject) && typeof moduleExports.apply === 'function',
   moduleExports === null ? 'null' : JSON.stringify(Object.keys(moduleExports || {})))
+/**
+ * 客户端两半没装载成功时（比如源码里一个语法错），后面那一串"落点"检查**没法跑**，
+ * 但门禁仍要把它们算成失败、并且**不许崩**：崩溃只会留下一段栈，看不到是哪一条坏了。
+ * 真实例子：一次并行编辑把 client.js 弄成 `missing ) after argument list`，
+ * 旧写法直接在 `moduleExports.apply` 上抛 TypeError。
+ */
+const clientUsable = moduleExports !== null && typeof moduleExports.apply === 'function'
+if (!clientUsable) {
+  failures += 1
+  console.log('  FAIL 客户端两半没装载成功（factory 抛了）：后面那些"落点"检查没法跑，' +
+    '先修上面那条报的错')
+}
 
 /** 跑一次客户端 apply，返回它注册了哪些槽、以及"晚到的服务"怎么触发。 */
 function clientRun(options) {
+  if (!clientUsable) return { seen: [], result: null, dropTabs() {}, arriveLate() {} }
   const seen = []
   const lateCallbacks = []
   // 右侧栏插件同时提供两个服务；晚到的情形也是两个一起到（实测如此）。
@@ -238,7 +254,10 @@ function clientRun(options) {
 }
 
 let applyFailed = null
-try { await moduleExports.apply({ get: () => undefined, effect: (fn) => fn(), timer: { interval: () => () => {}, timeout: async () => {} } }) }
+try {
+  if (!clientUsable) throw new Error('客户端两半没装载成功')
+  await moduleExports.apply({ get: () => undefined, effect: (fn) => fn(), timer: { interval: () => () => {}, timeout: async () => {} } })
+}
 catch (error) { applyFailed = error }
 check('客户端 apply(ctx) 不炸（连 slots 都没有时）', applyFailed === null,
   applyFailed === null ? '' : String(applyFailed && applyFailed.message))

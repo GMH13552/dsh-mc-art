@@ -1,4 +1,4 @@
-package com.fleshland;
+package com.examplemod;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTest;
@@ -21,14 +21,14 @@ import net.minecraftforge.registries.ForgeRegistries;
  * {@link RegisterGameTestsEvent} 挂在 mod 事件总线上，把整个类交上去
  * （MinecraftForge 1.18.x 的 {@code src/test/java/.../GameTestTest.java} 就是这么写的）。
  */
-@Mod.EventBusSubscriber(modid = FleshlandMod.MODID, bus = Mod.EventBusSubscriber.Bus.MOD)
-public final class FleshlandGameTests {
-    private FleshlandGameTests() {
+@Mod.EventBusSubscriber(modid = ExampleMod.MODID, bus = Mod.EventBusSubscriber.Bus.MOD)
+public final class ExampleGameTests {
+    private ExampleGameTests() {
     }
 
     @SubscribeEvent
     public static void onRegisterGameTests(RegisterGameTestsEvent event) {
-        event.register(FleshlandGameTests.class);
+        event.register(ExampleGameTests.class);
     }
 
     /**
@@ -38,17 +38,17 @@ public final class FleshlandGameTests {
      * 这也正是 Forge 示例里 {@code teststone} 那个生成器的写法。
      */
     @PrefixGameTestTemplate(false)
-    @GameTest(templateNamespace = FleshlandMod.MODID, template = "empty3x3x3")
-    public static void fleshBlockPlaces(GameTestHelper helper) {
+    @GameTest(templateNamespace = ExampleMod.MODID, template = "empty3x3x3")
+    public static void exampleBlockPlaces(GameTestHelper helper) {
         BlockPos pos = new BlockPos(1, 1, 1);
-        helper.setBlock(pos, FleshlandMod.FLESH_BLOCK.get());
-        helper.assertBlockState(pos, state -> state.is(FleshlandMod.FLESH_BLOCK.get()),
-                () -> "放下去的血肉块不是血肉块");
+        helper.setBlock(pos, ExampleMod.EXAMPLE_BLOCK.get());
+        helper.assertBlockState(pos, state -> state.is(ExampleMod.EXAMPLE_BLOCK.get()),
+                () -> "放下去的示例方块不是示例方块");
         helper.succeed();
     }
 
     /**
-     * 方块和它的物品**都**叫 {@code fleshland:flesh_block}，而且互相指着对方。
+     * 方块和它的物品**都**叫 {@code examplemod:example_block}，而且互相指着对方。
      *
      * <p>资源和代码对得上全靠这个名字：方块 id 决定 {@code blockstates/} 和
      * {@code models/block/} 去哪找，物品 id 决定 {@code models/item/} 和图标去哪找。
@@ -60,21 +60,21 @@ public final class FleshlandGameTests {
      * `javap -classpath <mapped jar> net.minecraft.gametest.framework.GameTestHelper`）。
      */
     @PrefixGameTestTemplate(false)
-    @GameTest(templateNamespace = FleshlandMod.MODID, template = "empty3x3x3")
-    public static void fleshBlockIsRegisteredUnderItsName(GameTestHelper helper) {
-        ResourceLocation blockId = ForgeRegistries.BLOCKS.getKey(FleshlandMod.FLESH_BLOCK.get());
-        ResourceLocation itemId = ForgeRegistries.ITEMS.getKey(FleshlandMod.FLESH_BLOCK_ITEM.get());
+    @GameTest(templateNamespace = ExampleMod.MODID, template = "empty3x3x3")
+    public static void exampleBlockIsRegisteredUnderItsName(GameTestHelper helper) {
+        ResourceLocation blockId = ForgeRegistries.BLOCKS.getKey(ExampleMod.EXAMPLE_BLOCK.get());
+        ResourceLocation itemId = ForgeRegistries.ITEMS.getKey(ExampleMod.EXAMPLE_BLOCK_ITEM.get());
         boolean named = blockId != null && itemId != null
-                && FleshlandMod.MODID.equals(blockId.getNamespace())
-                && "flesh_block".equals(blockId.getPath())
+                && ExampleMod.MODID.equals(blockId.getNamespace())
+                && "example_block".equals(blockId.getPath())
                 && blockId.equals(itemId);
         // `getBlock()` 在 BlockItem 上，不在 Item 上（也是实测：javap BlockItem）。
-        net.minecraft.world.item.Item item = FleshlandMod.FLESH_BLOCK_ITEM.get();
+        net.minecraft.world.item.Item item = ExampleMod.EXAMPLE_BLOCK_ITEM.get();
         boolean wired = item instanceof net.minecraft.world.item.BlockItem
-                && ((net.minecraft.world.item.BlockItem) item).getBlock() == FleshlandMod.FLESH_BLOCK.get();
+                && ((net.minecraft.world.item.BlockItem) item).getBlock() == ExampleMod.EXAMPLE_BLOCK.get();
         if (!named || !wired) {
             helper.fail("注册名不对：block=" + blockId + " item=" + itemId
-                    + "（两者必须都是 fleshland:flesh_block），物品指向方块=" + wired);
+                    + "（两者必须都是 examplemod:example_block），物品指向方块=" + wired);
         }
         helper.succeed();
     }

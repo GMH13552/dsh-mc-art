@@ -13,10 +13,14 @@ every jar looks read-only and the build dies with
 leaving a 22-byte empty jar behind.  Nothing about the JDK's version string predicts this,
 so the check is behavioural: start each candidate and make it write a file and a zip.
 
-  python3 scripts/check_jdk.py                    # resolve + self-test, print the verdict
-  python3 scripts/check_jdk.py --java-home DIR    # trust this one (still self-tested)
-  python3 scripts/check_jdk.py --probe-dir DIR    # write the probe files here instead
-  python3 scripts/check_jdk.py --needed 21        # a different required version
+  python scripts/check_jdk.py                    # resolve + self-test, print the verdict
+  python scripts/check_jdk.py --java-home DIR    # trust this one (still self-tested)
+  python scripts/check_jdk.py --probe-dir DIR    # write the probe files here instead
+  python scripts/check_jdk.py --needed 21        # a different required version
+
+On Windows the interpreter is usually `python` or `py -3`; `python3` is often a
+zero-byte Store stub that exits 9009 with no output, and `py -3` may point at an
+interpreter that no longer exists. Probe by running it, never by looking for the name.
 
 Exit codes: 0 = a usable JDK was found, 3 = none was (the reasons are printed), 2 = usage.
 ASCII only, stdlib only -- it has to run on a bare Windows box.

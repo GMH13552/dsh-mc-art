@@ -8,7 +8,7 @@
 ## 证据链（都可以重跑）
 
 ```
-参考目录  /mnt/c/Users/GMH13/Release 2.8.3/.minecraft/versions/1.18.2-Forge_40.2.0
+参考目录  <你的 .minecraft>/versions/1.18.2-Forge_40.2.0
 jar       1.18.2-Forge_40.2.0.jar        （类名被混淆：a.class / aaa$a.class）
 版本 json 里有 client_mappings 的地址（Mojang 官方映射，1.14.4 起发布）：
   https://piston-data.mojang.com/v1/objects/a661c6a55a0600bd391bdbbd6827654c05b2109c/client.txt

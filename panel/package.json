@@ -1,7 +1,7 @@
 {
   "name": "dsh-mc-art-panel",
-  "version": "0.1.28",
-  "description": "MC 资产面板 + 「MC 模组工作室」模式 + mc-mod skill：3D+物品栏、像素/结构编辑器、@ 提意见、GameTest 判定闭环",
+  "version": "0.2.0",
+  "description": "MC 资产面板 + 「MC 模组工作室」模式 + mc-mod / mc-art 两个 skill：3D+物品栏、像素/结构编辑器、出错的报告自动放进输入框、GameTest 判定闭环。原生 Windows 可用（不需要 WSL），不绑定任何具体 mod。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -64,7 +64,7 @@
     "access": "public"
   },
   "scripts": {
-    "prepublishOnly": "node check-private.mjs && node build.mjs && node verify-build.mjs && node entry-test.mjs && node ui-test.mjs && python3 ../tools/strip_gate.py && node ../tools/mcart-plugin/engine-test.js",
+    "prepublishOnly": "node verify-build.mjs && node build.mjs --release && node check-private.mjs --require-generated && node entry-test.mjs && node ui-test.mjs && node ../tools/python_env.mjs ../tools/strip_gate.py && node ../tools/mcart-plugin/engine-test.js",
     "verify": "node verify-build.mjs && node entry-test.mjs",
     "prepare": "node vendor.mjs"
   }

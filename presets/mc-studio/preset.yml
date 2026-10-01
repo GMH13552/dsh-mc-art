@@ -1,2 +1,2 @@
 name: MC 模组工作室
-description: 做 Minecraft 模组的一体化模式：mcart 面板（3D+物品栏、像素编辑器、结构编辑器、@ 提意见）+ mc-mod / mc-art 两个 skill + GameTestServer 判定闭环。适合"从描述直接产出并验证 mod"。
+description: 做 Minecraft 模组的一体化模式：mcart 面板（3D+物品栏、像素编辑器、结构编辑器、@ 提意见）+ mc-mod / mc-art 两个 skill + GameTestServer 判定闭环。分工写死在流程里：审美、参考选择、族内边界与命名交给 AI，像素度量、jar 扫描与退出码交给脚本。通用、不绑某个 loader / 版本 / 项目，Windows 原生与 POSIX 都能用。
