@@ -11,6 +11,48 @@ panel/report contract is stable, and whose shipped skills are general (no loader
 version, machine or project is baked in). Earlier 0.1.x releases were development
 snapshots and are not itemised here.
 
+## 0.2.4
+
+### Added
+
+- **A reference now declares a class, and the engine checks it.** The user's words: *"mist stone
+  should be shallow rock, shouldn't it?"* — the plan had attached `deepslate` and written a note
+  forbidding `stone`. The **class** is what makes two references interchangeable; the name is not.
+  `descriptor.class` / `descriptor.layer` and `references[].class`; the engine derives each
+  candidate's class and layer from its name (`mc_art/refclass.py`, printed by `mc-art refclass`), and
+  a gate requires the declared class to be **represented** among the attached references and the
+  chosen one to be in the declared layer. Class and layer stay separate on purpose:
+  `deepslate_iron_ore` is an *ore* that lives *deep*, and flattening the two would make "this ore is
+  from the wrong layer" impossible to say. An unrecognised name classifies as `unknown` and is never
+  failed — the engine would rather say "I don't know" than guess.
+- **`reference_notes`.** A note may not contradict the reference it is attached to, and a note
+  claiming "this is the same reference plan X uses" is **verified against plan X**, not believed. A
+  note that merely *names* another reference is allowed: describing a composite choice ("its specks
+  sit on the stone base") is exactly what such a note is for.
+- **`mc-art refclass --plans <dir>`** — a family view that marks the outlier: the plan whose attached
+  references do not represent the class it declares.
+- **The skill now has the procedure that was missing.** "Name the class → list that class's
+  candidates from the reference root → attach and declare roles → verify with `why-reference` what
+  actually loaded, do not trust your memory of what you mounted." The "who decides" table used to
+  assign the choice to the model without ever saying how to make it.
+- Three real failures from a shipped plan set are written into the skill as counter-examples: a note
+  copied between plans (so it argued against its own correct choice), a note forbidding the very
+  layer it used, and a claim of agreement with another plan that was false. Plus the root cause they
+  share: **an asset made up on the spot gets a reference made up with it** — every asset in a plan
+  must have a provenance in the design documents, or the user is asked.
+
+### Fixed
+
+- The pipeline rebuilt `GenerationPlan(...)` in four places and **silently dropped new fields**,
+  which is why a false cross-plan claim came back as "could not be checked" instead of "is false".
+- Four example plans are written back in their compact hand-written form; earlier rounds had
+  re-serialised them through `json.dumps`, expanding every inline array until a two-key change looked
+  like fifty lines.
+
+### Changed
+
+- Vendored `mc-art` snapshot: `427fd01` → `74a6142`.
+
 ## 0.2.3
 
 ### Fixed

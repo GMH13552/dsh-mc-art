@@ -15,24 +15,53 @@ belong to different families: a deep-layer stone and a shallow-layer stone are b
 "stone". Sampling the wrong one is not a small miss — the new block then reads as the
 wrong material next to its neighbours, and no gate can see that.
 
-Checklist, in order:
+### 1.1 The procedure: name the class, then pick from the class
+
+"It feels like the same kind of thing" is not a step. These four are:
+
+| # | do this | leave this behind |
+|---|---|---|
+| 1 | **Name the class.** Ask: in vanilla, what kind of thing is this? — base field stone / deep-layer variant / ore host rock / brick / polished stone / planks / glass / metal / organic / decoration. The class is what makes two references interchangeable; the name is not. | the class, as words |
+| 2 | **List the candidates the class offers**, from the reference root, not from memory: `$M list-groups --source <reference dir or jar> --filter <class word>` | the candidate list you actually looked at |
+| 3 | **Mount it and declare it** in the plan's `references`, with roles (`shape`, `scale`, `material`, `palette`, `pixel_style`; the engine also has a UV-layout role and a `negative` role for "not this one"). A reference with no role is a picture, not an instruction. | the reference entry |
+| 4 | **Verify what actually loaded.** `$M why-reference --plan <plan.json>` prints the candidate table and the chosen entry (`--json` for a tool); a render writes the same report to `outputs/<name>/reference_selection.json`. Read it — do not trust your memory of what you mounted. | the loaded name and the step that chose it |
+
+**Where the class is written.** The engine is adding a declared class on the reference
+entry. Until that field exists, the class must be the **first sentence of that
+reference's `note`**, in one fixed shape: `class: deep-layer field stone`. A note whose
+first sentence is not a class is not a decision — it is prose.
+
+### 1.2 Notes are derived, never copied (three failures that shipped)
+
+Real plans, neutralised names, same shapes:
+
+| the failure | the rule it broke |
+|---|---|
+| `example_mist_stone`, a shallow-layer block, mounted a **deep-layer** reference, while its own note said the shallow variant must not be chosen | **a note may not contradict the reference it is attached to** |
+| `example_shallow_stone`'s note was copied whole from the deep block's plan. The sentence is true for the deep block and false for the shallow one, so the note argued against its own correct choice | **never copy a note between plans** — derive it from *this* plan's class |
+| an ore plan's note claimed "this is the same reference the stone plan uses", while the stone plan used a different one | **never claim agreement with another plan without checking**; a false sentence in a note is a false claim inside a deliverable |
+| the shallow block was not in the design documents at all: the asset itself was invented, and its reference was invented with it | **every asset in a plan must have a provenance in the design docs** (`DESIGN.md` / `CONTENT.md`); if it is not there, **ask the user** |
+
+The last row is the root cause of the others: **an asset made up on the spot gets a
+reference made up on the spot.** Fix the asset list before touching the references.
+
+### 1.3 The checklist that still holds
 
 1. **Same version** as the build target. The reference root's version and the project's
    version must agree (`workflow.md` stage 0).
-2. **Same role**: structural field / ore / decorative / organic / man-made.
-3. **Same layer and light regime**: what the player sees it next to matters more than
+2. **Same layer and light regime**: what the player sees it next to matters more than
    the alphabetical name.
-4. **Close in value and saturation** to the family it must join — measure the
+3. **Close in value and saturation** to the family it must join — measure the
    difference, do not judge it by eye.
-5. **Prefer a member of the same family already in the project** (`includeGenerated`).
+4. **Prefer a member of the same family already in the project** (`includeGenerated`).
    A new block should join the set, not restart it.
-6. **Never reference a placeholder.** Legacy/placeholder assets are removed before
+5. **Never reference a placeholder.** Legacy/placeholder assets are removed before
    authoring; if one is still in the project it will be found and copied (`traps.md`).
 
-Write down which reference and which frame, and why. That sentence is the evidence
-that a human made this choice.
+Write down the class, the reference and the frame, and why. That sentence is the
+evidence that a human made this choice.
 
-### Shallow vs deep, concretely (the deep-material bug)
+### 1.4 Shallow vs deep, concretely (the deep-material bug)
 
 A deep-layer block that samples the surface stone is the canonical failure. It happens
 because the tool lists what *exists* and both are called stone; the choice is yours, and

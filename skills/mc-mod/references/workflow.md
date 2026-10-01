@@ -13,7 +13,7 @@ This is the split that goes wrong most often, and it goes wrong in both directio
 
 | the model decides (taste, context, intent) | a tool decides (measurement, repetition) |
 |---|---|
-| which reference answers this asset — a deep-layer stone must not be sampled from a shallow-layer one | pixel statistics: palette, value range, isolated-pixel count, tiling seams |
+| which reference answers this asset — **by class, not by name** (procedure: `art-direction.md` §1.1); a deep-layer stone must not be sampled from a shallow-layer one | pixel statistics: palette, value range, isolated-pixel count, tiling seams |
 | what belongs to one family, and what deliberately does not | listing what actually exists in a jar, a pack, a reference root |
 | where the emphasis goes, and how much of the surface it may take | whether a file is a valid PNG, and whether two PNGs are byte-identical |
 | names, ids, the sentence the player reads | whether an exit code matches the log's own count |
@@ -100,9 +100,10 @@ unset: **say so and stop** — do not "make do" with invented art. The reference
 the rules (a 1.12.2 and a 1.18.2 model/blockstate differ, and so does the way a face is
 UV-mapped), and it is where the palette comes from.
 
-**Choosing the reference is the part only the model can do** (`art-direction.md` has
-the checklist): same version, same material role, same layer, close in value and
-saturation. A name that matches is not a reference that matches.
+**Choosing the reference is the part only the model can do** (`art-direction.md` §1 has
+the procedure: name the class → list candidates from it → mount with roles → verify with
+`why-reference`; plus the checklist and the three note failures): same version, same
+layer, close in value and saturation. A name that matches is not a reference that matches.
 
 **The loop** (`$M` is the `mc-art` skill's CLI; that skill carries the full command
 surface, so read it before typing — the engine's subcommands are the authority here):
@@ -128,6 +129,19 @@ there; `bin/mc-art` needs a real bash.
 Before any of it, point the reference correctly and list candidates instead of assuming:
 `art-direction.md` §2 has the checks and the three `reason`s a wrong root produces.
 
+- **Name the class before picking.** "What kind of thing is this in vanilla?" (base field
+  stone / deep-layer variant / ore host rock / brick / planks / …) — then list candidates
+  from that class and mount one with roles. The four steps and what each leaves behind:
+  `art-direction.md` §1.1. Before the engine's class field lands, the class is the first
+  sentence of the reference's `note`.
+- **Verify the loaded reference, do not remember it**: `$M why-reference --plan <plan>`
+  prints the candidate table and the chosen entry, and a render writes
+  `outputs/<name>/reference_selection.json`. Notes are derived from *this* plan's class,
+  never copied between plans, and a note may never contradict the reference it is
+  attached to (`art-direction.md` §1.2 has the three real failures).
+- **Every asset must exist in the design docs** (`DESIGN.md` / `CONTENT.md`) before it
+  gets a reference. An asset invented on the spot gets a reference invented on the spot;
+  if the design docs do not have it, ask the user.
 - Sample the project's own earlier textures too (`includeGenerated`), or new work
   drifts toward vanilla and stops looking like the set.
 - **Family consistency is the point.** A stone and its ore share a background and a

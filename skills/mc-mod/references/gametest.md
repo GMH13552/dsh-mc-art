@@ -17,7 +17,8 @@ produced. That is why it, and not a bot, is the primary way to check a mod.
 ## The loop
 
 ```bash
-# in the mod project
+# from the repository root — the tool is `tools/mcmod_gametest.py`,
+# and `--project <dir>` points it at any mod project (default: the bundled example)
 python tools/mcmod_gametest.py                 # verdict + parsed log + result JSON
 python tools/mcmod_gametest.py --fault         # inject a false assertion: it MUST fail
 ./gradlew runGameTestServer --no-daemon --console=plain   # what the tool runs

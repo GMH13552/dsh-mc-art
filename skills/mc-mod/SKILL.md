@@ -34,7 +34,7 @@ Three rules run through everything here:
 
 | the model judges (taste, context, intent) | a tool judges (measurement, repetition) |
 |---|---|
-| which reference answers this asset — a deep-layer stone must not be sampled from a shallow-layer one | pixel statistics: palette, value range, isolated-pixel count, tiling seams |
+| which reference answers this asset — **by class, not by name** (procedure: `references/art-direction.md` §1.1); a deep-layer stone must not be sampled from a shallow-layer one | pixel statistics: palette, value range, isolated-pixel count, tiling seams |
 | what belongs to one family, and what deliberately does not | what actually exists in a jar, a pack, a reference root |
 | where the emphasis goes, and how much surface it may take | whether a file is a valid PNG; whether two PNGs are byte-identical |
 | names, ids, the sentence the player reads | whether an exit code matches the log's own count |
@@ -125,9 +125,12 @@ and the one-command check in `references/panel.md`.
 ## Running the judge
 
 ```bash
-# 0) First ask "can this JVM write a jar?" — it saves one very long first build
+# A) from this skill's directory (`skills/mc-mod`):
 python scripts/check_jdk.py                    # exit 3 = no usable JDK on this machine
-# from a mod project (see references/gametest.md for what the project must contain)
+
+# B) from the repository root (the tool lives in `tools/`):
+#    first ask "can this JVM write a jar?" — it saves one very long first build;
+#    `--project` points the judge at any mod project (default: the bundled example)
 python tools/mcmod_gametest.py                 # verdict: exit code + parsed log
 python tools/mcmod_gametest.py --fault         # inject a false assertion; it MUST fail
 ```

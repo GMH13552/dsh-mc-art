@@ -312,3 +312,16 @@ jdk_env                # tool：共享模块名（随 skill 发出去，公开�
 jdk_homes              # tool：它的公开函数——候选清单，全仓库唯一一份
 pick_jdk               # tool：它的公开函数——挑 JDK，带 verify 回调
 IntelliJ               # tool：IDE 名（`~/.jdks` 是它下载 JDK 的目录，注释里点了名）
+
+# ── 第八轮：参考的"类/层"表（art-engine 的 mc_art/refclass.py，随包发）──────────
+# 这一批全是**公共词汇**：要么是引擎自己定义的类/层名，要么是**原版 Minecraft 自己的名字**。
+# 用户那句"雾石不应该是浅层岩石吗"逼出来的字段；**私人模组的资产名不在本表里**，
+# 那些必须改成 example* 占位符（vocab 门禁先抓到过一次，见提交记录）。
+deep_stone             # engine：类表里的类名之一（深层石）——公共分类词
+shallow_stone          # engine：类表里的类名之一（浅层石）——公共分类词
+ore_deposit            # engine：类表里的类名之一（矿石沉积）——公共分类词
+declared_class         # engine：plan 里声明的类字段（reference_class 的 JSON 拼写之一）
+refclass               # engine：新模块名 + 新子命令名（`mc-art refclass`），随包发布
+check-reference-class.py  # tool：新门禁的文件名（随包发布，`scripts/` 下）
+deepslate_iron_ore     # **原版**方块名（Minecraft 自带）——用作"类与层是两件事"的例子
+oak_planks             # **原版**方块名（Minecraft 自带）——类表里的普通例子
