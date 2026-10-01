@@ -10,6 +10,8 @@ not a screenshot -- it is a number the game itself produced.
   python tools/mcmod_gametest.py                 # run, print the verdict
   python tools/mcmod_gametest.py --fault         # prove the judge can fail
   python tools/mcmod_gametest.py --json OUT      # machine-readable result
+  python tools/mcmod_gametest.py --jdk-selftest  # only the JDK picker (--fault: old judgement picks 21)
+  python tools/mcmod_gametest.py --restore-selftest  # only the --fault contract (inject -> byte-exact restore)
 
 On Windows the interpreter is usually `python` or `py -3` (`python3` is often a
 zero-byte Store stub), and the default `java` is often the WRONG major version
@@ -36,6 +38,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -152,6 +155,114 @@ def resolve_jdk(explicit=None, needed=NEEDED_JDK, env=None, run=subprocess.run,
         if major == str(needed):
             return {"home": str(home), "major": major, "reason": reason, "tried": tried}
     return {"home": None, "major": None, "reason": "", "tried": tried}
+
+
+def inject_fault_file(source: Path):
+    """把断言改成 DIRT，返回一个**按字节**还原的可调用对象。
+
+    WHY BYTES.  `--fault` 的契约是"注入 → 必须红 → **还原**"。老实现用
+    `read_text()` / `write_text()`，那是**文本模式**：Windows 上 `write_text` 会把 `\\n`
+    展开成 `\\r\\n`。于是跑完一次故障注入，`git diff` 是空的、`git status` 却永远脏，还伴随
+    `warning: CRLF will be replaced by LF in …ExampleGameTests.java`（Lead 实测）。
+    在这个仓库里这很致命：任何人 `git add -A` 都会把一次行尾变更带进提交，而"看起来像改了代码"
+    的 diff 会让 review 失效 —— `.gitattributes` 正是把 `*.java` 钉成 LF 的。
+
+    所以注入前按二进制读、还原时按二进制写：内容与行尾都逐字节回到原样。
+    """
+    original = source.read_bytes()
+    text = original.decode("utf-8")
+    if FAULT_FIND not in text:
+        raise LookupError(FAULT_FIND)
+    source.write_bytes(text.replace(FAULT_FIND, FAULT_REPLACE).encode("utf-8"))
+    return lambda: source.write_bytes(original)
+
+
+def restore_selftest(fault: bool = False) -> int:
+    """把"还原"这条契约立起来：真跑一次 CLI `--fault`，断言工作树前后都是干净的。
+
+    用一个临时 git 仓库 + 假 `gradlew.bat`（退出码 1）当夹具 —— 不必起真服务端，
+    但走的是**真的注入 / 真的还原 / 真的退出码**那条路。
+
+    `--fault` 反向夹具：故意用**文本模式**（LF→CRLF）写回，同一个断言必须红 ——
+    证明这条检查不是空转（在老实现上它确实会红）。
+    """
+    failures = 0
+
+    def check(label, ok, detail=""):
+        nonlocal failures
+        if not ok:
+            failures += 1
+        print("  " + ("OK  " if ok else "FAIL") + " " + label + ("" if ok or not detail else "  -> " + detail))
+
+    fixture = ("package com.examplemod;\n\n"
+               "import net.minecraft.gametest.framework.GameTest;\n\n"
+               "public class ExampleGameTests {\n"
+               "  @GameTest(template = \"empty\")\n"
+               "  public void places() {\n"
+               "    // 注入要改的就是下面这一句（直接引用 FAULT_FIND，改名了也不会漂）\n"
+               "    GameTestHelper.succeedIf(() -> " + FAULT_FIND + ");\n"
+               "  }\n"
+               "}\n")
+
+    with tempfile.TemporaryDirectory(prefix="mcmod-restore-") as tmp:
+        project = Path(tmp)
+        source = project / "src/main/java/com/examplemod/ExampleGameTests.java"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(fixture.encode("utf-8"))
+        (project / "gradlew.bat").write_text("@echo off\nexit /b 1\n", encoding="ascii")
+        # 真实工程里 `build/` 是 gitignore 的（工具会往那儿写 gametest.log）——
+        # 夹具也照做，这样"跑完 git status 仍然为空"看起来跟真仓库一样。
+        (project / ".gitignore").write_text("build/\n", encoding="ascii")
+        before = source.read_bytes()
+
+        if fault:
+            # 反向夹具：模拟老实现在 Windows 文本模式下的写回（LF → CRLF）。
+            injected = before.decode("utf-8").replace(FAULT_FIND, FAULT_REPLACE)
+            buggy = injected.replace("\n", "\r\n").encode("utf-8")
+            source.write_bytes(buggy)
+            check("老实现（文本模式写回）确实会改变字节 ← 所以按字节还原是必需的",
+                  source.read_bytes() != injected.encode("utf-8") and b"\r\n" in source.read_bytes(),
+                  "行尾没被改，说明这个反向夹具本身失效了")
+            check("而且差异**只是行尾**：换回 LF 后内容与注入版逐字节相同",
+                  source.read_bytes().replace(b"\r\n", b"\n").decode("utf-8") == injected)
+            source.write_bytes(before)
+            check("按字节还原回原文件后，与跑之前逐字节相同",
+                  source.read_bytes() == before)
+            print("全部通过（对照成立：文本模式写回会把工作树弄脏，按字节还原不会）"
+                  if failures == 0 else "%d 项失败" % failures)
+            return 1 if failures else 0
+
+        jdk = resolve_jdk(None, NEEDED_JDK)
+        if jdk["home"] is None:
+            print("  SKIP 本机没有可用的 JDK %s —— CLI 那条夹具没跑（`--jdk-selftest` 能看细节）" % NEEDED_JDK)
+            return 0
+        subprocess.run(["git", "init", "-q"], cwd=str(project), capture_output=True, encoding="utf-8", errors="replace")
+        subprocess.run(["git", "add", "-A"], cwd=str(project), capture_output=True, encoding="utf-8", errors="replace")
+        subprocess.run(["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t",
+                        "commit", "-q", "-m", "fixture"], cwd=str(project),
+                       capture_output=True, encoding="utf-8", errors="replace")
+        clean_before = subprocess.run(["git", "status", "--porcelain"], cwd=str(project),
+                                      capture_output=True, encoding="utf-8", errors="replace")
+        check("夹具仓库一开始是干净的", clean_before.stdout.strip() == "", clean_before.stdout.strip())
+
+        done = subprocess.run([sys.executable, str(HERE / "mcmod_gametest.py"), "--project", str(project),
+                               "--test-source", str(source), "--java-home", jdk["home"], "--fault"],
+                              capture_output=True, encoding="utf-8", errors="replace", timeout=600)
+        out = (done.stdout or "") + (done.stderr or "")
+        status_after = subprocess.run(["git", "status", "--porcelain"], cwd=str(project),
+                                      capture_output=True, encoding="utf-8", errors="replace")
+        check("跑完 CLI `--fault` 之后 `git status --porcelain` 仍然为空（工作树没被弄脏）",
+              status_after.stdout.strip() == "", status_after.stdout.strip())
+        check("注入真的生效过（不是「没跑」）", "已注入故障" in out and "已把测试源码原样放回" in out,
+              out.strip().splitlines()[-1][:120] if out.strip() else "(没有输出)")
+        check("`--fault` 契约成立：假 gradlew 退出码 1 → 判定为「抓到了」且 CLI 退出码 0",
+              "抓到了" in out and done.returncode == 0,
+              "returncode=%s；%s" % (done.returncode, out.strip().splitlines()[-1][:100] if out.strip() else "(没有输出)"))
+        check("测试源码逐字节回到原样（行尾也没变）", source.read_bytes() == before,
+              "%d 字节 -> %d 字节" % (len(before), len(source.read_bytes())))
+
+    print("全部通过" if failures == 0 else "%d 项失败" % failures)
+    return 1 if failures else 0
 
 
 def gradle_command(platform_name: str | None = None, project: str | None = None) -> list[str]:
@@ -405,11 +516,18 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--test-source", default="", help="the GameTests source --fault rewrites (default: searched under the project)")
     parser.add_argument("--jdk-selftest", action="store_true",
                         help="only test the JDK picker (with --fault: prove the old judgement picks the wrong JDK)")
+    parser.add_argument("--restore-selftest", action="store_true",
+                        help="only test the --fault contract: inject then restore must leave the tree byte-identical "
+                             "(with --fault: prove a text-mode restore DOES dirty it)")
     args = parser.parse_args(argv)
 
     if args.jdk_selftest:
         print("--- JDK 选择自测" + ("（--fault：对照老判据）" if args.fault else ""))
         return jdk_selftest(args.fault)
+
+    if args.restore_selftest:
+        print("--- --fault「还原」契约自测" + ("（--fault：反向夹具）" if args.fault else ""))
+        return restore_selftest(args.fault)
 
     # The JDK comes first: with the wrong one, Gradle fails 26 minutes in, and a
     # 1.18.2 project cannot be built by the Java 21 that `java` usually resolves to.
@@ -435,25 +553,24 @@ def main(argv: list[str]) -> int:
         found = sorted(project.glob("src/main/java/**/*GameTests.java"))
         source = found[0] if found else project / "src/main/java/com/examplemod/ExampleGameTests.java"
 
-    backup = None
+    restore = None
     if args.fault:
         if not source.is_file():
             print("注入失败：找不到测试源码 %s（用 --test-source 指给它）" % source, file=sys.stderr)
             return 2
-        original = source.read_text(encoding="utf-8")
-        if FAULT_FIND not in original:
+        try:
+            restore = inject_fault_file(source)
+        except LookupError:
             print("注入失败：测试源码里找不到要改的那句：\n  " + FAULT_FIND, file=sys.stderr)
             return 2
-        backup = original
-        source.write_text(original.replace(FAULT_FIND, FAULT_REPLACE), encoding="utf-8")
         print("已注入故障：断言改成 DIRT（血肉块不该通过）")
 
     try:
         code, text = run_gradle(project, log, args.timeout, jdk_home=jdk["home"])
     finally:
-        if backup is not None:
-            source.write_text(backup, encoding="utf-8")
-            print("已把测试源码原样放回")
+        if restore is not None:
+            restore()
+            print("已把测试源码原样放回（按字节，行尾不变）")
 
     log = read_log(text)
     result = verdict(code, log, text)

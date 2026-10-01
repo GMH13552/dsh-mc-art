@@ -226,3 +226,45 @@ pack needs no texture at all — the game draws it (`contracts.md`).
 - in the running game, next to the vanilla blocks it will stand beside.
 
 Then write one sentence about what is wrong with it. "Looks fine" is not a check.
+The checklist below produces the input; the **verdict** is the section after it.
+
+## 最后一眼：和原版并排，回答三个问题
+
+**Mandatory once the render is green — not an optional extra.** Every gate in §5–§7 can
+pass while the thing is still ugly, and that is exactly how rejected versions ship with
+all their numbers in range. "I looked at it" is not this step: this step produces three
+written answers.
+
+1. **Put the delivered sprite next to the reference it actually mounted, both zoomed.**
+   For a family, look at the whole contact sheet, not one member. Reading them separately
+   is not looking at them together.
+
+2. **Answer three questions in writing**, in the delivery note:
+   - **读得出来是什么吗?** — is it readable as the thing: an ore reads as an ore, an
+     ingot as an ingot, a table as a table.
+   - **丑不丑?** — is it ugly? Judge it by "a player will look at this hundreds of
+     times", not by "there is no error in it".
+   - **和原版并排，像同一个游戏里的东西吗?** — next to vanilla, does it look like it
+     belongs to the same game? Note what is *not* being asked: not "is it like the
+     reference I mounted", but "is it the same art style at all". A faithful copy of a
+     reference that still looks foreign has failed this question.
+
+3. **Any "no" sends you back to the plan; do not ship.** One bit per question —
+   "mostly" is a no.
+
+4. **Counter-example discipline, written down.** `audit` and `style_report.json` being
+   green is **not** the answer to those three questions; they answer only "did you cross
+   a declared line". Measured: three consecutive versions shipped with every gate green
+   and every declared number inside budget, and the user rejected all three. That is what
+   treating a measurement as a taste costs.
+
+**"Mounted" is not the same as "the reference did anything".** If the side-by-side answer
+is "this does not look like the vanilla thing I mounted", suspect
+`appearance.reference_sampling` before touching `pixel_map`: `pattern` keeps the source's
+value rhythm (grain, mottling) and retints it while **retaining roughly 40% of the
+source's own colour**, `value` transfers brightness only, and `none` paints from your
+ramp alone. `part_reference_sampling` overrides per part and `part_reference_sources`
+binds a part to one named image. A wrong sampling mode is why a mounted reference can
+leave no visible trace at all. Measured in the engine's own notes: a bright crystal
+palette over the vanilla wooden bow stayed dark wood-green with `pattern`, and read as
+translucent crystal with `value`.

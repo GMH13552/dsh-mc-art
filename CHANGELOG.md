@@ -11,6 +11,54 @@ panel/report contract is stable, and whose shipped skills are general (no loader
 version, machine or project is baked in). Earlier 0.1.x releases were development
 snapshots and are not itemised here.
 
+## 0.2.2
+
+### Added
+
+- **The last look is mandatory.** Rendering is not finished when the gates are green: the sprite must
+  be magnified beside the reference the plan *actually attached* (and the family's contact sheet for
+  a family), and three questions answered **in words** — does it read as what it is, is it ugly, does
+  it look like the same game as vanilla. Any "no" sends it back to the plan. The skill states outright
+  that a green `audit` is not an answer to those three questions, with this project's own three
+  rejected deliveries as the worked example.
+- **`unaudited_accent`.** After rendering, the *picture* is scanned with a criterion independent of
+  every declaration (a pixel's chroma against its own local median) and diffed against the audited
+  accent set; paint that stands out but was never measured is an error, reported with count,
+  coordinates and colours. It exists because it happened here: the ingot carried a leftover
+  hand-drawn `pixel_map` band while the audit counted a 5-pixel derived set, so **two rounds tuned
+  numbers while the picture stayed wrong**. A plan declaring **both** `pixel_map` and
+  `accent_from_reference` now warns at render time.
+- **`accent_base_gap`** — is the accent *set into* its material or pasted on? A **signed** band centred
+  on vanilla's own measurement (vanilla `iron_ore`'s specks sit **+12.24** luma brighter than their
+  stone; band 6…24). Both directions go red: too loud (`+47.7`, "pasted on rather than set in") and
+  reversed (`−7.9`, "on the WRONG SIDE — darker than its base where vanilla is brighter").
+
+### Fixed
+
+- **Each family member is measured with its own declared accent.** The family axes had been fed the
+  *union* of every member's accent colours, so each member was judged against colours it never
+  declared. Proven on identical sprites: saturation span `0.3928 → 0.0749`, hue span `6.5° → 1.7°`,
+  with not one pixel of art changed.
+- **Accent consistency now applies only to members that declare an accent.** Vanilla never shared one
+  accent between an ore and its ingot; binding the ingot to the ore's amber was enforcing a rule this
+  project invented. The metal members are judged on the material axes instead.
+- **The ore deposits are embedded, and the gap was a luma problem, not a transition problem.**
+  Vanilla's specks start 13 luma from their stone; ours started 83, which no amount of blending
+  recovers. Each member's ramp is now pitched to its own base (signed gaps `+9.86 / +15.94`).
+- **The ingot is material-axis**: cool grey metal with one faint warm light taken from
+  `iron_ingot`'s own shading — not a warm patch on grey metal. `example_deepslate_ore` added, so the
+  deep-layer ore vanilla pairs with its stone ore now exists too.
+
+### Changed
+
+- Vendored `mc-art` snapshot: `afa754f` → `fc32714` (199 tests, family build `EXIT=0`, 21 fault
+  fixtures all red where they should be).
+
+### Removed
+
+- The `accent_edge_max` waiver the ore used to carry: with the deposits embedded, it passes on the
+  family's own limit again.
+
 ## 0.2.1
 
 ### Fixed

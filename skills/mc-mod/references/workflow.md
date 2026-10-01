@@ -199,9 +199,15 @@ see the picture at all: read the PNG, do not trust a summary of it.
   dedicated server built from the same mods, with this jar added.
 - **Colour-only requests:** if the user asked for the colours to match, the shape must
   be pixel-identical. Check that, do not assume it.
+- **The last look is a verdict, not a glance.** Before shipping, put the delivered sprite
+  next to the reference the plan actually mounted and **answer three questions in
+  writing** (readable? ugly? same art style as vanilla?); any "no" sends you back to the
+  plan. Gates being green does not answer them — that is how three rejected versions
+  shipped with every declared number in budget. Full procedure: `art-direction.md`,
+  最后一眼.
 
-**Acceptance:** a screenshot (or a live look) and a sentence about what is wrong with
-it — written down, because "looks fine" is not a check. *Judge:* a human.
+**Acceptance:** a screenshot (or a live look), plus the three written answers — an
+answer, not "looks fine", because "looks fine" is not a check. *Judge:* a human.
 
 ## 7. Ship and port
 

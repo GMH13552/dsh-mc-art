@@ -68,13 +68,17 @@ owns it and what counts as passing.
 3. Write the atlas            the index that says what exists and where its files are
 4. Generate the code/assets   datagen or templates — never hand-write what can be generated
 5. Verify behaviour IN GAME   the game's own test server: it runs, asserts, exits with the failure count
-6. Verify with eyes           a real instance; the part only a human can look at
+6. Verify with eyes           a real instance + side by side with the mounted reference;
+                              three written answers, any "no" = do not ship
 7. Ship and port              one branch per version; porting = swap templates + version numbers
 ```
 
 Stage 0–4 are mechanical (a tool can check most of them). Stage 5 is what separates
 "I generated some files" from "there is a mod". Stage 6 is the only one where a picture
-is actually looked at. Per-stage acceptance and ownership: `references/workflow.md`.
+is actually looked at **and judged**: the last look (`art-direction.md`, 最后一眼) puts the
+sprite next to its reference and requires three written answers — green gates are
+explicitly not one of them. Per-stage acceptance and ownership:
+`references/workflow.md`.
 
 ## What can be verified, per target version
 

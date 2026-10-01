@@ -297,3 +297,9 @@ accent_ramp_min_pixels      # engine：低于这个像素数就不查 ramp 使�
 max_dominant_share          # engine：单个明度档最多允许占的比例
 min_levels                  # engine：一个强调簇至少要跨几档明度
 min_pixels                  # engine：结构门禁的最小像素门槛
+
+# ── 第六轮：用户那句"最后一步该看丑不丑"逼出来的三条（克隆 fc32714）────────────
+# 逐条写理由，不按前缀整类放行。
+last_look              # engine：SKILL.md 里那一节的 id/锚点（"最后一眼"三步裁决）
+unaudited_accent       # engine：独立于声明重扫渲染图、抓"没被任何门禁量到"的强调像素
+waived_reasons         # engine：带 waiver 时被降级为 warning 的那些 reason 列表

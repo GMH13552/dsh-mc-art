@@ -21,6 +21,10 @@
 python ../../tools/mcmod_gametest.py
 python ../../tools/mcmod_gametest.py --fault
 
+# 工具自带两条自测（它们不跑服务端，几秒钟）：
+python ../../tools/mcmod_gametest.py --jdk-selftest          # 挑 JDK：拒绝 javac 21、选中 17（本机默认 java 是 21，1.18.2 用不了）
+python ../../tools/mcmod_gametest.py --restore-selftest      # --fault 的"还原"契约：跑完 git status 必须仍然干净（--fault 给反向夹具）
+
 # 或者直接：
 ./gradlew runGameTestServer --no-daemon --console=plain
 ```
