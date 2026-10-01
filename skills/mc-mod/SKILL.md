@@ -34,16 +34,18 @@ Three rules run through everything here:
 
 | the model judges (taste, context, intent) | a tool judges (measurement, repetition) |
 |---|---|
-| which reference answers this asset — **by class, not by name** (procedure: `references/art-direction.md` §1.1); a deep-layer stone must not be sampled from a shallow-layer one | pixel statistics: palette, value range, isolated-pixel count, tiling seams |
+| which reference answers this asset — **by class, not by name** (procedure: `references/art-direction.md` §1.1); a deep-layer stone must not be sampled from a shallow-layer one | pixel statistics: palette, value range, isolated-pixel count (**no engine gate for tiling seams yet** — human check, `art-direction.md` §12) |
 | what belongs to one family, and what deliberately does not | what actually exists in a jar, a pack, a reference root |
 | where the emphasis goes, and how much surface it may take | whether a file is a valid PNG; whether two PNGs are byte-identical |
 | names, ids, the sentence the player reads | whether an exit code matches the log's own count |
 | whether it looks right, feels right, reads well | rasterising the same plan the same way twice |
+| **whether the gate I declared measures the thing I want** — asked once, **before starting** (`art-direction.md` §5.1, §6) | — no tool can answer this one for you |
 
 Pushing taste onto a tool is how a set stops looking like one mod (the tool takes the
 first name that matches). Pushing measurement onto the eye is how "about a tenth of the
 pixels" becomes a false claim. Every stage in `references/workflow.md` names which side
-owns it and what counts as passing.
+owns it and what counts as passing; stage 2 starts with measuring 5–10 same-kind
+references (colour **and** shape grammar, `art-direction.md` §4) before anything is drawn.
 
 ## What is in this skill
 
@@ -133,6 +135,10 @@ python scripts/check_jdk.py                    # exit 3 = no usable JDK on this 
 #    `--project` points the judge at any mod project (default: the bundled example)
 python tools/mcmod_gametest.py                 # verdict: exit code + parsed log
 python tools/mcmod_gametest.py --fault         # inject a false assertion; it MUST fail
+#    a new project chooses what the fault rewrites (no fake example class needed):
+python tools/mcmod_gametest.py --fault --fault-find '<expr>' --fault-replace '<broken expr>'
+#    tool exit codes: 0 = fault caught, 4 = fault NOT caught (an empty check), 1 = run failed;
+#    the behaviour verdict is always the Gradle exit code / the log's own count
 ```
 
 On Windows the interpreter is usually `python` or `py -3`; `python3` is often a zero-byte

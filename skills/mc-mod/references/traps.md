@@ -83,7 +83,7 @@ were unrelated to its siblings.
 **"One or two pixels jut out / the ore looks like confetti."**
 → Per-pixel randomness instead of structure, and an accent with no budget.
 → Bands and connected clusters, one accent hue per family, accent share around a tenth
-of the surface at most (`art-direction.md` §2–3).
+of the surface at most (`art-direction.md` §8–9).
 → Found by measuring: isolated-pixel count high, accent share far above the budget.
 
 **"I only asked for the colours to match, and the shape changed too."**
@@ -103,8 +103,54 @@ shapes.
 → The block entity had no model of its own: the plank texture was edited instead, so the
 3D view showed a plank with a mark on it.
 → Give it a model with real boxes and a texture authored in **UV space**, with separate
-UV regions for parts that are different materials (`art-direction.md` §6).
+UV regions for parts that are different materials (`art-direction.md` §13).
 → Found by opening it in the 3D view and asking the question out loud.
+
+**"The specks are one-pixel lines, not blobs."**
+→ The reference's pixel coordinates were transcribed by hand, a few points were lost, and
+the connected cluster degraded into a line one pixel wide.
+→ **Read the reference; do not copy it.** Take its clusters from the file (a small script),
+and check the shape against the class contract (`art-direction.md` §4.2).
+→ Found by measuring the clusters' fill ratio and thickness instead of looking at them.
+
+**"The specks look stamped: the same cross, the same size, evenly spaced."**
+→ After the "it is a line, not a blob" complaint, the fix was to stamp one identical
+shape on every centroid (first a cross, then a 3×3 square) — a rubber stamp.
+→ Use the reference's **own** cluster outlines, which are already irregular and of
+different sizes, recolour them, and set the value by the pixel's rank from the cluster
+centre. The engine's motif-repeat and layout gates exist to catch this.
+→ Found by the engine's `accent_motif_repeat_max` / `accent_layout_min_size_cv` and by
+the user's next sentence: "十字也太有规律了吧".
+
+**"My repair step made the sprite worse, and the engine blamed the art."**
+→ A hand-written "isolated pixel repair" was written while believing a wrong premise
+(that a deposit is a same-colour region). It downgraded every pixel of a deliberately
+checkered field and erased an entire value level; the engine then reported "the deposit
+uses one level", pointing at the picture rather than at the post-processing.
+→ **Any repair/cleanup step may only be written after its premise is proven.** Check what
+is actually in the plan you submit with a tool that reproduces the engine's view — not
+only by reading the engine's error. Measured: the bright level's token count in the plan
+was 0, and no error message said so.
+→ Found by a diagnostic that recomputed the engine's clustering over the submitted plan.
+
+**"A one-pixel accent is refused even though its colour is right."**
+→ `accent_min_cluster` counts **same-colour** clusters: a bright core ringed by a darker
+shade is, topologically, its own one-pixel cluster. It is a gate (what will be refused),
+not a repair.
+→ Make the deposit one connected region of one declared colour, or turn on the explicit
+cleanup switch (`art-direction.md` §5.4).
+→ Found by re-reading the definition — the error message never says "same colour".
+
+**"The reference was rejected because of its own note."**
+→ Reference `notes` are machine-read: a sentence copied from another plan that forbids
+"the shallow variant", attached to a shallow reference, is read as "this reference is
+forbidden" and fails the plan.
+→ Write notes as positive statements about what the reference is; never carry a negative
+sentence across plans (`art-direction.md` §1.1).
+
+**"The engine refuses my legend even though the plan looks right."**
+→ A `pixel_map.legend` key must be one non-dot character. The dot is the renderer's
+implicit "delegate to normal rendering" and cannot be declared.
 
 ## Process and tooling
 

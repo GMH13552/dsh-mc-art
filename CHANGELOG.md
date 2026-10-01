@@ -11,6 +11,73 @@ panel/report contract is stable, and whose shipped skills are general (no loader
 version, machine or project is baked in). Earlier 0.1.x releases were development
 snapshots and are not itemised here.
 
+## 0.2.6
+
+This release is mostly one thing a user's own second session measured and wrote down: a
+757-line log of what actually cost time while building a mod with these tools. Its first
+finding was a defect in a gate **we** shipped two releases earlier.
+
+### Fixed
+
+- **The embedding band was measuring the wrong thing.** `accent_base_gap`'s default 6..24 came
+  from `iron_ore`, and it was the **mean of a whole ore cluster**, not of a speck. Measured across
+  all eight vanilla ores the figure runs **−75.7 (redstone) … +106.6 (gold)** and **none of them
+  falls inside 6..24**. Using the default as an ore's target compresses a deposit that should read
+  as bright into a recessive smudge — the session did that for seven rounds. The constants are now
+  named for their owner (`ITEM_ACCENT_GAP*`), the vanilla ore range is published as a fact,
+  `accent_base_gap_min/max` default to `None` so the engine can tell a **default** from a
+  **declaration**, and an asset declared as a deposit that declares no band is **refused** with the
+  way out in the message. The default was not loosened: that would refuse items.
+- **`mc-art gap-from-refs`** measures the band from your own references, and reports the
+  **per-deposit** figure (the one to declare) separately from the **per-pixel** boundary figure —
+  stating that averaging a cluster first is exactly how `12.24` was produced, and printing its mask
+  rule, because a different mask gives a different number.
+- **The judge could not run on a path with spaces.** `list2cmdline()` was handed to `subprocess` as
+  a single argv element, so cmd received a literal `\"…\"` and answered
+  `'…' is not recognized` — which looks like a Gradle failure. The user's own project path
+  (`Release 2.8.3`) has a space, so this was blocking. Windows now gets one command line.
+- **`--fault` returned 0 even when it caught nothing**, which made "the checker can say no"
+  unfalsifiable. It now returns **4** when the injected fault goes undetected (1 stays "the verdict
+  did not pass"), and says that the tool's own exit code carries no verdict.
+- **`--fault`'s injection point was hardcoded** to the example mod's expression, so any new project
+  had to write `ExampleMod.EXAMPLE_BLOCK` verbatim — polluting the subject to satisfy the tool.
+  `--fault-find` / `--fault-replace` were added; the old pair stays as a compatibility default and
+  the failure now points at the flag.
+- **The judge did not manage Gradle's home**, and the default one is read-only to a sandboxed
+  process, so the wrapper died creating a lock file. It now probes candidates, **really creates a
+  lock file** to prove writability, prints which home it chose and why each other was rejected, and
+  passes `GRADLE_USER_HOME`. (`gradlew`'s `-g` cannot fix this: the wrapper parses it only when it
+  precedes the task name.)
+- **`geometry.uv_regions` silently cancelled contour conformance** (`appearance_only` plus declared
+  regions degrade an item to a full opaque quad — measured 0 transparent pixels where vanilla has
+  188). The two declarations cancelling out are now reported.
+
+### Added
+
+- **`mc-art doctor`** — platform, engine root, module count, which interpreter works **and why each
+  candidate was rejected**, whether the three entry points really run, line endings against
+  `git check-attr`, writability, and whether the engine copies on this machine agree. On its first
+  run it caught a stale `~/.dsh/skills/mc-art` and said which side was behind.
+- **`scripts/check-ore-gap.py`** (an undeclared ore is refused, a declared one passes; both
+  directions proven) and **`scripts/check-tiling.py`** — a real tiling-seam gate counting pattern
+  pixels on row 0/15 or column 0/15 against a declared `tiling_min_margin`. Six of eight vanilla
+  ores keep a margin of 1; only emerald touches the edge, and the message says so.
+- **`tests/test_doc_counts.py`** — the module count a document claims is compared against
+  `mc_art/*.py`, so the number can no longer drift (it caught `doctor.py` immediately: **34**).
+
+### Changed
+
+- **The skill now teaches the path that was missing.** Measure the reference corpus **first** —
+  colour *and* shape grammar (per-face blush count, cluster size, fill ratio, thickness, luma
+  levels; the vanilla ore contract measured across seven ores is 6–9 clusters, 4–29 px,
+  fill 0.70–0.84, thickness 5–9, 2–5 levels) — then state per-asset-class success criteria, then
+  draw. Plus: which gates are declarable versus fixed, that "attached a reference" is not "used the
+  reference", that layer matching runs **both** ways, and that the band a category needs comes from
+  its own references. `windows.md` gained the measured PowerShell traps (write a `.py`, never
+  inline; `Set-Content -Encoding UTF8` writes a BOM that breaks `json.load`), and `traps.md` gained
+  the one that quietly destroys good pixels: a "repair" step written before its premise was checked.
+- Vendored `mc-art` snapshot: `427fd01` → `49793ad`.
+
 ## 0.2.5
 
 ### Fixed

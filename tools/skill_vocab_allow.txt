@@ -325,3 +325,30 @@ refclass               # engine：新模块名 + 新子命令名（`mc-art refcl
 check-reference-class.py  # tool：新门禁的文件名（随包发布，`scripts/` 下）
 deepslate_iron_ore     # **原版**方块名（Minecraft 自带）——用作"类与层是两件事"的例子
 oak_planks             # **原版**方块名（Minecraft 自带）——类表里的普通例子
+
+# ── 第九轮：写进 skill 的"可声明 vs 引擎固定"参数名（skill-docs 要用的真标识符）──
+# 全是**引擎自己的形参名**（`mc_art/style.py` 的签名里就有），属于公共词汇；
+# 写进散文是为了让模型不必去猜默认值（反馈 H2：读一次签名比渲十次便宜）。
+accent_base_gap_min    # engine：可声明——嵌入带下界（`style.py` 形参 / plan 字段，默认 6.0）
+accent_base_gap_max    # engine：可声明——嵌入带上界（默认 24.0）
+ramp_level_step        # engine：**固定** 16.0——明暗档的量化步长（只是 style.py 的形参，不在 plan 契约里）
+# 下面三条**可声明**（不是"固定"）：plan 的 `appearance.accent_ramp_*` 字段，`pipeline.py` 把它们
+# 透传给闸门；6 / 3 / 0.6 是**默认值**，置 null 表示不查。（照抄成"固定"会让读者以为改不动。）
+ramp_min_levels        # engine：可声明——一个强调簇至少要跨几档（默认 3）
+ramp_max_dominant_share # engine：可声明——单个明度档最多占的比例（默认 0.6）
+ramp_min_pixels        # engine：可声明——低于这个像素数不查 ramp 使用度（默认 6）
+
+# 上面三个的 **plan 全名**（`contracts.py:461-463` 才是契约里的字段名），
+# 让文档可以直接写"在 plan 里填这个"，而不用绕成"短名 + 前缀"。
+accent_ramp_min_pixels    # engine：plan 字段，默认 6，置 null 表示不查
+accent_ramp_min_levels    # engine：plan 字段，默认 3
+accent_ramp_max_dominant_share  # engine：plan 字段，默认 0.6
+accent_ramp_min_monotone        # engine：plan 字段，默认 0.6——簇内明暗步进要大体单向
+                                # （与 §5.6 的"色板按明度单调"是两件事：一个管 plan 里的色板顺序，
+                                #  一个管图案里的步进方向）
+
+# ── 第十轮：C0 与"平铺接缝/模块自检"带进来的引擎词汇（art-engine 的 49793ad）──
+# 全是**公共词汇**：门禁名、模块名、报告字段名。
+accent_base_gap        # engine：门禁名（`accent_base_gap_min/max` 的上位概念，也是报错里的名字）
+reference_geometry     # engine：模块名 `mc_art/reference_geometry.py`（几何/轮廓那条）
+tiling_ok              # engine：`check-tiling.py` 报告里的结果字段（平铺边距是否达标）

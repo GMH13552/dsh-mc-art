@@ -21,10 +21,27 @@ produced. That is why it, and not a bot, is the primary way to check a mod.
 # and `--project <dir>` points it at any mod project (default: the bundled example)
 python tools/mcmod_gametest.py                 # verdict + parsed log + result JSON
 python tools/mcmod_gametest.py --fault         # inject a false assertion: it MUST fail
+# a new project picks what the fault rewrites — no need to ship a fake example class:
+python tools/mcmod_gametest.py --fault --fault-find '<an expression in your tests>' \
+                                       --fault-replace '<the broken version>'
 ./gradlew runGameTestServer --no-daemon --console=plain   # what the tool runs
 #   (Windows: gradlew.bat -- the tool picks it by platform)
 echo $?                                         # = failed required tests
 ```
+
+**The tool's own exit codes are not the verdict.** With `--fault`, the tool exits **0**
+when the injected fault was caught and **4** when it was *not* caught — i.e. "this check
+can no longer say NO", which is a failure of the check itself (it used to exit 0 there
+too, which is how an empty check passed for a while). Exit **1** means the run did not
+pass. The behaviour verdict is always the **Gradle exit code / the log's own count**,
+cross-checked against each other (`--fault-find` / `--fault-replace` default to the
+bundled example's expressions so old projects keep working).
+
+The tool also finds a **writable Gradle home** by itself (a read-only `%USERPROFILE%`
+cache is refused the moment the wrapper creates its lock file), pins it via
+`GRADLE_USER_HOME` for the run, and reports which home it used — `--gradle-home <dir>`
+overrides it. Project paths containing spaces work; that was a real bug for a long time
+(see `windows.md`, "Paths, spaces and length").
 
 Measured once (1.18.2 / Forge 40.2.0, one machine):
 
@@ -40,12 +57,22 @@ vanilla assets, through the proxy). **Every run after that ≈ 1 min.** Warm cac
 loop into something you can afford to run per change.
 
 **Those assets are Gradle's own, and the panel's 参考目录 is not them.** `downloadAssets`
-fills ForgeGradle's asset store under `GRADLE_USER_HOME` (put it inside the project — e.g.
-`-g .gradle-home` — so it survives a clean and can be deleted as one directory). The panel's
-reference root (see `panel.md`) is read by the **art engine** to show you vanilla/mod
-textures and models for style matching; nothing in the build reads it, and pointing it at a
-`.minecraft` does **not** stop this download. Both point at the same game installation, for
-two different consumers — that is the whole relationship.
+fills ForgeGradle's asset store under `GRADLE_USER_HOME` (put it inside the project so it
+survives a clean and can be deleted as one directory). Two rules when you do that:
+
+- **`-g` only works *before* the task name.** The wrapper's command-line parser stops at the
+  first positional argument, so `gradlew runGameTestServer -g …` is **silently ignored**;
+  `gradlew -g … runGameTestServer` is the form that works.
+- **The GameTest runner does not use `-g` at all** — it sets the `GRADLE_USER_HOME`
+  environment variable for the run (after picking a *writable* home itself; a read-only
+  `%USERPROFILE%\.gradle` is refused the moment the wrapper creates its lock file). That is
+  the fix for the "mysterious early failure" in `windows.md`, "Paths, spaces and length";
+  `-g` cannot rescue it.
+
+The panel's reference root (see `panel.md`) is read by the **art engine** to show you
+vanilla/mod textures and models for style matching; nothing in the build reads it, and
+pointing it at a `.minecraft` does **not** stop this download. Both point at the same game
+installation, for two different consumers — that is the whole relationship.
 
 ## Before the first build: does this JVM lie about writability?
 

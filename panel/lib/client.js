@@ -42,7 +42,7 @@ window.__ModuleLoader__.load({
     }
 
     var plugin = new Function('React', 'host', 'styles', 'console', 'PANEL_VERSION', SOURCE)(
-      React, host, styles, console, "0.2.5")
+      React, host, styles, console, "0.2.6")
     if (plugin === null || typeof plugin !== 'object' || typeof plugin.apply !== 'function') {
       throw new Error('mcart 客户端源码没有返回一个带 apply 的插件')
     }

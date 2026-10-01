@@ -13,11 +13,12 @@ This is the split that goes wrong most often, and it goes wrong in both directio
 
 | the model decides (taste, context, intent) | a tool decides (measurement, repetition) |
 |---|---|
-| which reference answers this asset — **by class, not by name** (procedure: `art-direction.md` §1.1); a deep-layer stone must not be sampled from a shallow-layer one | pixel statistics: palette, value range, isolated-pixel count, tiling seams |
+| which reference answers this asset — **by class, not by name** (procedure: `art-direction.md` §1.1); a deep-layer stone must not be sampled from a shallow-layer one | pixel statistics: palette, value range, isolated-pixel count (**no engine gate for tiling seams yet** — that one is a human check, `art-direction.md` §12) |
 | what belongs to one family, and what deliberately does not | listing what actually exists in a jar, a pack, a reference root |
 | where the emphasis goes, and how much of the surface it may take | whether a file is a valid PNG, and whether two PNGs are byte-identical |
 | names, ids, the sentence the player reads | whether an exit code matches the log's own count |
 | whether it looks right, feels right, reads well | rasterising the same plan the same way twice |
+| **whether the gate I declared measures the thing I want** — asked once, **before starting**; a default measured on another asset class is not your target (`art-direction.md` §5.1, §6) | — no tool can answer this one for you |
 
 **A tool must never choose the reference.** It cannot see the difference between a
 deep layer and a shallow one, so it takes the first name that matches — and that one
@@ -129,6 +130,16 @@ there; `bin/mc-art` needs a real bash.
 Before any of it, point the reference correctly and list candidates instead of assuming:
 `art-direction.md` §2 has the checks and the three `reason`s a wrong root produces.
 
+- **Measure the reference set BEFORE drawing (hard requirement).** Take 5–10 same-kind
+  vanilla references and measure two things, once, up front: **colour** (mean / max /
+  min / sd, isolated share, step) and **shape grammar** (clusters per face, pixels per
+  cluster, fill ratio, maximum thickness, value levels per cluster). The class's shared
+  numbers are the target; a shape you invent that "looks about right" is not
+  (`art-direction.md` §4). Measured cost of skipping this: seven rounds spent tuning a
+  number that was never the right number.
+- **Ask before tuning anything whether the gate measures what you want.** An engine
+  default measured on one asset class is not automatically the target for another class
+  (`art-direction.md` §5.1, §5.2, §6).
 - **Name the class before picking.** "What kind of thing is this in vanilla?" (base field
   stone / deep-layer variant / ore host rock / brick / planks / …) — then list candidates
   from that class and mount one with roles. The four steps and what each leaves behind:
@@ -159,11 +170,13 @@ Before any of it, point the reference correctly and list candidates instead of a
   to" are numbers (`art-direction.md` names the thresholds). The model reads the
   numbers and decides; the model does not produce them by eye.
 
-**Acceptance (all three, or the stage is not done):** the plan file(s) under the
+**Acceptance (all four, or the stage is not done):** the reference-set measurement
+(colour **and** shape grammar, §4 of `art-direction.md`), the plan file(s) under the
 project, the rendered sheet, and a note of what differs from the reference and why —
 plus every same-kind reference either mounted or its absence explained in the render
-summary. A PNG with no plan beside it fails this stage by definition. *Judge:* the
-model authors and looks; the engine rasterises and measures.
+summary, and the tile-edge margin for block faces. A PNG with no plan beside it fails
+this stage by definition. *Judge:* the model authors and looks; the engine rasterises and
+measures.
 
 ## 3. Write the atlas
 

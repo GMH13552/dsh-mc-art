@@ -50,12 +50,36 @@ becomes a support ticket. These are the differences that were measured.
   python -c "print(1)"     # require: exit code 0 and stdout exactly 1
   ```
 
-- Probe order: `python3` → `python` → `py -3` → `py`, each one really executed; an
-  explicit path in an environment variable or config wins over all of them. Treat the
-  `py` entries as **last resort** — they are the ones that lie most often.
+- Probe order (this is what the wrappers use; copy it instead of inventing your own):
+  **`MC_ART_PYTHON` → `python` → `python3` → `py -3` → `py`**, each candidate really
+  executed; an explicit path in an environment variable or config wins over all of them.
+  Treat the `py` entries as **last resort** — they are the ones that lie most often.
 - "The command exists" is not evidence. A command that exists and fails is worse than a
   missing one, because the failure looks like a bug in the tool, not like a broken
   machine. Two different death codes (9009 and 101) both mean "not usable".
+
+## Python, files and JSON: write a file, never inline
+
+- **Do not inline Python in the shell.** `python - <<'PY' … PY` is a bash heredoc (the
+  Windows shell has no such thing), and `python -c "…"` gets eaten by the quoting layers
+  — measured: four failures in one session, each costing a round trip. **Write a `.py`
+  file and run it**; the file is also reusable.
+- **A helper that reads JSON only from its own command line is a quoting trap.**
+  Measured: `scripts/magnify.py` takes its JSON argument from `argv`, and a JSON string
+  passed through the shell arrives broken; the only error is
+  `JSONDecodeError: Expecting value: line 1 column 1 (char 0)`, which does not say
+  whether a quote or a BOM broke it. Prefer a helper that takes a **file** (or a list of
+  files), and write JSON with the file tools.
+- **`Set-Content -Encoding UTF8` writes a BOM**, and a BOM before `{` breaks `json.load`
+  with exactly that error — while the file looks fine in an editor. Write JSON with the
+  file tools, or write bytes without a BOM; do not "fix" it by re-typing the JSON.
+- **`mc-art evidence` writes into `<engine root>/references`.** Under a read-only sandbox
+  or a read-only install it fails with an access-denied error (error 5 on Windows). That
+  is the environment, not a broken engine: make the engine root writable, or point the
+  tool's own cache elsewhere (`evidence --cache <dir>`).
+- **`PYTHONPATH` is the escape hatch for the "working directory = skill root" rule**:
+  `set PYTHONPATH=<the mc-art skill root>` and run `python -m mc_art` from your project
+  directory, when staying inside the skill root is inconvenient or impossible.
 
 ## How the engine starts on Windows
 
@@ -104,19 +128,20 @@ snapshot.** The `$M` used in `workflow.md` and `art-direction.md` is this CLI.
   pnpm. On such a machine "install Python first" is wrong advice — use what is already
   there.
 
-## Line endings and encoding
+## Text, JSON and encoding
 
+- **Every text file is UTF-8 without a BOM.** This is not a style rule: a BOM in front of
+  `{` breaks `json.load` (see the section above), and a BOM makes `javac` fail with
+  `illegal character: '\ufeff'`. Write with the file tools; do not let a shell add one.
 - Line endings are pinned in `.gitattributes`: `.bat`/`.cmd`/`.ps1` are CRLF;
   `.sh`/`.py`/`.md`/`.json`/`.yml` are LF. A `.sh` with CRLF fails with
   `\r: command not found`; a labelled `.bat` with bare LF can misbehave. Do not rely on
   "whoever cloned it" to get this right — pin it in the repository.
-- Text files are **UTF-8 without BOM**. A BOM makes `javac` fail with
-  `illegal character: '\ufeff'`.
+- A console code page can mangle Chinese on output; set the console to UTF-8 or write
+  to a file with an explicit encoding and read that.
 - Do not write source files through a shell that re-encodes. Older shell defaults use a
   legacy code page, and a GBK round-trip destroys Chinese text silently. Use the file
   tools; when a script must write, pass UTF-8 explicitly.
-- A console code page can mangle Chinese on output; set the console to UTF-8 or write
-  to a file with an explicit encoding and read that.
 
 ## Paths, spaces and length
 
@@ -125,6 +150,20 @@ snapshot.** The `$M` used in `workflow.md` and `art-direction.md` is this CLI.
 - Avoid embedding a Windows path with backslashes in another language's string literal:
   `\U`, `\m` and friends become escapes. Convert to `/` first — measured: an installer's
   generated home-path line silently changed until it did.
+- **Starting `gradlew.bat` from a script: hand the WHOLE command line to `cmd.exe`, and
+  do not put it in one argv element.** Measured on a project whose path contains a space
+  (`...\Release 2.8.3\...`): building the argv with `list2cmdline()` as one string makes
+  the runtime quote that element *again*, `cmd /d /s /c` only strips the outermost pair,
+  and the run dies with `'"C:\...\...\gradlew.bat"' is not recognized ...` — exit code 1,
+  no Gradle output. **It masquerades as "the build failed / stage unknown".** Every
+  earlier measurement had a path without spaces, so the bug survived. Correct form:
+  `subprocess.run(f'"{wrapper}" ' + list2cmdline(args), shell=True, cwd=project)`.
+- **The Gradle home can be unwritable even when it exists.** Under a restricted token,
+  `%USERPROFILE%\.gradle` may be readable but not writable, and the wrapper is refused
+  the moment it creates its `.lck` — again as a mysterious early failure. `-g` does *not*
+  rescue this: the wrapper's command-line parser stops at the first positional argument,
+  so `-g` is only honoured *before* the task name. Set `GRADLE_USER_HOME` instead, and
+  probe that the chosen directory is really writable by creating a lock file in it.
 
 ## What is *not* different
 
