@@ -1,9 +1,10 @@
 # 两个 skill 里**允许出现**的记号（白名单）。判据是倒过来的：不在这里的就要红。
 #
 # 为什么倒过来：以前是"已知私有词"黑名单，它只能抓到**已经发现过**的泄漏。
-# 实际漏出去的 `blood_sheep`、`crystal_bow_*`、`aoa3` 没一个在黑名单上 —— 新项目的
+# 实测漏出去的那些（作者的模组资产名、第三方模组缩写）没一个在黑名单上 —— 新项目的
 # 新名词永远会漏。改成白名单之后，**新名词默认失败**，而加一条白名单是一次显式决定
 # （"这是原版/API/格式词"），正是这个泄漏需要的审查动作。
+# （这里**故意不把那些词抄一遍**：这份白名单是跟踪文件，抄一遍等于又贴到公开仓库上。）
 #
 # 约定：示例一律写成占位符（`examplemod` / `example_*` / `ModelExample*` / `<...>`），
 # 不由白名单管 —— 它们自带 `example` 前缀，门禁直接放行。
@@ -303,3 +304,11 @@ min_pixels                  # engine：结构门禁的最小像素门槛
 last_look              # engine：SKILL.md 里那一节的 id/锚点（"最后一眼"三步裁决）
 unaudited_accent       # engine：独立于声明重扫渲染图、抓"没被任何门禁量到"的强调像素
 waived_reasons         # engine：带 waiver 时被降级为 warning 的那些 reason 列表
+
+# ── 第七轮：把两份 JDK 候选/判定合并成一份之后新增的公开名字（win-native）──────
+# `skills/mc-mod/scripts/jdk_env.py` 是随包发的共享模块；这几个名字是它的公开 API/模块名，
+# 另一处引用是 `check_jdk.py` 的注释。逐条写理由，不按前缀整类放行。
+jdk_env                # tool：共享模块名（随 skill 发出去，公开代码）
+jdk_homes              # tool：它的公开函数——候选清单，全仓库唯一一份
+pick_jdk               # tool：它的公开函数——挑 JDK，带 verify 回调
+IntelliJ               # tool：IDE 名（`~/.jdks` 是它下载 JDK 的目录，注释里点了名）

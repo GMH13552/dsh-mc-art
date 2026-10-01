@@ -31,7 +31,6 @@ download needs it as a JVM flag too.
 from __future__ import annotations
 
 import argparse
-import glob
 import json
 import os
 import re
@@ -54,6 +53,11 @@ for _stream in (sys.stdout, sys.stderr):
 DEFAULT_PROJECT = Path(os.environ.get("MCMOD_PROJECT") or (REPO / "examplemod" / "mod"))
 GRADLE_TASK = "runGameTestServer"
 NEEDED_JDK = "17"
+# 候选清单与 `javac -version` 判定只有**一份**实现，随包的 `skills/mc-mod/scripts/check_jdk.py`
+# 也 import 它（`jdk_env.py` 跟着 skill 一起发出去）。两份实现漂过一次：这份运行器找得到
+# `~/tools/jdk17-*`，而随包的检查器不找 —— 同一台机器，结论相反。
+sys.path.insert(0, str(REPO / "skills" / "mc-mod" / "scripts"))
+import jdk_env  # noqa: E402
 PROXY = ("-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=7897 "
          "-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7897")
 
@@ -64,97 +68,42 @@ FAULT_REPLACE = "state -> state.is(net.minecraft.world.level.block.Blocks.DIRT)"
 
 
 def java_exe(home: Path, name: str) -> Path:
-    suffix = ".exe" if os.name == "nt" else ""
-    return Path(home) / "bin" / (name + suffix)
+    return jdk_env.exe(home, name)
 
 
 def jdk_major(home, run=subprocess.run, is_file=os.path.isfile, timeout: int = 60):
-    """Does this directory hold a JDK, and which major version?  **Really runs it.**
+    """`(major, reason)` for this directory -- the shared implementation really runs it."""
+    return jdk_env.jdk_major(home, run=run, is_file=is_file, timeout=timeout)
 
-    Returns `(major, reason)`.  Never trusts the directory name: `jdk17-nameless`
-    can be anything, and `C:\\Program Files\\Java\\jdk-21` is a perfectly valid name
-    for the WRONG compiler (1.18.2 cannot be built with 21).
+
+def java_runs(home):
+    """这个 JDK 的 `java` 真的能启动吗？——运行器这一侧的最小 verify。
+
+    更强的那一道（启动这个 JVM、让它写文件与 jar，用来抓 Low 完整性标签）在
+    `skills/mc-mod/scripts/check_jdk.py` 里，它把 `self_test` 当 verify 传给同一个
+    `jdk_env.pick_jdk`。两边共享候选与版本判定，只是门槛不同 —— 这是刻意的。
     """
-    javac = java_exe(home, "javac")
-    if not is_file(str(javac)):
-        return None, "没有 javac（不是 JDK）"
+    java = jdk_env.exe(home, "java")
+    if not os.path.isfile(str(java)):
+        return False, "no java in bin/"
     try:
-        done = run([str(javac), "-version"], capture_output=True, text=True, timeout=timeout)
+        done = subprocess.run([str(java), "-version"], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=60)
     except Exception as exc:  # noqa: BLE001
-        return None, "javac 跑不起来：%s" % exc
-    text = (done.stdout or "") + (done.stderr or "")
-    match = re.search(r"javac\s+(\d+)", text)
-    if not match:
-        return None, "javac -version 的输出认不出：%s" % text.strip().splitlines()[:1]
-    return match.group(1), "javac %s" % match.group(1)
-
-
-def jdk_homes(explicit, env=None, is_dir=os.path.isdir):
-    """Plausible JDK homes, best first.  Explicit / JAVA_HOME, then the usual places.
-
-    Deliberately generic: whoever runs this has their JDK somewhere ordinary
-    (Program Files, `~/.jdks` from IntelliJ, `~/tools`, a package manager).  Nothing
-    here is this author's machine -- pass `--java-home` for anything unusual.
-    """
-    env = os.environ if env is None else env
-    home_dir = env.get("USERPROFILE") or env.get("HOME") or ""
-    out = []
-
-    def push(value):
-        if not value:
-            return
-        path = Path(value)
-        key = str(path).lower()
-        if key not in [str(Path(item)).lower() for item in out]:
-            out.append(path)
-
-    push(explicit)
-    push(env.get("JAVA_HOME"))
-    push(env.get("JDK%s_HOME" % NEEDED_JDK))
-    bases = []
-    if os.name == "nt":
-        program_files = env.get("ProgramFiles") or env.get("ProgramFiles(x86)") or ""
-        for name in ("Java", "Eclipse Adoptium", "Microsoft", "Zulu", "Amazon Corretto", "BellSoft", "AdoptOpenJDK"):
-            bases.append(Path(program_files) / name)
-        local = env.get("LOCALAPPDATA") or ""
-        bases += [Path(local) / "Programs" / "Eclipse Adoptium", Path(local) / "Programs" / "Microsoft"]
-        if home_dir:
-            bases += [Path(home_dir) / ".jdks", Path(home_dir) / "tools",
-                      Path(env.get("USERPROFILE", "")) / "scoop" / "apps"]
-    else:
-        bases += [Path("/usr/lib/jvm"), Path("/opt/java"), Path("/Library/Java/JavaVirtualMachines")]
-        if home_dir:
-            bases += [Path(home_dir) / ".jdks", Path(home_dir) / ".sdkman" / "candidates" / "java"]
-    for base in bases:
-        if not is_dir(str(base)):
-            continue
-        try:
-            entries = sorted(base.iterdir())
-        except OSError:
-            continue
-        for entry in entries:
-            push(entry)
-            push(entry / "Contents" / "Home")   # macOS bundles
-    # A JDK unzipped somewhere: <home>/jdk*/bin/javac.
-    if home_dir:
-        for pattern in (os.path.join(home_dir, "jdk*"), os.path.join(home_dir, "tools", "jdk*"),
-                        os.path.join(home_dir, "tools", "*jdk*")):
-            for found in sorted(glob.glob(pattern)):
-                push(found)
-                push(Path(found) / "Contents" / "Home")
-    return out
+        return False, "java would not start: %s" % exc
+    return done.returncode == 0, "java -version exit=%s" % done.returncode
 
 
 def resolve_jdk(explicit=None, needed=NEEDED_JDK, env=None, run=subprocess.run,
-                is_file=os.path.isfile, is_dir=os.path.isdir):
-    """`{home, major, reason, tried}` -- the first JDK whose javac major really matches."""
-    tried = []
-    for home in jdk_homes(explicit, env=env, is_dir=is_dir):
-        major, reason = jdk_major(home, run=run, is_file=is_file)
-        tried.append({"home": str(home), "major": major, "reason": reason})
-        if major == str(needed):
-            return {"home": str(home), "major": major, "reason": reason, "tried": tried}
-    return {"home": None, "major": None, "reason": "", "tried": tried}
+                is_file=os.path.isfile, is_dir=os.path.isdir, verify=java_runs):
+    """`{home, origin, major, reason, hint, tried}` -- shared candidates, shared judgement.
+
+    候选清单与 `javac -version` 判定来自 `skills/mc-mod/scripts/jdk_env.py`（**唯一一份**）。
+    两份实现漂过一次：这份运行器找得到 `~/tools/jdk17-*`，而随包的 `check_jdk.py` 不找，
+    同一台机器给出相反结论、用户被告知"去装一个 JDK 17"。
+    """
+    return jdk_env.pick_jdk(explicit, needed=needed, env=env, run=run,
+                            is_file=is_file, is_dir=is_dir, verify=verify)
 
 
 def inject_fault_file(source: Path):
@@ -245,7 +194,8 @@ def restore_selftest(fault: bool = False) -> int:
                                       capture_output=True, encoding="utf-8", errors="replace")
         check("夹具仓库一开始是干净的", clean_before.stdout.strip() == "", clean_before.stdout.strip())
 
-        done = subprocess.run([sys.executable, str(HERE / "mcmod_gametest.py"), "--project", str(project),
+        done = subprocess.run([sys.executable, "-X", "utf8", str(HERE / "mcmod_gametest.py"),
+                               "--project", str(project),
                                "--test-source", str(source), "--java-home", jdk["home"], "--fault"],
                               capture_output=True, encoding="utf-8", errors="replace", timeout=600)
         out = (done.stdout or "") + (done.stderr or "")
@@ -442,7 +392,7 @@ def jdk_selftest(fault: bool = False) -> int:
         print("  " + ("OK  " if ok else "FAIL") + " " + label + ("" if ok or not detail else "  -> " + detail))
 
     jdk21 = Path("C:/fake/java/jdk-21")
-    jdk17 = Path("C:/fake/tools/jdk17-nameless")
+    jdk17 = Path("C:/fake/tools/jdk-17.0.8")
     javac21, javac17 = str(java_exe(jdk21, "javac")), str(java_exe(jdk17, "javac"))
     table = {javac21: "javac 21.0.7\n", javac17: "javac 17.0.8\n"}
     env = {"JAVA_HOME": str(jdk21), "JDK17_HOME": str(jdk17)}
@@ -459,7 +409,7 @@ def jdk_selftest(fault: bool = False) -> int:
         print("--- A/B：老判据（只看 bin/javac 在不在）在同样答复下会不会选错")
         check("老判据选中 Java 21（1.18.2 用它会编译失败）", legacy_pick == jdk21, str(legacy_pick))
         run, _calls = _fake_subprocess_run(table)
-        new = resolve_jdk(None, needed="17", env=env, run=run,
+        new = resolve_jdk(None, needed="17", env=env, run=run, verify=None,
                           is_file=lambda _p: True, is_dir=lambda _p: False)
         check("同一组答复下新判据选中 javac 17（这就是差别）", new["home"] == str(jdk17), str(new["home"]))
         print("全部通过（对照成立：老判据确实会选错）" if failures == 0 else "%d 项失败" % failures)
@@ -472,7 +422,8 @@ def jdk_selftest(fault: bool = False) -> int:
           "gradlew.bat" in " ".join(nt) and nt[0].lower().endswith(("cmd.exe", "cmd")), str(nt))
     check("POSIX 仍然直接跑 ./gradlew", posix[0] == "./gradlew", str(posix))
     run, _calls = _fake_subprocess_run(table)
-    result = resolve_jdk(None, needed="17", env=env, run=run, is_file=lambda _p: True, is_dir=lambda _p: False)
+    result = resolve_jdk(None, needed="17", env=env, run=run, verify=None,
+                         is_file=lambda _p: True, is_dir=lambda _p: False)
     check("JAVA_HOME 里的 javac 21 被拒（1.18.2 要 JDK 17）",
           result["tried"][0]["home"] == str(jdk21) and result["tried"][0]["major"] == "21",
           str(result["tried"][:1]))
@@ -480,21 +431,29 @@ def jdk_selftest(fault: bool = False) -> int:
           result["home"] == str(jdk17) and result["major"] == "17", str(result))
 
     run_none, _ = _fake_subprocess_run({})
-    empty = resolve_jdk(None, needed="17", env={"JAVA_HOME": str(jdk21)}, run=run_none,
+    empty = resolve_jdk(None, needed="17", env={"JAVA_HOME": str(jdk21)}, run=run_none, verify=None,
                         is_file=lambda _p: True, is_dir=lambda _p: False)
     check("一份都对不上时：home 为空，并且逐条记下试过谁、为什么不行",
           empty["home"] is None and len(empty["tried"]) >= 1 and all(item["reason"] for item in empty["tried"]),
           str(empty))
 
-    # 真机器：本机默认 java 是 21，必须能找到一份 17 才算过（找不到就红，不假装）。
-    real = resolve_jdk(os.environ.get("MCART_JAVA_HOME") or None, needed=NEEDED_JDK)
-    check("真实机器上找到一份 javac %s 的 JDK 并真跑过" % NEEDED_JDK, real["home"] is not None,
-          "；".join("%s → %s" % (item["home"], item["reason"]) for item in real["tried"][:6]))
-    if real["home"]:
-        print("       选中 %s（%s）" % (real["home"], real["reason"]))
-    for item in real["tried"]:
-        if item["home"] != real["home"]:
-            print("       拒绝 %s → %s" % (item["home"], item["reason"]))
+    # 真机器：本机默认 java 是 21，必须能找到一份 17 —— 但**机器上没有 JDK 17 不是代码缺陷**，
+    # 那种情况要 SKIP 而不是 FAIL（体例同 orient-test.js）。先用**共享候选表**看本机有没有 17。
+    present17 = [home for home, _origin in jdk_env.jdk_homes(None)
+                 if jdk_env.jdk_major(home)[0] == NEEDED_JDK]
+    if not present17:
+        print("  SKIP 这台机器上没有任何 javac %s 的候选（%d 个候选目录里一个都不是）——"
+              "机器问题，不是代码缺陷；夹具那几条已经在上面跑了" % (NEEDED_JDK, len(jdk_env.jdk_homes(None))))
+    else:
+        real = resolve_jdk(os.environ.get("MCART_JAVA_HOME") or None, needed=NEEDED_JDK)
+        check("真实机器上找到一份 javac %s 的 JDK，并且它的 java 真能启动" % NEEDED_JDK,
+              real["home"] is not None,
+              "；".join("%s → %s" % (item["home"], item["reason"]) for item in real["tried"][:6]))
+        if real["home"]:
+            print("       选中 %s（%s）" % (real["home"], real["reason"]))
+        for item in real["tried"]:
+            if item["home"] != real["home"]:
+                print("       拒绝 %s → %s" % (item["home"], item["reason"]))
 
     print("全部通过" if failures == 0 else "%d 项失败" % failures)
     return 1 if failures else 0
@@ -563,7 +522,7 @@ def main(argv: list[str]) -> int:
         except LookupError:
             print("注入失败：测试源码里找不到要改的那句：\n  " + FAULT_FIND, file=sys.stderr)
             return 2
-        print("已注入故障：断言改成 DIRT（血肉块不该通过）")
+        print("已注入故障：断言改成 DIRT（示例块不该通过）")
 
     try:
         code, text = run_gradle(project, log, args.timeout, jdk_home=jdk["home"])

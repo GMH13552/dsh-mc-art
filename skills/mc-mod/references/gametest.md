@@ -83,6 +83,14 @@ python scripts/check_jdk.py --java-home 'C:\Program Files\Eclipse Adoptium\jdk-1
 On Windows the interpreter is usually `python` or `py -3`, not `python3` (which is
 often a zero-byte Store stub). The probe is "it really runs" — `windows.md`.
 
+**The candidate directories and their order live in exactly one place:**
+`scripts/jdk_env.py`. The GameTest tool imports the same module, which is why the two can
+no longer hand out opposite verdicts for one machine (they did: the runner searched
+`~/tools`, `~/.jdks` and the sdkman root and found the freshly built JDK 17, while the
+checker shipped to users searched none of them and said "go install one"). To add a
+location, add it to `jdk_env.py` — a drift gate fails if `check_jdk.py` grows its own
+enumeration again.
+
 A copy of the same JDK placed in an ordinary directory inherits **Medium** and works, which is
 one cheap repair when the only 17 on the machine is the game's.
 

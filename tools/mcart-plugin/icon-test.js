@@ -40,6 +40,9 @@ const WORK = nodePath.join(REPO, 'tools', 'mcart-plugin', '.icon-fixture')
 const REF = nodePath.join(os.tmpdir(), 'mcart-icon-refroot')
 const NS = 'testicon'
 const PROJ = 'proj'
+// 夹具工程自己的命名空间（见下面 FIXTURE 里写的 `pack/assets/projns/…`）。断言里要一个
+// "某个模组"的键时用它 —— **不用机器上装了哪个模组**，测试不该依赖宿主环境。
+const FIXTURE_MOD = 'projns'
 
 // A block item, a flat tool, a two-layer spawn egg, a three-frame clock, an
 // animated strip and a code-drawn item (`parent: builtin/entity`, which has no
@@ -779,9 +782,13 @@ async function main() {
   // reference root away from every later check ("还没有设置参考目录").
   const settingsFile = nodePath.join(WORK, 'proj', 'mc-art.settings.json')
   const settingsBefore2 = nodeFs.existsSync(settingsFile) ? nodeFs.readFileSync(settingsFile) : null
+  // 写入的 mods 映射由**夹具自己**声明（键是夹具的命名空间），断言只关心"写进去的
+  // 被原样读回" —— 判据里不许出现"这台机器上装了哪个模组"。
+  const modsWanted = { minecraft: true }
+  modsWanted[FIXTURE_MOD] = false
   const savedRef = await handlers['atlas.saveSettings']({ root: WORK, project: PROJ,
     directory: '/tmp/mcart-ref-root', includeGenerated: false, includeMods: true,
-    mods: { minecraft: true, aoa3: false } })
+    mods: modsWanted })
   check('保存设置返回工作区相对路径（@ 引用要用它）',
     savedRef !== undefined && savedRef.saved === true && savedRef.path === 'proj/mc-art.settings.json',
     JSON.stringify(savedRef))
@@ -790,7 +797,8 @@ async function main() {
     onDisk.schema === 'mc-art.settings/1'
       && onDisk.reference && onDisk.reference.directory === '/tmp/mcart-ref-root'
       && onDisk.reference.includeGenerated === false
-      && onDisk.reference.mods && onDisk.reference.mods.aoa3 === false,
+      && onDisk.reference.mods && onDisk.reference.mods[FIXTURE_MOD] === false
+      && onDisk.reference.mods.minecraft === true,
     JSON.stringify(onDisk.reference))
   const readBack = await handlers['atlas.settings']({ root: WORK, project: PROJ })
   check('读回来是同一个文件、同一个相对路径',
@@ -917,11 +925,23 @@ async function main() {
     !/\}, \[hudKey, hudOn\]\)/.test(withPageDep))
 
   check('没 3D 可看时把 2D 画在取景框里（按最短边取方形，不拉伸）',
-    /const posterRecipe = scene === null && pickedRecipe !== null \? pickedRecipe : null/.test(client)
+    // `scene === null` 只是"没东西可画"的一种：宿主也会回一个"成功但没有一个面"的对象
+    // （`{quads: []}`），那种空对象以前被当成"有场景"，于是 3D 空着、2D 又被跳过 ——
+    // 用户实测的"点胡萝卜/剑 预览看不到"就是这个形状。
+    /const sceneDrawsNothing = scene === null \|\| arrayOf\(scene\.quads\)\.length === 0/.test(client)
+    // 缺图标的那一格（宿主回的 `missing: true`）没有图画，不许画一张空 poster —— 那是
+    // "看起来像还在加载"。它走"没有可用的图标 + 原因"那条明说的路。
+    && /const posterRecipe = sceneDrawsNothing && pickedRecipe !== null && pickedRecipe\.missing !== true/.test(client)
     && /const posterSide = Math\.max\(48, Math\.min\(size\[0\], size\[1\]\) - 24\)/.test(client)
     && /className: 'mcart-poster'/.test(client)
     && /drawItemIcon\(posterCanvas, posterRecipe, frame, decoded\)/.test(client)
     && /\.mcart-poster\{/.test(client))
+  // 注入：把判据退回"只看 scene === null"（用户报的空白就是它），上面那条必须不成立。
+  const withOldPoster = client.replace('const sceneDrawsNothing = scene === null || arrayOf(scene.quads).length === 0',
+    'const sceneDrawsNothing = scene === null')
+  check('注入"只认 scene === null"：空的 scene 对象又会被当成有东西可画',
+    !/const sceneDrawsNothing = scene === null \|\| arrayOf\(scene\.quads\)\.length === 0/.test(withOldPoster)
+    && withOldPoster !== client)
   check('关了浏览器不清空这一排', /if \(itemOpen\) \{ setItemOpen\(false\); return \}/.test(client)
     && /setItemOpen\(false\); setIconPick\(null\)/.test(client))
   check('每一格的说明是形状/display/帧数，坏了才在屏幕上说',

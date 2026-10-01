@@ -46,6 +46,10 @@ const FAULT_POSTER = process.argv.includes('--fault-poster')       // 2D 回退�
 const FAULT_REASON = process.argv.includes('--fault-reason')
 // 「不许覆盖用户正在写的东西」这条去掉 → 草稿非空时也会被报告冲掉。
 const FAULT_AUTOFILL = process.argv.includes('--fault-autofill')
+// 平面物品预览空白：把"没面也算没东西画"和"参考物品失败时清场景"一起还原成旧行为。
+const FAULT_FLAT_BLANK = process.argv.includes('--fault-flat-blank')
+// 缺图标的那一格被渲染成静默空白（旧行为）：没有"缺"角标、title 里也没有原因。
+const FAULT_MISSING_BLANK = process.argv.includes('--fault-missing-blank')
 
 let failures = 0
 function check(label, ok, detail) {
@@ -151,20 +155,104 @@ function textOf(node) {
 // 把 <img> 画进隐藏 canvas 再读回像素（`decoded`）。Node 里没有浏览器，所以这里给 ref
 // 一个够用的假件。有了它，"手动修改 → 按面编辑 → 保存发出去的确实是 PNG"才能用**行为**
 // 验，而不是只搜源码里的字符串（字符串在、路不通，正是这个仓库吃过的亏）。
+//
+// 这一版把 canvas 做成**真的像素缓冲**：`putImageData` / `drawImage` 真的落字节，于是
+// "取景框里到底有没有东西"可以用**像素**量（用户报的正是"预览看不到"），而不是看源码里
+// 有没有那个分支。`renderScene` 与 `drawItemIcon` 是纯函数，喂真缓冲就能真画出来。
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 const PNG_DATA_URL = 'data:image/png;base64,'
   + Buffer.from(PNG_MAGIC.concat([0, 0, 0, 0, 0, 0, 0, 0])).toString('base64')
 const JPEG_DATA_URL = 'data:image/jpeg;base64,'
   + Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]).toString('base64')
-
-function fakeContext() {
+// 假贴图：16×16 全不透明的橙棕色，四角再点一个亮块 —— 画的出来就一定数得到非透明像素。
+function fakePixels(width, height) {
+  const data = new Uint8ClampedArray(width * height * 4)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const at = (y * width + x) * 4
+      const bright = (x < 3 && y < 3) || (x >= width - 3 && y >= height - 3)
+      data[at] = bright ? 250 : 190
+      data[at + 1] = bright ? 240 : 110
+      data[at + 2] = bright ? 90 : 60
+      data[at + 3] = 255
+    }
+  }
+  return data
+}
+function makeFakeCanvas(width, height) {
+  const canvas = { _w: 0, _h: 0, _data: new Uint8ClampedArray(0), clientWidth: 340, clientHeight: 240 }
+  const resize = () => {
+    const w = Math.max(0, Math.floor(canvas._w) || 0)
+    const h = Math.max(0, Math.floor(canvas._h) || 0)
+    canvas._data = new Uint8ClampedArray(w * h * 4)
+  }
+  Object.defineProperty(canvas, 'width', { get: () => canvas._w, set: (value) => { canvas._w = value; resize() } })
+  Object.defineProperty(canvas, 'height', { get: () => canvas._h, set: (value) => { canvas._h = value; resize() } })
+  canvas.width = width === undefined ? 256 : width
+  canvas.height = height === undefined ? 256 : height
+  canvas.getContext = () => fakeContext(canvas)
+  canvas.toDataURL = (mime) => (mime === 'image/png' ? PNG_DATA_URL : JPEG_DATA_URL)
+  canvas.addEventListener = () => {}
+  canvas.removeEventListener = () => {}
+  canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 340, height: 240 })
+  canvas.setPointerCapture = () => {}
+  return canvas
+}
+function fakeContext(canvas) {
+  const inside = (x, y) => x >= 0 && y >= 0 && x < canvas.width && y < canvas.height
+  const blit = (source, sourceWidth, sourceHeight, dx, dy, dw, dh) => {
+    const targetWidth = Math.max(1, Math.round(dw === undefined ? sourceWidth : dw))
+    const targetHeight = Math.max(1, Math.round(dh === undefined ? sourceHeight : dh))
+    const ox = Math.round(dx || 0), oy = Math.round(dy || 0)
+    for (let y = 0; y < targetHeight; y++) {
+      for (let x = 0; x < targetWidth; x++) {
+        const sx = Math.min(sourceWidth - 1, Math.floor((x * sourceWidth) / targetWidth))
+        const sy = Math.min(sourceHeight - 1, Math.floor((y * sourceHeight) / targetHeight))
+        const tx = ox + x, ty = oy + y
+        if (!inside(tx, ty)) continue
+        const from = (sy * sourceWidth + sx) * 4, to = (ty * canvas.width + tx) * 4
+        canvas._data[to] = source[from]
+        canvas._data[to + 1] = source[from + 1]
+        canvas._data[to + 2] = source[from + 2]
+        canvas._data[to + 3] = source[from + 3]
+      }
+    }
+  }
   return {
     imageSmoothingEnabled: false,
     createImageData: (width, height) => ({ width: width, height: height, data: new Uint8ClampedArray(width * height * 4) }),
-    getImageData: (x, y, width, height) => ({ width: width, height: height, data: new Uint8ClampedArray(width * height * 4) }),
-    putImageData: () => {},
-    clearRect: () => {},
-    drawImage: () => {},
+    getImageData: (x, y, width, height) => {
+      const out = new Uint8ClampedArray(width * height * 4)
+      for (let row = 0; row < height; row++) {
+        for (let col = 0; col < width; col++) {
+          const sx = x + col, sy = y + row
+          if (!inside(sx, sy)) continue
+          const from = (sy * canvas.width + sx) * 4, to = (row * width + col) * 4
+          out[to] = canvas._data[from]
+          out[to + 1] = canvas._data[from + 1]
+          out[to + 2] = canvas._data[from + 2]
+          out[to + 3] = canvas._data[from + 3]
+        }
+      }
+      return { width: width, height: height, data: out }
+    },
+    putImageData: (frame, dx, dy) => { blit(frame.data, frame.width, frame.height, dx, dy, frame.width, frame.height) },
+    clearRect: (x, y, width, height) => {
+      for (let row = 0; row < Math.round(height); row++) {
+        for (let col = 0; col < Math.round(width); col++) {
+          const tx = Math.round(x) + col, ty = Math.round(y) + row
+          if (!inside(tx, ty)) continue
+          const at = (ty * canvas.width + tx) * 4
+          canvas._data[at] = 0; canvas._data[at + 1] = 0; canvas._data[at + 2] = 0; canvas._data[at + 3] = 0
+        }
+      }
+    },
+    drawImage: (source, dx, dy, dw, dh) => {
+      const sw = source.naturalWidth || source.width || 0
+      const sh = source.naturalHeight || source.height || 0
+      if (source._data === undefined || source._data === null || !(sw > 0) || !(sh > 0)) return
+      blit(source._data, sw, sh, dx, dy, dw, dh)
+    },
     beginPath: () => {},
     moveTo: () => {},
     lineTo: () => {},
@@ -172,25 +260,85 @@ function fakeContext() {
     fillRect: () => {},
   }
 }
-function fakeCanvas() {
-  return {
-    width: 256, height: 256, clientWidth: 340, clientHeight: 240,
-    getContext: () => fakeContext(),
-    toDataURL: (mime) => (mime === 'image/png' ? PNG_DATA_URL : JPEG_DATA_URL),
+function fakeCanvas() { return makeFakeCanvas(256, 256) }
+/** 假 <img>：一上来就 complete，像素是真的 —— 解码那条路才真的把字节搬进 `decoded`。 */
+function fakeImage() {
+  const img = {
+    complete: true, naturalWidth: 16, naturalHeight: 16, width: 16, height: 16,
+    _data: fakePixels(16, 16),
     addEventListener: () => {}, removeEventListener: () => {},
-    getBoundingClientRect: () => ({ left: 0, top: 0, width: 340, height: 240 }),
-    setPointerCapture: () => {},
   }
+  return img
+}
+/** 上一次喂进去的假画布（按 className 记），用来量像素 —— 真 React 会自己调 ref，
+ *  假 React 只能我们手动调，所以量的时候要拿"这一遍真的交出去的那个对象"。 */
+const wiredCanvases = new Map()
+/** 这一遍喂进去的画布，**按树里的顺序**（物品栏那一排要按格子对号入座）。 */
+let wiredCanvasSeq = []
+function wiredByClass(className) {
+  return wiredCanvasSeq.filter((item) => item.className === className).map((item) => item.canvas)
+}
+/** 一块画布上有多少个不透明像素（2D 图标就是这么量的）。 */
+function opaquePixels(canvas) {
+  if (canvas === undefined || canvas === null || canvas._data === null) return 0
+  let count = 0
+  for (let at = 3; at < canvas._data.length; at += 4) if (canvas._data[at] > 0) count += 1
+  return count
 }
 /** 把屏幕上所有 canvas / img 的 ref 都喂上假件，报告喂了几个。 */
 function wireRefs(ui) {
   let canvases = 0, images = 0
+  wiredCanvasSeq = []
   for (const node of ui.nodes()) {
     if (typeof node.props.ref !== 'function') continue
-    if (node.type === 'canvas') { node.props.ref(fakeCanvas()); canvases += 1 }
-    else if (node.type === 'img') { node.props.ref({ complete: true, naturalWidth: 16, naturalHeight: 16 }); images += 1 }
+    if (node.type === 'canvas') {
+      const made = fakeCanvas()
+      // 真 React 会把 width/height 属性落到 DOM 元素上（poster 的边长就是这么定的）。
+      if (typeof node.props.width === 'number') made.width = node.props.width
+      if (typeof node.props.height === 'number') made.height = node.props.height
+      const name = node.props.className === undefined ? 'canvas' : String(node.props.className)
+      wiredCanvases.set(name, made)
+      wiredCanvasSeq.push({ className: name, canvas: made })
+      node.props.ref(made)
+      canvases += 1
+    } else if (node.type === 'img') { node.props.ref(fakeImage()); images += 1 }
   }
   return { canvases: canvases, images: images }
+}
+/**
+ * 取景框里到底有没有东西 —— **用像素量**，不是看源码里有没有那个分支。
+ *
+ * 3D 那半：`renderScene` 把背景铺成 [26,24,28] 不透明，所以"和背景不一样"的像素就是模型。
+ * 2D 那半：poster 画在透明底上，非透明像素就是那张图标。
+ */
+function measureViewport(ui) {
+  const nodes = ui.nodes()
+  const hasView = nodes.some((node) => node.props && node.props.className === 'mcart-canvas')
+  const hasPoster = nodes.some((node) => node.props && node.props.className === 'mcart-poster')
+  const view = wiredCanvases.get('mcart-canvas')
+  const poster = wiredCanvases.get('mcart-poster')
+  let scenePixels = 0, posterPixels = 0
+  if (hasView && view !== undefined && view._data !== null) {
+    for (let at = 0; at < view._data.length; at += 4) {
+      const distance = Math.abs(view._data[at] - 26) + Math.abs(view._data[at + 1] - 24)
+        + Math.abs(view._data[at + 2] - 28) + Math.abs(view._data[at + 3] - 255)
+      if (distance > 24) scenePixels += 1
+    }
+  }
+  if (hasPoster && poster !== undefined && poster._data !== null) {
+    for (let at = 3; at < poster._data.length; at += 4) if (poster._data[at] > 0) posterPixels += 1
+  }
+  return { hasView: hasView, hasPoster: hasPoster, scenePixels: scenePixels, posterPixels: posterPixels,
+    drawn: scenePixels + posterPixels }
+}
+/** 一边喂 ref 一边量：先渲染 → 交假画布 → 再渲染（这一遍才真的画）→ 量像素。 */
+async function pixelsOf(ui) {
+  for (let pass = 0; pass < 3; pass++) {
+    await ui.settle()
+    wireRefs(ui)
+    await ui.settle()
+  }
+  return measureViewport(ui)
 }
 /** 反复喂 ref + 等稳定：解码 effect 要下一遍渲染才读得到刚登记的节点。 */
 async function decodeTextures(ui) {
@@ -358,7 +506,8 @@ function makeHandlers(options) {
           // `structure` 那条是给"方块图标"行为检查用的：只有结构/群系才会进
           // `openVoxel()`，而 `voxel` 非空时 `atlas.icons` 那条 effect 才会跑。
           items: { biome: [], structure: [{ id: 'example_struct', title: '示例结构' }],
-            entity: [], block: [{ id: 'example_block', title: '示例方块' }] } }] }
+            entity: [{ id: 'example_entity', title: '示例实体' }],
+            block: [{ id: 'example_block', title: '示例方块' }] } }] }
     }
     if (name === 'atlas.settings') return Object.assign({}, settings, savedSettings === null ? {} : { directory: savedSettings })
     if (name === 'atlas.saveSettings') { savedSettings = (args || {}).directory; return { saved: true, file: settings.file, path: settings.path, via: 'fs' } }
@@ -381,14 +530,26 @@ function makeHandlers(options) {
         choices: [{ name: 'example_block', title: '示例方块' }] }
     }
     if (name === 'atlas.itemIcons' || name === 'atlas.icons' || name === 'atlas.refIcons') {
-      if (o.iconReply !== undefined) return o.iconReply
+      if (o.iconReply !== undefined) return typeof o.iconReply === 'function' ? o.iconReply(args) : o.iconReply
       return { icons: {}, items: {}, names: {}, failed: [] }
+    }
+    // 点一个**参考**物品时客户端发的那一条（`openReferenceItem`）。真机上的形状：
+    // 方块物品回 quads；平面物品回 `{error:'找不到 … 的模型（参考目录里没有这个方块：…）'}`。
+    if (name === 'atlas.preview') {
+      if (o.previewReply !== undefined) return typeof o.previewReply === 'function' ? o.previewReply(args) : o.previewReply
+      return { error: '预览需要一个真的答复（这个用例没给 previewReply）' }
     }
     // 物品浏览器要"有东西可选"，`ensureItemPage` 才会真的去取配方（它要求 facts 非空）。
     if (name === 'atlas.refItems') {
+      if (o.itemFacts !== undefined) {
+        return { items: typeof o.itemFacts === 'function' ? o.itemFacts(args) : o.itemFacts, version: '1.18.2' }
+      }
       return { items: [{ id: 'example_item', name: '示例物品', form: 'flat', family: '材料' }], version: '1.20.1' }
     }
-    if (name === 'atlas.refNamespaces') return { namespaces: [], directory: '', reason: '没有设置参考目录' }
+    if (name === 'atlas.refNamespaces') {
+      if (o.refNamespaces !== undefined) return { namespaces: o.refNamespaces, directory: 'C:/games/.minecraft', version: '1.18.2' }
+      return { namespaces: [], directory: '', reason: '没有设置参考目录' }
+    }
     if (name === 'atlas.saveTexture') return { saved: true, bytes: 96 }
     return {}
   }
@@ -510,6 +671,25 @@ async function main() {
     { flag: FAULT_AUTOFILL, name: '--fault-autofill', hint: '找不到 autoFillDraft 里的"不覆盖草稿"守卫',
       apply: (src) => src.replace("  if (manual !== true && current.trim() !== '') { lastAutoVerdict = 'busy'; return 'busy' }",
         "  if (false && manual !== true && current.trim() !== '') { lastAutoVerdict = 'busy'; return 'busy' }") },
+    // 用户实测："点胡萝卜/剑 预览看不到"。把两处一起还原：2D 回退只认 `scene === null`，
+    // 且参考物品预览失败时**不清场景**（上一个资产的 3D 留在屏幕上）。
+    { flag: FAULT_FLAT_BLANK, name: '--fault-flat-blank', hint: '找不到新的 poster 判据 / 清场景那一处',
+      apply: (src) => src
+        .replace('const sceneDrawsNothing = scene === null || arrayOf(scene.quads).length === 0',
+          'const sceneDrawsNothing = scene === null')
+        .replace('            forgetSceneBecauseItem()\n', '') },
+    // 缺图标的那一格：把"缺"的特判全部去掉（角标、title、tooltip、poster），
+    // 要求"这一格缺"的断言变红 —— 用户看到的会是空方块，一个字的解释都没有。
+    { flag: FAULT_MISSING_BLANK, name: '--fault-missing-blank', hint: '找不到 missing 特判的那几处',
+      apply: (src) => src
+        .replace("        if (recipe.missing === true) {\n          return '这一格没有图标：'",
+          "        if (false && recipe.missing === true) {\n          return '这一格没有图标：'")
+        .replace("        if (recipe.missing === true) {\n          return '缺：'",
+          "        if (false && recipe.missing === true) {\n          return '缺：'")
+        .replaceAll('const lacking = recipe !== undefined && recipe !== null && recipe.missing === true',
+          'const lacking = false')
+        .replace('const posterRecipe = sceneDrawsNothing && pickedRecipe !== null && pickedRecipe.missing !== true',
+          'const posterRecipe = sceneDrawsNothing && pickedRecipe !== null') },
   ]
   const chosen = FAULTS.filter((entry) => entry.flag)
   if (chosen.length > 1) {
@@ -1155,6 +1335,193 @@ async function main() {
     poster !== undefined && poster.props.width === poster.props.height
     && poster.props.width <= 240 && poster.props.width >= 48,
     poster === undefined ? '没有 poster canvas' : ('width=' + poster.props.width + ' height=' + poster.props.height))
+
+  // ── 每种条目的预览都不许是空白（用户："点胡萝卜/剑 居然预览看不到"）──────────────
+  //
+  // 真机复现（证据 §11）：`atlas.preview {block:'minecraft:carrot'}` 回的是
+  // `{error:'找不到 minecraft:carrot 的模型（参考目录里没有这个方块：minecraft:carrot）'}`
+  // —— 对平面物品来说这是**对的**（它不是方块）；`atlas.itemIcons` 那边 shape='flat'、
+  // layers/贴图都在。错的是客户端：它只在小卡片里写了一行"3D 取不到"、**没动 scene**，
+  // 于是屏幕上留着上一个资产；而 2D 回退的条件是 `scene === null`，那个物品自己的图标
+  // 也不会画 —— 用户看到的就是"预览看不到"。
+  // 这一节逐条**真画**（renderScene / drawItemIcon 跑在真像素缓冲上），然后**量像素**。
+  console.log('--- 每种条目的预览都不许是空白（①方块 ②方块物品 ③平面物品 ④实体）')
+  const REF_BLOCK_TEX = 'ref:minecraft:block/stone'
+  const FLAT_TEX = 'ref:minecraft:item/carrot'
+  const ONE_QUAD = (tex) => ({ p: [[0, 0, 0], [1, 0, 0], [1, 1, 0], [1, 1, 0]], uv: [[0, 1], [1, 1], [1, 0], [0, 0]],
+    tex: tex, face: 'north' })
+  const ONE_QUAD_SOLID = (tex) => ({ p: [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], uv: [[0, 1], [1, 1], [1, 0], [0, 0]],
+    tex: tex, face: 'north' })
+  const oneQuadScene = (kind, id) => ({ kind: kind, id: id, title: id,
+    quads: [ONE_QUAD_SOLID(REF_BLOCK_TEX)], textureIds: [REF_BLOCK_TEX],
+    textures: { [REF_BLOCK_TEX]: PNG_DATA_URL }, animations: {},
+    cells: null, refs: [], box: null, errors: [], palette: [] })
+  const flatRecipe = (tex) => ({ shape: 'flat', layers: [tex], textureIds: [tex],
+    textures: { [tex]: PNG_DATA_URL }, frames: [], animations: {} })
+  function viewportHandlers(flatPreview) {
+    return makeHandlers({
+      refNamespaces: [{ name: 'minecraft', blocks: 1235, textures: 900 }],
+      sceneReply: (args) => oneQuadScene((args || {}).kind || 'block', String((args || {}).id || 'x')),
+      // ① 项目里的方块、②③ 参考命名空间里的方块物品与平面物品
+      itemFacts: (args) => (String((args || {}).source) === 'reference'
+        ? [{ id: 'stone', name: '石头', form: 'block', family: '建筑' },
+          { id: 'carrot', name: '胡萝卜', form: 'item', family: '食物' }]
+        : [{ id: 'example_item', name: '示例物品', form: 'item', family: '材料' }]),
+      previewReply: (args) => {
+        const block = String((args || {}).block || '')
+        if (block.indexOf('carrot') >= 0) {
+          // 真机上平面物品的形状：方块预览**失败**（它不是方块）。
+          return flatPreview === undefined
+            ? { error: '找不到 ' + block + ' 的模型（参考目录里没有这个方块：' + block + '）' }
+            : flatPreview
+        }
+        return { block: block, at: [0, 0, 0], quads: [ONE_QUAD_SOLID(REF_BLOCK_TEX)],
+          textureIds: [REF_BLOCK_TEX], textures: { [REF_BLOCK_TEX]: PNG_DATA_URL }, animations: {} }
+      },
+      iconReply: { icons: {}, names: {}, failed: [], items: {
+        stone: { shape: 'iso', display: { rotation: [30, 225, 0] }, quads: [ONE_QUAD(REF_BLOCK_TEX)],
+          textureIds: [REF_BLOCK_TEX], textures: { [REF_BLOCK_TEX]: PNG_DATA_URL }, animations: {}, frames: [] },
+        carrot: flatRecipe(FLAT_TEX),
+        example_item: flatRecipe(FLAT_TEX),
+      } },
+    })
+  }
+  async function openViewportPanel(flatPreview) {
+    handlers = viewportHandlers(flatPreview)
+    const callsHere = []
+    const reactHere = createReact()
+    const hostHere = makeHost(callsHere)
+    const built = buildPanel(faulted, hostHere, reactHere.api)
+    const ui = await mount(built.main, { sessionId: 'ui-test' }, hostHere, reactHere, 'main')
+    if (ui.buttonProps('用本会话目录') !== undefined) await ui.click('用本会话目录')
+    await ui.settle()
+    return ui
+  }
+  async function pickReferenceItem(ui, title) {
+    // 物品浏览器先开起来（它默认列本项目），再把来源切到参考命名空间。第二次调用时
+    // 来源已经是参考了 —— 那就别再去切一遍（找不到 value='project' 的选择框不是错误）。
+    if (ui.buttonProps('物品列表') !== undefined) await ui.click('物品列表')
+    await ui.settle()
+    await pixelsOf(ui)
+    const out = ui.nodes().filter((node) => node.type === 'select' && String(node.props.value) === 'project')[0]
+    if (out !== undefined) {
+      out.props.onChange({ target: { value: 'ref:minecraft' } })
+      await ui.settle()
+    } else {
+      const inside = ui.nodes().filter((node) => node.type === 'select'
+        && String(node.props.value) === 'ref:minecraft')[0]
+      if (inside === undefined) return false
+    }
+    return ui.clickTitle(title).then(() => true).catch(() => false)
+  }
+
+  const uiView = await openViewportPanel(undefined)
+  // ① 方块：左边菜单点一个方块，3D 里必须有画出来的像素。
+  await uiView.clickLabel('示例方块').then(() => true).catch(() => false)
+  const blockPixels = await pixelsOf(uiView)
+  check('①方块：取景框里真的有画出来的像素（不是空白）',
+    blockPixels.scenePixels > 0, JSON.stringify(blockPixels))
+  // ④ 实体：菜单里的实体，同样要画出东西来。
+  await uiView.clickLabel('示例实体').then(() => true).catch(() => false)
+  const entityPixels = await pixelsOf(uiView)
+  check('④实体：取景框里真的有画出来的像素（不是空白）',
+    entityPixels.scenePixels > 0, JSON.stringify(entityPixels))
+  // ② 方块物品（参考命名空间的石头）：方块预览成功 → 3D 里有东西。
+  const pickedStone = await pickReferenceItem(uiView, '石头')
+  const stonePixels = await pixelsOf(uiView)
+  check('②方块物品：预览里有画出来的像素（不是空白）',
+    pickedStone === true && stonePixels.scenePixels > 0,
+    pickedStone !== true ? '没点中石头那一格' : JSON.stringify(stonePixels))
+  // ③ 平面物品（胡萝卜）：方块预览**失败**（真机形状）→ 必须放它自己的 2D 图标，
+  //    而且屏幕上要说出来；屏幕绝不能停在上一个资产上。
+  const pickedCarrot = await pickReferenceItem(uiView, '胡萝卜')
+  const carrotPixels = await pixelsOf(uiView)
+  check('③平面物品：取景框里放的是它自己的 2D 图标，而且真的画出了像素',
+    pickedCarrot === true && carrotPixels.hasPoster === true && carrotPixels.posterPixels > 0,
+    pickedCarrot !== true ? '没点中胡萝卜那一格' : JSON.stringify(carrotPixels))
+  check('③平面物品：屏幕上说清了"3D 取不到 / 为什么"（不许静默）',
+    uiView.text().indexOf('取不到') >= 0 || uiView.text().indexOf('一个面都没有') >= 0,
+    uiView.text().slice(0, 240))
+
+  // 反向夹具：平面物品那一路回一个"非 null 但没有几何"的 scene（Lead 说的 (a) 形状）——
+  // 旧代码会把它当成"有场景"，3D 空着、2D 又被 `scene === null` 跳过：屏幕全白且无声。
+  const uiHollow = await openViewportPanel({ quads: [], textureIds: [], textures: {}, animations: {} })
+  const pickedHollow = await pickReferenceItem(uiHollow, '胡萝卜')
+  const hollowPixels = await pixelsOf(uiHollow)
+  check('反向夹具（非 null 但没有几何的 scene）：照样要画出它自己的 2D 图标',
+    pickedHollow === true && hollowPixels.hasPoster === true && hollowPixels.posterPixels > 0,
+    pickedHollow !== true ? '没点中胡萝卜那一格' : JSON.stringify(hollowPixels))
+  check('反向夹具：屏幕上明说"这一条 3D 里一个面都没有"（不许是一个静默的空对象）',
+    uiHollow.text().indexOf('一个面都没有') >= 0, uiHollow.text().slice(0, 240))
+
+  // ── 一页里有一个取不到图标的格子：只有那一格"缺"，其余照常 ──────────────────────
+  //
+  // panel-host 把"一个取不到图标的物品会让整页一起失败"修在了宿主侧：坏格现在回一个
+  // **形状完整的 `missing: true` 对象**（带 error/reason），不再回 `undefined`（那样会被
+  // 严格 JSON 校验当场拒收，真运行时的 `cloneJson` 同样拒）。渲染这一侧必须特判它：
+  // 坏格给一个"缺"的样子 + 原因，好格照常画 —— 一个坏值不许放大成整页的异常。
+  console.log('--- 缺图标的那一格：只有这一格"缺"，其余照常（按像素）')
+  const MISSING_TEX = 'ui_probe:item/nothing_yet'
+  const MISSING_RECIPE = {
+    namespace: PROJECT.namespace, item: 'nothing_yet', name: 'nothing_yet', shape: 'none',
+    error: '参考目录里没有这个物品：ui_probe:nothing_yet', missing: true, reason: 'reference-item-missing',
+    light: null, display: null, form: null, family: null, formLabel: null, named: false,
+    layers: [], frames: [], framesTruncated: false, quads: [], textureIds: [], textures: {}, animations: {},
+    missingModels: [], modelPath: '',
+  }
+  const GOOD_FLAT_RECIPE = flatRecipe(MISSING_TEX)
+  handlers = makeHandlers({
+    itemFacts: [{ id: 'good_item', name: '好物品', form: 'item', family: '材料' },
+      { id: 'nothing_yet', name: '缺物品', form: 'item', family: '材料' }],
+    iconReply: { icons: {}, names: {}, failed: [], items: {
+      good_item: GOOD_FLAT_RECIPE, nothing_yet: MISSING_RECIPE } },
+  })
+  const reactM = createReact()
+  const callsM = []
+  const hostM = makeHost(callsM)
+  const builtM = buildPanel(faulted, hostM, reactM.api)
+  const uiM = await mount(builtM.main, { sessionId: 'ui-test' }, hostM, reactM, 'main')
+  if (uiM.buttonProps('用本会话目录') !== undefined) await uiM.click('用本会话目录')
+  await uiM.settle()
+  if (uiM.buttonProps('物品列表') !== undefined) await uiM.click('物品列表')
+  await decodeTextures(uiM)
+  const slotFor = (id) => uiM.nodes().filter((node) => node.type === 'button'
+    && node.props.className === 'mcart-slot' && String(node.props.title || '').indexOf('\n' + id + '\n') >= 0)[0]
+  const goodSlot = slotFor('good_item')
+  const badSlot = slotFor('nothing_yet')
+  check('一页里两格都在（前提）', goodSlot !== undefined && badSlot !== undefined,
+    uiM.buttons().join(' / ').slice(0, 200))
+  check('好格照常拿到了图标（背景图是烘出来的 PNG）',
+    goodSlot !== undefined && String((goodSlot.props.style || {}).backgroundImage || '').indexOf('data:image/png') >= 0,
+    JSON.stringify(goodSlot === undefined ? null : goodSlot.props.style))
+  check('坏格**不是**空的：有"缺"的角标，而且 title 里带着原因',
+    badSlot !== undefined && badSlot.props['data-missing'] === '1'
+    && textOf(badSlot).indexOf('缺') >= 0
+    && String(badSlot.props.title || '').indexOf('参考目录里没有这个物品') >= 0,
+    badSlot === undefined ? '没有那一格' : JSON.stringify({ flag: badSlot.props['data-missing'], text: textOf(badSlot), title: String(badSlot.props.title || '').slice(0, 120) }))
+  check('好格没有被坏格带坏（它没有 data-missing）',
+    goodSlot !== undefined && (goodSlot.props['data-missing'] === undefined || goodSlot.props['data-missing'] === '0'))
+  // 像素：物品栏那排九格里，好物品那格画出来了、缺物品那格没有画（它本来就画不出来），
+  // 但坏格在**屏幕上**有"缺"的角标与原因 —— 空白的那一格必须带着解释。
+  const hudIcons = wiredByClass('mcart-hudicon')
+  const goodHud = opaquePixels(hudIcons[0])
+  const badHud = opaquePixels(hudIcons[1])
+  check('物品栏（2D 那排）里：好物品那格真的画出了像素，缺物品那格没画',
+    hudIcons.length >= 2 && goodHud > 0 && badHud === 0,
+    'hud 画布 ' + hudIcons.length + ' 块，好格 ' + goodHud + ' 像素，缺格 ' + badHud + ' 像素')
+  const hudMissing = uiM.nodes().filter((node) => node.type === 'button'
+    && node.props.className === 'mcart-hudslot' && node.props['data-missing'] === '1')
+  check('缺物品在物品栏里也标着"缺"，原因在 tooltip 里（不是一格空画布）',
+    hudMissing.length === 1 && textOf(hudMissing[0]).indexOf('缺') >= 0
+    && String(hudMissing[0].props.title || '').indexOf('参考目录里没有这个物品') >= 0,
+    JSON.stringify(hudMissing.map((node) => String(node.props.title || '').slice(0, 90))))
+  // 一个坏值也不该变成"无限重问宿主"：稳定之后请求次数不再涨。
+  const pageAsksBefore = callsM.filter((call) => call.name === 'atlas.itemIcons').length
+  await uiM.settle()
+  await uiM.settle()
+  const pageAsksAfter = callsM.filter((call) => call.name === 'atlas.itemIcons').length
+  check('一个缺的格子不会让宿主被反复重问（稳定后请求次数不再涨）',
+    pageAsksAfter === pageAsksBefore, pageAsksBefore + ' -> ' + pageAsksAfter)
 
   console.log(failures === 0 ? '全部通过' : failures + ' 项失败')
   process.exit(failures === 0 ? 0 : 1)

@@ -234,15 +234,26 @@ export function install(argv = process.argv.slice(2)) {
   say(`✓ skill  mc-mod     -> ${mcMod}`)
 
   // ── 2) mc-art：独立仓库，clone 或更新 ───────────────────────────────────
+  //
+  // **`core.autocrlf=false` 是必须的**：那个仓库没有 `.gitattributes`，而 Windows 上
+  // git 默认常常是 `autocrlf=true` —— `bin/mc-art`（一个 POSIX shebang 启动器）会被
+  // checkout 成 CRLF，进了 npm 包就在 bash 里直接跑不了（实测过：53 个 CR）。包的正确性
+  // 不该取决于"是谁克隆的、用什么配置克隆的"：这里用 `-c` 显式关掉，clone 之后还会写进
+  // 那个 clone 的本地配置，以后 `git pull` 也不会重新变成 CRLF。
+  // （`panel/build.mjs` 的 vendor 侧还会统一一次行尾，两道都有。）
   const mcArt = join(skills, 'mc-art')
   if (existsSync(join(mcArt, '.git'))) {
-    const pulled = run('git', ['-C', mcArt, 'pull', '--ff-only', '--quiet'])
-    if (pulled.code === 0) say('✓ skill  mc-art     已更新（git pull --ff-only）')
+    const pulled = run('git', ['-c', 'core.autocrlf=false', '-C', mcArt, 'pull', '--ff-only', '--quiet'])
+    if (pulled.code === 0) say('✓ skill  mc-art     已更新（git pull --ff-only，core.autocrlf=false）')
     else say(`！skill  mc-art     git pull 没成功（本地有改动或没网？）：${mcArt}`)
   } else {
-    const cloned = run('git', ['clone', '--quiet', artRepo, mcArt])
-    if (cloned.code === 0) say(`✓ skill  mc-art     -> ${mcArt}`)
-    else say(`！skill  mc-art     拉不下来：${artRepo}（装好后可手动 git clone 到 ${mcArt}）`)
+    const cloned = run('git', ['-c', 'core.autocrlf=false', 'clone', '--quiet', artRepo, mcArt])
+    if (cloned.code === 0) {
+      run('git', ['-C', mcArt, 'config', 'core.autocrlf', 'false'])
+      say(`✓ skill  mc-art     -> ${mcArt}（core.autocrlf=false 已写进本地配置）`)
+    } else {
+      say(`！skill  mc-art     拉不下来：${artRepo}（装好后可手动 git clone 到 ${mcArt}）`)
+    }
   }
 
   // ── 3) 面板加载器：把 MCART_HOME 指到这次克隆的真实路径 ─────────────────

@@ -137,8 +137,8 @@ def main():
 
     # 2. the example sheep: two layers, opaque skin then blended fleece
     entity_fixture(out, "sheep", [
-        (em.sheep_skin(), os.path.join(pack, "entity", "blood_sheep.png"), False),
-        (em.sheep_wool(), os.path.join(pack, "entity", "blood_sheep_wool.png"), True),
+        (em.sheep_skin(), os.path.join(pack, "entity", "example_sheep.png"), False),
+        (em.sheep_wool(), os.path.join(pack, "entity", "example_sheep_wool.png"), True),
     ], em.VIEWS["front34"])
 
     # 3. a cube_bottom_top block, resolved through the JS parent template

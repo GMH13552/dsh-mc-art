@@ -298,6 +298,8 @@ function scriptedSpawn(table, calls = []) {
 /** 老实现（build.mjs:67-73 的语义，原样复刻，只为了让 --fault 能拿它做对照）。 */
 function legacyStrip(spawn, file = 'strip_comments.py') {
   for (const python of ['python3', 'python']) {
+    // utf8-check: exempt —— 这是"老实现"的复刻，只给 `--fault` 当 A/B 对照用：
+    // `spawn` 是注入进来的**假** spawn（不起真子进程），而且它复刻的正是那段有病的旧代码。
     const done = spawn(python, [file], { encoding: 'utf8' })
     if (done.error !== undefined && done.error.code === 'ENOENT') continue
     if (done.status !== 0) throw new Error(python + ' ' + file + ' 失败：' + String(done.stderr ?? ''))

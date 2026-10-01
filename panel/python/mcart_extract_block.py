@@ -7,7 +7,7 @@ pre-extracted and nothing is written to disk -- this reads the one blockstate,
 walks its `parent` chain, and returns the model JSONs and the PNGs those models
 actually reference, base64'd, on stdout.
 
-What the disk actually looks like (measured, not assumed -- see AGENT.md #8):
+What the disk actually looks like (measured on real installs, not assumed):
 
   1.12.2-Forge_14.23.5.28641/<version>.jar
       assets/minecraft/blockstates/oak_log.json      <- id-space, flattened names
@@ -15,11 +15,15 @@ What the disk actually looks like (measured, not assumed -- see AGENT.md #8):
       assets/minecraft/textures/blocks/log_oak.png   <- note: log_oak, not oak_log
       (no lang/ and no pack.mcmeta in this jar at all)
 
-  mods/[虚无世界] AoA3-3.3.6.jar
-      assets/aoa3/blockstates/achony_log.json        model: "aoa3:generation/wood/achony_log"
-      assets/aoa3/models/block/generation/wood/achony_log.json
-      assets/aoa3/textures/blocks/generation/wood/achony_log.png
-      assets/aoa3/lang/zh_cn.lang                    (the mod ships its own names)
+  mods/<any-mod>.jar
+      assets/<modid>/blockstates/<id>.json           model: "<modid>:<subdir>/<path>"
+      assets/<modid>/models/block/<subdir>/<path>.json
+      assets/<modid>/textures/blocks/<subdir>/<path>.png
+      assets/<modid>/lang/zh_cn.lang                 (the mod ships its own names)
+
+A mod jar is the reason the `model` ref cannot be taken apart by hand: it may
+name a path WITH sub-directories (`<modid>:<subdir>/<path>`), not just
+`<modid>:<id>`.
 
 So no single path scheme holds.  A blockstate's `model` ref resolves under
 `models/block/`, a `parent` ref resolves under `models/` (its `block/` prefix is
@@ -232,7 +236,7 @@ def namespace_chain(default_namespace):
 
     Minecraft resolves an unqualified resource location to `minecraft`, but a
     hand-written mc-art pack means "my own namespace" (`"all": "blocks/dirt"`).
-    Both conventions are on this disk -- AoA3's models say
+    Both conventions are on this disk -- a mod's models say
     `"parent": "block/cube_column"` and expect vanilla, while a generated pack
     says `"blocks/dirt"` and expects itself -- so try the local namespace first
     and fall back to vanilla.  Nothing is resolved by guessing: a candidate is
@@ -246,12 +250,12 @@ def namespace_chain(default_namespace):
 
 
 def pascal_case(block):
-    """`achony_log` -> `AchonyLog`.
+    """`example_log` -> `ExampleLog`.
 
-    AoA3 registers blocks as Java classes and names them `tile.AchonyLog.name`,
-    so the snake_case id the blockstate file uses is not the key it translates.
-    This is a spelling of the same id, tried after the literal ones and only
-    used when the key exists.
+    Some mods register blocks as Java classes and name them
+    `tile.<PascalCase>.name`, so the snake_case id the blockstate file uses is
+    not the key it translates.  This is a spelling of the same id, tried after
+    the literal ones and only used when the key exists.
     """
     return "".join(part[:1].upper() + part[1:] for part in str(block).split("_") if part)
 
@@ -268,8 +272,8 @@ def model_candidates(namespace, path):
 
 def texture_candidates(namespace, path):
     # A model's texture value is relative to `textures/` and normally already
-    # carries the kind folder: 1.12.2 vanilla says "blocks/log_oak", AoA3 says
-    # "blocks/generation/wood/achony_log", 1.13+ says "block/oak_log".  So the
+    # carries the kind folder: 1.12.2 vanilla says "blocks/log_oak", a mod may
+    # say "blocks/<subdir>/<path>", 1.13+ says "block/oak_log".  So the
     # ref itself is tried first; the kind-prefixed forms only exist to tolerate a
     # hand-written pack that leaves the folder out.
     out = ["assets/%s/textures/%s.png" % (namespace, path)]
@@ -748,8 +752,8 @@ def qualify_textures(repository, namespace, table):
     already resolve that correctly when reading bytes -- and then used to hand
     the model back with the ref still unqualified, throwing the answer away.  A
     consumer that guesses the mod's own namespace then finds nothing, skips every
-    face, and the block renders as *nothing at all* (the user saw exactly that:
-    "no model for cell block travelersbackpack:travelers_backpack").
+    face, and the block renders as *nothing at all* (a real report read exactly
+    like "no model for cell block <modid>:<block>").
     """
     out = {}
     for key, value in table.items():
@@ -940,7 +944,7 @@ def elements_of(out_models):
 def read_lang_table(repository, namespace):
     """Every lang file a provider ships for this namespace.
 
-    Mod jars ship their own (`assets/aoa3/lang/zh_cn.lang`).  Vanilla jars ship
+    Mod jars ship their own (`assets/<modid>/lang/zh_cn.lang`).  Vanilla jars ship
     only `en_us` -- 1.18.2 has `assets/minecraft/lang/en_us.json` and nothing
     else -- which is exactly why the locale of each entry is returned alongside
     it: an English entry from the jar must not beat a Chinese entry from the
@@ -1052,8 +1056,9 @@ def name_candidates(namespace, block, variant):
     Every shape below is one that actually occurs on this disk:
       block.minecraft.oak_log       1.13+ vanilla
       tile.dirt.name                1.12.2 vanilla
-      tile.AchonyLog.name           AoA3 (PascalCase of the id, and NO namespace
-                                    segment -- which is why both forms are tried)
+      tile.<PascalId>.name          some mods (PascalCase of the id, and NO
+                                    namespace segment -- which is why both forms
+                                    are tried)
     Trying them in order is reading the pack, not inventing a name; a miss falls
     back to the raw id and says so.
     """
@@ -1072,7 +1077,7 @@ def name_candidates(namespace, block, variant):
     add("tile", pascal + ".name")
     add("tile", pascal)
     add("item", pascal + ".name")
-    # TravelersBackpack names its block only as `item.travelers_backpack.name`
+    # Some mods name their block only as `item.<id>.name`
     # -- no tile.* key at all -- so the bare `.name` spelling is tried too.
     add("item", block + ".name")
     add("item", block)
@@ -1321,7 +1326,8 @@ FAMILY_SUFFIXES = [
 ]
 
 # A mod that files its own models into folders has TOLD us its categories --
-# AoA3 uses decoration/generation/functional.  Reading those beats any guess.
+# `decoration` / `generation` / `functional` and the like.  Reading those beats
+# any guess.
 GROUP_LABELS = {"decoration": "装饰", "generation": "生成", "functional": "功能",
                 "decorative": "装饰", "worldgen": "生成", "misc": "杂项"}
 
@@ -1417,18 +1423,18 @@ def namespace_blocks(repository):
 #
 #   names      lang keys `entity.<ns>.<id>` (1.13+, and most mods even on 1.12.2)
 #              or `entity.<ClassName>.name` (vanilla 1.12.2, no namespace)
-#   textures   `textures/entity/**` in vanilla, `textures/entities/**` in AoA3
-#              -- BOTH spellings are in the wild, and looking for only one is
-#              how "659 张生物贴图" reads as zero
-#   grouping   the mod's own organisation: AoA3 files its mob loot tables per
-#              dimension (`loot_tables/entities/mobs/<dimension>/<id>.json`)
+#   textures   `textures/entity/**` in vanilla, `textures/entities/**` in some
+#              mods -- BOTH spellings are in the wild, and looking for only one
+#              is how "659 张生物贴图" reads as zero
+#   grouping   the mod's own organisation: mob loot tables filed per dimension
+#              (`loot_tables/entities/mobs/<dimension>/<id>.json`)
 #   geometry   ONLY for the GeckoLib family, which ships real box data as
 #              `geo/<name>.geo.json`
 #
 # So the honest scan lists every candidate with its name, its textures, its
 # group, and a verdict on whether we can DRAW it (`geo` / `code`), and it says
-# which of those sources answered.  "We have 659 AoA3 mob textures" is not the
-# same claim as "we can draw 659 AoA3 mobs": none of them has geometry in the
+# which of those sources answered.  "We have 659 mod mob textures" is not the
+# same claim as "we can draw 659 mod mobs": none of them has geometry in the
 # pack, so all 659 are `code`.
 # ---------------------------------------------------------------------------
 
@@ -1649,8 +1655,9 @@ def snake_case(word):
 #
 # Both reported cases are the same shape of thing, and the pack SAYS SO:
 #
-#   travelersbackpack:block/cake  -> block/cube_all, textures.all = block/cake_side
-#   ars_nouveau:block/relay_deposit -> block/cube_all, textures.all = blocks/source_deposit
+#   <modid>:block/<a>   -> block/cube_all, textures.all = block/<stand-in>
+#   <modid>:block/<b>   -> block/cube_all, textures.all = blocks/<stand-in>
+#                          (both texture-folder spellings occur -- see above)
 #
 # A plain full cube painted with a stand-in texture, because the real thing is
 # drawn by a block entity renderer in Java.  Drawing the stand-in is not a
@@ -1702,8 +1709,8 @@ def item_model_marker(repository, namespace, item):
     """The item model for `item`, peeled down to whatever marks it as code-drawn.
 
     `builtin/entity` is vanilla's marker for "this is rendered by code, there is
-    no model here"; 1.18.2's `item/chest.json` uses it, and so does
-    `ars_nouveau`'s sourcelink item.  Returns the marker name or None.
+    no model here"; 1.18.2's `item/chest.json` uses it, and so do some mods'
+    code-drawn items.  Returns the marker name or None.
     """
     chain = collections.OrderedDict()
     sources = []
@@ -1715,7 +1722,7 @@ def item_model_marker(repository, namespace, item):
         # shows up as a missing parent and never as a chain entry.  Looking for
         # it among the chain KEYS finds nothing and silently reports "no marker"
         # for every code-drawn item -- which is exactly how the first version of
-        # this failed on `travelersbackpack:cake` while working on nothing.
+        # this failed on a `builtin/entity` item while reporting nothing.
         parent = model.get("parent") if isinstance(model, dict) else None
         if isinstance(parent, str) and parent.split(":")[-1] == "builtin/entity":
             return "builtin/entity"
@@ -1800,9 +1807,9 @@ def list_entities(repository, namespace, names=None):
         if len(parts) >= 2:
             entry = by_norm.get(norm_id(parts[-1]))
             if entry is not None and not entry["group"]:
-                # The whole parent path, not just the first segment: AoA3 files
-                # `loot_tables/entities/mobs/<dimension>/<mob>.json`, so
-                # "mobs/abyss" is the mod's own two-level classification.
+                # The whole parent path, not just the first segment: a mod may
+                # file `loot_tables/entities/mobs/<dimension>/<mob>.json`, so
+                # "mobs/<dimension>" is the mod's own two-level classification.
                 entry["group"] = "/".join(parts[:-1])
 
     for geo_dir in GEO_DIRS:
@@ -1878,8 +1885,8 @@ def list_entities(repository, namespace, names=None):
             found.pop(entity_id, None)
             break
 
-    # Animation files are not geometry: `ars_nouveau` keeps them next to nothing
-    # in particular (`animations/<model>_<state>.geo.json`) and they carry an
+    # Animation files are not geometry: a mod may keep them next to nothing in
+    # particular (`animations/<model>_<state>.geo.json`) and they carry an
     # `animations` table instead of `minecraft:geometry`.  Attach them to the
     # longest entry id they start with, so the scan can say "这个模型有动画文件"
     # without pretending to have read them.
@@ -2039,7 +2046,7 @@ def extract(root, namespace, block, version=None, variant=None):
                            + "在代码里渲染的），所以画不出来：" + namespace + ":" + block)
     # ...and the OTHER way the same thing happens: the pack ships a placeholder
     # cube (`block/cube_all` + a stand-in texture) because the real shape is
-    # drawn in code.  `travelersbackpack:cake` and `ars_nouveau:alchemical_sourcelink`
+    # drawn in code.  A mod's cake-like block and a mod's sourcelink-like block
     # are both this, and both say so -- their ITEM models parent to
     # `builtin/entity`.  Reported, never silently ignored: drawing the stand-in
     # is a wrong picture that looks deliberate.

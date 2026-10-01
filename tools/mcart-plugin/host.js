@@ -1876,19 +1876,62 @@ return {
       return 'ref:' + (text.indexOf(':') >= 0 ? text : namespace + ':' + text)
     }
 
+    /**
+     * 一个取不到图标的物品在**页**里占的那一格。
+     *
+     * 为什么不能塞 `undefined`（实测 0.2.3）：宿主的运行时会拒收含 `undefined` 的返回值
+     * （`cloneJson`；`run.js` 的 `jsonProblem` 是同一条判据）—— 于是**一页 40 格里有一格
+     * 取不到，整页 40 格一起失败**，屏幕上什么都没有，用户以为面板坏了。
+     * 正确的答案是"只空这一格、并说清为什么"，所以这里给一个**显式**的缺失标记：
+     * `missing: true` + `error`/`reason` 文案，其余字段都补成合法值，保证可无损 JSON。
+     */
+    function missingItemIcon(namespace, item, reason) {
+      const text = String(reason === undefined || reason === null ? '' : reason)
+      return {
+        namespace: namespace,
+        item: item,
+        name: item,
+        shape: 'none',
+        error: text,
+        missing: true,
+        reason: text,
+        light: null, display: null, form: null, family: null, formLabel: null,
+        named: false, layers: [], frames: [], framesTruncated: false,
+        quads: [], textureIds: [], textures: {}, animations: {},
+        missingModels: [], modelPath: '',
+      }
+    }
+
+    /** 抽取器给的这个条目本身能不能画：`null` = 能；否则返回一句给人看的原因。 */
+    function itemEntryProblem(namespace, item, entry) {
+      if (entry === null || entry === undefined || typeof entry !== 'object' || Array.isArray(entry)) {
+        return '取不到这个物品的图标：抽取器没有返回它的数据（' + namespace + ':' + item + '）'
+      }
+      if (typeof entry.error === 'string' && entry.error !== '') return entry.error
+      if (typeof entry.item !== 'string' || entry.item === '') {
+        return '取不到这个物品的图标：抽取器没认出 ' + namespace + ':' + item
+      }
+      return null
+    }
+
     async function itemIcon(namespace, parsed, have, project) {
       const load = virtualLoad(namespace, parsed)
+      // 每个字段都要**有值**：宿主返回值里只要有一个 `undefined`，运行时就整条拒收
+      // （见 `missingItemIcon` 的注释）。抽取器漏字段时给等价的空值，不给 undefined。
+      const text = (value, fallback) => (typeof value === 'string' && value !== '' ? value : fallback)
+      const safe = (value) => (value === undefined ? null : value)
       const out = {
-        namespace: namespace, item: parsed.item, name: parsed.name || parsed.item,
-        shape: parsed.shape, light: parsed.light, display: parsed.display || null,
-        form: parsed.form, family: parsed.family, formLabel: parsed.formLabel,
+        namespace: namespace, item: text(parsed.item, ''),
+        name: text(parsed.name, text(parsed.item, '')),
+        shape: text(parsed.shape, 'none'), light: safe(parsed.light), display: parsed.display || null,
+        form: safe(parsed.form), family: safe(parsed.family), formLabel: safe(parsed.formLabel),
         named: parsed.named === true,
         layers: [], frames: [], framesTruncated: parsed.framesTruncated === true,
-        quads: [], error: parsed.error === undefined ? null : parsed.error,
+        quads: [], error: typeof parsed.error === 'string' && parsed.error !== '' ? parsed.error : null,
         // Vanilla parents a project pack does not ship.  Surfaced because a
         // legacy `builtin/generated` (1.12.2's name for `item/generated`) is
         // worth telling the pack author about rather than hiding.
-        missingModels: parsed.missingModels || [],
+        missingModels: Array.isArray(parsed.missingModels) ? parsed.missingModels : [],
       }
       const ids = []
       const add = (id) => { if (ids.indexOf(id) < 0) ids.push(id) }
@@ -1973,7 +2016,20 @@ return {
       }
       const out = {}
       for (const item of Object.keys(parsed.items || {})) {
-        out[item] = await itemIcon(namespace, parsed.items[item], [], project)
+        const entry = parsed.items[item]
+        // 一格坏掉不许拖垮整页：坏格给显式标记，其余照常。
+        const reason = itemEntryProblem(namespace, item, entry)
+        if (reason !== null) {
+          out[item] = missingItemIcon(namespace, item, reason)
+          continue
+        }
+        try {
+          out[item] = await itemIcon(namespace, entry, [], project)
+        } catch (error) {
+          // 一个物品的渲染抛异常也一样：只空它这一格，把原因写在格子上。
+          out[item] = missingItemIcon(namespace, item,
+            '画这个物品的图标时出错：' + String(error && error.message ? error.message : error))
+        }
       }
       return { namespace: namespace, version: parsed.version, items: out }
     }
@@ -3899,14 +3955,25 @@ return {
         }
         const icons = {}
         const names = {}
+        const failed = Array.isArray(parsed.failed) ? parsed.failed : []
         for (const id of Object.keys(parsed.icons || {})) {
           const item = parsed.icons[id]
-          // Keyed exactly like a project icon so the hotbar does not care which
-          // kind of block it is holding.
-          icons[namespace + ':' + id] = 'data:image/png;base64,' + item.png
-          names[namespace + ':' + id] = item.name
+          const key = namespace + ':' + id
+          // 和 `atlas.itemIcons` 同一条判据：**一个坏条目不许把整批带下水**。
+          // 以前这里直接拼 `item.png`、直接取 `item.name`：前者缺数据时变成字面量
+          // `data:image/png;base64,undefined`（一格的破图），后者只要缺字段就是
+          // `undefined` —— 而运行时拒收含 undefined 的返回值，整批一起失败。
+          if (item === null || item === undefined || typeof item !== 'object' ||
+              typeof item.png !== 'string' || item.png === '') {
+            failed.push(id + '（没有图标数据）')
+            continue
+          }
+          icons[key] = 'data:image/png;base64,' + item.png
+          // Keyed exactly like a project icon (`namespace:id`) so the hotbar does
+          // not care which kind of block it is holding.
+          names[key] = typeof item.name === 'string' && item.name !== '' ? item.name : id
         }
-        return { icons: icons, names: names, failed: parsed.failed || [], version: parsed.version }
+        return { icons: icons, names: names, failed: failed, version: parsed.version }
       } catch (error) {
         return { error: String(error && error.message ? error.message : error) }
       }

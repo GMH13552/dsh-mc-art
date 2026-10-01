@@ -645,6 +645,9 @@ const CSS = [
   '.mcart-slot:hover{background-color:rgba(127,127,127,.22)}',
   '.mcart-slot[data-on="1"]{outline:2px solid currentColor;outline-offset:1px}',
   '.mcart-slotq{font-size:13px;line-height:1;opacity:.6}',
+  // 缺图标的那一格：说"缺"，不装没事，也别看起来像"还在加载"。
+  '.mcart-slotmissing{font-size:10px;font-weight:600;opacity:.95;color:#e0a06c;letter-spacing:0}',
+  '.mcart-slot[data-missing="1"],.mcart-hudslot[data-missing="1"]{border-color:rgba(224,160,108,.75);background:rgba(224,160,108,.12)}',
   '.mcart-icon[data-on="1"]{background:rgba(127,127,127,.3)}',
   '.mcart-viewport{position:relative;flex:none}',
   '.mcart-zoom{position:absolute;right:6px;top:6px;display:flex;gap:3px;opacity:.72}',
@@ -2100,6 +2103,12 @@ return {
        *  game too -- the fix is in the pack, so say where. */
       function slotNote(recipe) {
         if (recipe === undefined || recipe === null) return null
+        // **这一格没有图标**：宿主对取不到的那一格会回一个形状完整的 `missing: true`
+        // 对象（不再是 `undefined`，那样会被严格 JSON 校验拒收、整页连坐）。它**不是**
+        // "代码画的物品"，也不是"整页都坏了" —— 只有这一格缺，原因就在 `error`/`reason` 里。
+        if (recipe.missing === true) {
+          return '这一格没有图标：' + (recipe.error || recipe.reason || '参考目录里取不到这个物品')
+        }
         if (recipe.shape === 'none') {
           return '这个物品是代码画的，没有可用的图标模型'
             + (recipe.error ? ' —— ' + String(recipe.error) : '')
@@ -2116,6 +2125,10 @@ return {
       /** The facts that do not need a picture, for a slot's tooltip. */
       function slotFacts(recipe) {
         if (recipe === undefined || recipe === null) return '还没取到这个物品的图标'
+        // 缺的那一格：把原因放在**最前面**，悬停就能看到（不是空方块、也不是整页的错）。
+        if (recipe.missing === true) {
+          return '缺：' + (recipe.error || recipe.reason || '参考目录里取不到这个物品')
+        }
         const parts = [recipe.shape === 'iso' ? '等距' : '平铺']
         if (recipe.display !== null && recipe.display !== undefined) {
           parts.push('display.gui ' + JSON.stringify(recipe.display.rotation))
@@ -2320,6 +2333,10 @@ return {
             const recipe = result.items[id]
             const key = itemKey(item.namespace, id)
             if (itemRecipes[key] !== undefined) continue
+            // 一个 `undefined` 值会被当成"没取到"→ 这个 key 永远留在 `missing` 里，
+            // 每次 iconTick 都再问一遍宿主（整页连坐的渲染侧那一半）。空值直接跳过，
+            // 让宿主回的那个 `missing: true` 的对象进账（它才是"问过了，缺"）。
+            if (recipe === undefined || recipe === null) continue
             itemRecipes[key] = recipe
             added += 1
           }
@@ -2368,6 +2385,28 @@ return {
         openReferenceItem(entry)
       }
 
+      /**
+       * 选中的东西**不是方块**时，把上一个资产的 3D 从屏幕上撤掉。
+       *
+       * 用户实测："点那个没有方块模型的物品（胡萝卜、剑）的时候居然预览看不到"。
+       * 真机上 `atlas.preview({block:'minecraft:carrot'})` 回的是
+       * `{error:'找不到 minecraft:carrot 的模型（参考目录里没有这个方块：minecraft:carrot）'}`
+       * —— 对平面物品来说这**是对的**（它本来就不是方块）。错的是客户端：它只在小卡片里
+       * 写了一行"3D 取不到"，**没动 scene**，于是屏幕上是**上一个资产**的 3D；
+       * 而 2D 回退（poster）的条件是 `scene === null`，所以那个物品自己的图标也不会画。
+       * 把场景清干净，下面那条"没 3D 就放 2D"的路才有机会接管。
+       */
+      function forgetSceneBecauseItem() {
+        painting.active = false
+        setScene(null)
+        setVoxel(null)
+        setHover(null)
+        setGhost(null)
+        setEdit(null)
+        setFailure(null)
+        lastDrawKey = ''
+      }
+
       function openReferenceItem(entry) {
         const reference = (item === null ? '' : item.namespace) + ':' + entry.id
         setPreviewItem({ source: 'reference', namespace: item === null ? '' : item.namespace, id: entry.id })
@@ -2375,6 +2414,9 @@ return {
           at: [0, 0, 0], variant: null, have: Object.keys(decoded) }).then((result) => {
           const failed = failureOf(result)
           if (failed !== null) {
+            // 不是方块（原版/模组里的平面物品）：方块预览失败是正常的，但屏幕不能
+            // 停在**上一个**资产上 —— 撤掉 3D，让它的 2D 图标接管，并把原因说出来。
+            forgetSceneBecauseItem()
             setItem((previous) => previous === null ? previous : Object.assign({}, previous,
               { msg: '3D 取不到：' + failed }))
             return
@@ -2389,6 +2431,7 @@ return {
           setHover(null)
           setGhost(null)
         }).catch((error) => {
+          forgetSceneBecauseItem()
           setItem((previous) => previous === null ? previous : Object.assign({}, previous,
             { msg: '3D 取不到：' + String(error && error.message ? error.message : error) }))
         })
@@ -2594,7 +2637,16 @@ return {
             return
           }
           let added = 0
-          for (const key of Object.keys(result.icons || {})) { icons[key] = result.icons[key]; added += 1 }
+          for (const key of Object.keys(result.icons || {})) {
+            const icon = result.icons[key]
+            // 批里夹一个空值不许变成"这一个图标永缓存不上"：`icons[key] = undefined` 会让
+            // 每个渲染都判定"没取到"、无限重问宿主（一个坏值放大成整页的连锁请求）。
+            if (icon === undefined || icon === null) continue
+            icons[key] = icon
+            added += 1
+          }
+          // 宿主明确说"这个取不到"的名字：记进 `iconTried`，别每轮再问一遍。
+          for (const name of arrayOf(result.failed)) iconTried[name] = true
           if (added > 0) setIconTick(iconTick + 1)
         }).catch(() => {
           // an icon is decoration -- but a thrown call must not blacklist the names
@@ -2999,9 +3051,13 @@ return {
           const key = itemKey(item.namespace, entry.id)
           const recipe = itemRecipes[key]
           const note = slotNote(recipe)
+          // 缺图标的那一格：画布上什么也画不出来，所以再给一个"缺"的角标
+          // （空画布读起来像"还没加载"）。原因在 tooltip 里，只有这一格受影响。
+          const lacking = recipe !== undefined && recipe !== null && recipe.missing === true
           slots.push(React.createElement('button', {
             key: key, type: 'button', className: 'mcart-hudslot',
             'data-on': hudOn === entry.id ? '1' : '0',
+            'data-missing': lacking ? '1' : '0',
             title: entry.name + '（' + entry.id + '）'
               + (entry.formLabel ? '\n' + entry.formLabel : '')
               + '\n' + slotFacts(recipe) + (note === null ? '' : '\n' + note),
@@ -3012,7 +3068,9 @@ return {
               if (node === null || node === undefined) delete hudCanvases[key]
               else hudCanvases[key] = node
             },
-          })))
+          }), lacking
+            ? React.createElement('span', { className: 'mcart-slotq mcart-slotmissing' }, '缺')
+            : null))
         }
         while (slots.length < HUD_SLOTS) {
           slots.push(React.createElement('span', { key: 'empty:' + slots.length,
@@ -3133,14 +3191,23 @@ return {
           // A code-drawn item (a block entity: cake, backpack) has no sprite to
           // bake, and an empty square reads as "still loading".  Say so instead.
           const blank = recipe !== undefined && recipe !== null && recipe.shape === 'none'
+          // **这一格缺图标**（宿主回的 `missing: true`）：画一个说"缺"的角标，并把原因
+          // 放进 title —— 不能留白（留白读起来像"还在加载"），也不能影响别的格子。
+          const lacking = recipe !== undefined && recipe !== null && recipe.missing === true
+          const lackReason = lacking
+            ? (recipe.error || recipe.reason || '参考目录里取不到这个物品') : ''
           slots.push(React.createElement('button', {
             key: entry.id, type: 'button', className: 'mcart-slot',
             'data-on': iconPick !== null && iconPick.id === entry.id ? '1' : '0',
+            'data-missing': lacking ? '1' : '0',
             title: entry.name + '\n' + entry.id + '\n' + (entry.formLabel || entry.form || '')
-              + (blank ? '\n这个物品是代码画的，没有可用的图标模型' : ''),
+              + (lacking ? '\n缺：' + lackReason
+                : (blank ? '\n这个物品是代码画的，没有可用的图标模型' : '')),
             style: url === undefined || url === null ? {} : { backgroundImage: 'url(' + url + ')' },
             onClick: () => pickItem(entry),
-          }, blank ? React.createElement('span', { className: 'mcart-slotq' }, '?') : null))
+          }, lacking
+            ? React.createElement('span', { className: 'mcart-slotq mcart-slotmissing', title: lackReason }, '缺')
+            : (blank ? React.createElement('span', { className: 'mcart-slotq' }, '?') : null)))
         }
         rows.push(React.createElement('div', { className: 'mcart-hotbar', key: 'slots' }, slots))
 
@@ -3940,7 +4007,16 @@ return {
       // else, so the picture is what belongs in the viewport -- the user asked for
       // exactly this ("3D没有东西可看的情况应该放2D在上面"), and an empty black
       // rectangle is not an answer.
-      const posterRecipe = scene === null && pickedRecipe !== null ? pickedRecipe : null
+      //
+      // `scene === null` 只是"没东西可画"的**一种**。宿主还会回一个"成功但没有一个面"
+      // 的对象（`{quads: []}`，Lead 说的 mist_ladder / 平面物品那种）：那种空对象以前
+      // 被当成"有场景"，于是 3D 空着、2D 又被这个条件跳过 —— 屏幕全白，而且一个字都没有。
+      // 判据改成"3D 里真的有没有可画的面"，并且下面会**明说**这一条为什么走的 2D。
+      const sceneDrawsNothing = scene === null || arrayOf(scene.quads).length === 0
+      // 缺图标的那一格没有图画：别画一张空 poster（看起来又像"加载中"），
+      // 让它走"没有可用的图标 —— 上面那句说清了原因"那条明说的路。
+      const posterRecipe = sceneDrawsNothing && pickedRecipe !== null && pickedRecipe.missing !== true
+        ? pickedRecipe : null
       // A square that fits the viewport: a sprite stretched to a 1.3:1 rectangle is
       // a distortion, and `drawItemIcon` fills whatever canvas it is handed.
       const posterSide = Math.max(48, Math.min(size[0], size[1]) - 24)
@@ -4057,6 +4133,13 @@ return {
       if (previewItem !== null && previewItem.localOnly === true) {
         iconNotes.push((hudPicked === '' ? previewItem.id : hudPicked)
           + ' 没有方块模型（它是物品，不是方块），所以 3D 里没有东西可看；它的样子就是物品栏里那一格')
+      }
+      // "一个面都没有"必须被**说出来**：它可能是模型/贴图缺了，也可能是这条 3D 里
+      // 本来就没东西。屏幕上一个字都没有，就是用户说的"死了，AI 也不知道"。
+      if (scene !== null && arrayOf(scene.quads).length === 0) {
+        iconNotes.push(posterRecipe === null
+          ? '这一条 3D 里一个面都没有，也没有可用的图标 —— 上面那句"取不到 / 画不出来"就是原因'
+          : '这一条 3D 里一个面都没有（模型或贴图那一段是空的）；取景框里画的是它的 2D 图标')
       }
       if (choice !== null && choice.kind !== 'block') {
         iconNotes.push(choice.kind === 'entity'

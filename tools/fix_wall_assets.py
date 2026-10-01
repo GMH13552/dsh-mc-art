@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """把一个"墙"补齐成 1.16+ 原版那种形状 —— 数字全部从游戏 jar 里读，不手写。
 
-用户遇到的是这个（项目 the_nameless_mist，1.18.2）：
+用户遇到的是这个（示例工程 `examplemod`，1.18.2）：
 
   blockstates/<name>.json        原版那种 multipart，指向
                                  <ns>:block/<name>_post / _side / _side_tall
@@ -139,7 +139,7 @@ def wall_texture(project, namespace, base):
 def rewrite_blockstate(blockstate, namespace, base, texture):
     """原版 cobblestone_wall 的名字换成你的，`minecraft:` 换成你的命名空间。
 
-    贴图**不在这里覆盖**：段里已经有 `the_nameless_mist:block/<base>_post` 这种模型名，
+    贴图**不在这里覆盖**：段里已经有 `examplemod:block/<base>_post` 这种模型名，
     贴图写在模型文件里（原版也是这么分的）。
     """
     text = json.dumps(blockstate, indent=2, ensure_ascii=False)

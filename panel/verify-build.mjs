@@ -9,14 +9,16 @@
  *   node verify-build.mjs
  *   node verify-build.mjs --fault   # 往"期望结果"里塞一个字节，要求门禁红
  */
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ENGINE_SCRIPTS, build, hostModule, clientBundle, isJunk, isSkipped } from './build.mjs'
+import { ENGINE_SCRIPTS, VENDOR_STATE, build, hostModule, clientBundle, isJunk, isSkipped, eolPolicy } from './build.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const FAULT = process.argv.includes('--fault')
+/** `--fault-eol`：把包内那份 `bin/mc-art` 写成 CRLF + 把 `.cmd` 写成 LF，要求行尾检查当场红。 */
+const FAULT_EOL = process.argv.includes('--fault-eol')
 let failures = 0
 function fail(line) { failures += 1; console.log(line) }
 
@@ -29,7 +31,9 @@ function snapshot(root, skip = () => false) {
       const key = relative(root, full).replace(/\\/g, '/')
       if (skip(key)) continue
       if (statSync(full).isDirectory()) walk(full)
-      else out.set(key, readFileSync(full, 'utf8'))
+      // 比较时**忽略行尾差异**：包内的行尾由 build.mjs 统一（eolPolicy），而来源 clone
+      // 的行尾取决于它是怎么被 checkout 的 —— 比内容，不比换行符（换行符另有专门断言）。
+      else out.set(key, readFileSync(full, 'utf8').replace(/\r\n/g, '\n'))
     }
   }
   walk(root)
@@ -41,9 +45,46 @@ const before = {
   index: readFileSync(join(HERE, 'lib', 'index.js'), 'utf8'),
   client: readFileSync(join(HERE, 'lib', 'client.js'), 'utf8'),
 }
+/** 上一次 vendor 的来源 provenance：来源是旧 clone 这件事必须看得见。 */
+const vendorBefore = existsSync(VENDOR_STATE) ? JSON.parse(readFileSync(VENDOR_STATE, 'utf8')) : null
+// `--fault-vendor`：**在内存里**把"上一次记录"改成一个旧 commit，模拟"来源 clone 变新了"。
+// 为什么不改磁盘上的文件：这一份是别人的构建也可能同时在写的生成物（实测踩过：我刚写好
+// 假 commit，另一个进程正好重新 vendor，把我的夹具覆盖了 —— 门禁于是"不红"）。
+if (process.argv.includes('--fault-vendor') && vendorBefore !== null) {
+  vendorBefore.mcArt.commit = '0'.repeat(40)
+}
 
 // ② 重新生成
 const built = build()
+
+// ②' 来源 provenance：vendor 用了哪个 clone 的哪个 commit。
+//     两次之间 commit 变了 = 生成物落后于来源 → 必须重新 vendor（"来源是旧 clone"这次
+//     就是靠这条才会被看见；以前生成物里没有任何来源信息）。
+const vendorAfter = existsSync(VENDOR_STATE) ? JSON.parse(readFileSync(VENDOR_STATE, 'utf8')) : null
+if (vendorAfter === null) {
+  fail('  FAIL 生成物里没有 vendor provenance（' + VENDOR_STATE + '）—— 来源无从追溯')
+} else if (vendorBefore !== null && vendorBefore.mcArt.commit !== vendorAfter.mcArt.commit) {
+  fail(`  FAIL mc-art 来源 clone 变新了：上一次 vendor 是 ${vendorBefore.mcArt.commit || '(空)'}，`
+    + `现在是 ${vendorAfter.mcArt.commit || '(空)'} —— 重新跑 node panel/build.mjs`)
+} else {
+  console.log(`  OK   mc-art 来源：${vendorAfter.mcArt.source} @ ${vendorAfter.mcArt.commit || '(没有 .git)'}` +
+    `（${vendorAfter.mcArt.files} 个文件进了包）`)
+}
+
+// ②'' `--fault-eol`：把包内行尾弄坏，要求下面的断言红（反向夹具）。
+if (FAULT_EOL) {
+  const launcher = join(HERE, 'preset', 'mc-studio', 'skills', 'mc-art', 'bin', 'mc-art')
+  const cmd = join(HERE, 'preset', 'mc-studio', 'skills', 'mc-art', 'bin', 'mc-art.cmd')
+  if (existsSync(launcher)) {
+    const text = readFileSync(launcher, 'utf8').replace(/\r\n/g, '\n')
+    writeFileSync(launcher, text.replace(/\n/g, '\r\n'))
+    console.log('  （--fault-eol：把包内 bin/mc-art 写成 CRLF）')
+  }
+  if (existsSync(cmd)) {
+    writeFileSync(cmd, readFileSync(cmd, 'utf8').replace(/\r\n/g, '\n'))
+    console.log('  （--fault-eol：把包内 bin/mc-art.cmd 写成 LF）')
+  }
+}
 
 // ③ 比对
 let expectedHost = hostModule(built.host)
@@ -60,6 +101,63 @@ for (const [label, disk, expected] of [['lib/index.js', before.index, expectedHo
   const at = [...Array(limit).keys()].find((i) => disk[i] !== expected[i])
   if (at !== undefined) {
     console.log(`       第一处不同在第 ${at} 个字符：磁盘 ${JSON.stringify(disk.slice(at - 40, at + 40))} / 新 ${JSON.stringify(expected.slice(at - 40, at + 40))}`)
+  }
+}
+
+// ③ 行尾门禁：包内的行尾由 `build.mjs:eolPolicy` 统一，**不许取决于来源 clone 的
+//    `core.autocrlf`**。实测过一次：`bin/mc-art`（POSIX shebang 启动器）带 53 个 CR
+//    进了 npm 包，在 bash 里直接跑不了；而 `.cmd`/`.ps1` 两个 Windows 入口那时还是旧的。
+const eolViolations = []
+function checkEol(full, label) {
+  const policy = eolPolicy(full)
+  if (policy === null) return
+  const buffer = readFileSync(full)
+  if (buffer.includes(0)) return                                  // 二进制不碰
+  let cr = 0
+  let lf = 0
+  for (const byte of buffer) { if (byte === 13) cr += 1; else if (byte === 10) lf += 1 }
+  if (policy === 'lf' && cr > 0) eolViolations.push(`${label}: 该 LF，却有 ${cr} 个 CR`)
+  if (policy === 'crlf' && cr !== lf) eolViolations.push(`${label}: 该 CRLF，${lf} 个 LF 里只有 ${cr} 个带 CR`)
+}
+const walkEol = (root, prefix) => {
+  if (!existsSync(root)) return
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const full = join(root, entry.name)
+    const label = prefix + '/' + entry.name
+    if (entry.isDirectory()) walkEol(full, label)
+    else checkEol(full, label)
+  }
+}
+for (const [root, label] of [[join(HERE, 'preset'), 'preset'], [join(HERE, 'python'), 'python'], [join(HERE, 'lib'), 'lib']]) {
+  walkEol(root, label)
+}
+if (eolViolations.length === 0) {
+  console.log('  OK   包里所有文本的行尾都符合政策（脚本 .cmd/.ps1 用 CRLF，其余用 LF）')
+} else {
+  for (const problem of eolViolations.slice(0, 10)) fail('  FAIL 行尾不对：' + problem)
+  if (eolViolations.length > 10) fail(`  FAIL 还有 ${eolViolations.length - 10} 处行尾问题`)
+}
+// 三个 mc-art 入口单独点名（这是那次真事故的位置）。
+const artSkill = join(HERE, 'preset', 'mc-studio', 'skills', 'mc-art')
+if (!existsSync(artSkill)) {
+  console.log('  · mc-art skill 没进包（开发机上没有克隆）—— 入口那三条没跑')
+} else {
+  const launcher = join(artSkill, 'bin', 'mc-art')
+  if (!existsSync(launcher)) fail('  FAIL 包内缺 bin/mc-art（POSIX 入口）')
+  else {
+    const cr = readFileSync(launcher).filter((byte) => byte === 13).length
+    if (cr === 0) console.log('  OK   bin/mc-art 是纯 LF（CR=0）')
+    else fail(`  FAIL bin/mc-art 里有 ${cr} 个 CR —— POSIX 启动器必须 LF`)
+  }
+  for (const name of ['mc-art.cmd', 'mc-art.ps1']) {
+    const full = join(artSkill, 'bin', name)
+    if (!existsSync(full)) { fail(`  FAIL 包内缺 bin/${name}（Windows 入口）`); continue }
+    const buffer = readFileSync(full)
+    let cr = 0
+    let lf = 0
+    for (const byte of buffer) { if (byte === 13) cr += 1; else if (byte === 10) lf += 1 }
+    if (lf > 0 && cr === lf) console.log(`  OK   bin/${name} 是 CRLF（${lf} 行）`)
+    else fail(`  FAIL bin/${name} 该是 CRLF：${lf} 个 LF / ${cr} 个 CR`)
   }
 }
 

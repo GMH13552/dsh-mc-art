@@ -33,7 +33,7 @@ public class ExampleMod {
     public static final DeferredRegister<Item> ITEMS =
             DeferredRegister.create(ForgeRegistries.ITEMS, MODID);
 
-    /** 血肉块：第一个被 GameTest 判分的方块。 */
+    /** 示例块：第一个被 GameTest 判分的方块。 */
     public static final RegistryObject<Block> EXAMPLE_BLOCK = BLOCKS.register("example_block",
             () -> new Block(BlockBehaviour.Properties.of(Material.DIRT).strength(1.0F)));
 

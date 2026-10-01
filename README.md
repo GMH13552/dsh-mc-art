@@ -63,6 +63,16 @@
 | `examplemod/mod/` | 一个**完整可运行的示例模组**（Forge 1.18.2）：故意不带资源，只带代码 + 两条 GameTest |
 | `presets/mc-studio/` | **MC 模组工作室**模式（agent preset）：把面板能力 + 流程 + 裁判包装成一个可选的模式 |
 
+> **引擎（`mc-art`）的唯一源在 [`GMH13552/mc-art`](https://github.com/GMH13552/mc-art) 仓库。**
+> 本仓库里那份是发布时 vendored 进 `panel/preset/mc-studio/skills/mc-art/` 的快照，
+> 打包时由 `panel/vendor.mjs` 生成。
+> **根 `skills/` 只有 `mc-mod`——不要在 `skills/mc-art/` 下找引擎**（那里没有）。
+> `install.mjs` 会把 `mc-art` clone 到 `~/.dsh/skills/mc-art`，所以同一台机器上可能**并存两份**
+> （clone 与随包快照）；两者由不同的升级路径更新（`git pull` vs npm 升级 + `prepublishOnly` 的快照），
+> 所以别假设永远同步。**要改引擎行为，改 `mc-art` 仓库，不是包里的那份。**
+> 怎么在 Windows 上启动它（`python -m mc_art` / `bin\mc-art.cmd` / `bin\mc-art.ps1`，
+> 以及为什么 `bin/mc-art` 是 POSIX 专用）：`skills/mc-mod/references/windows.md`。
+
 ## 三、面板（`mcart`）
 
 一个 Cordis 插件，把项目里的资产变成可以**看和改**的东西：

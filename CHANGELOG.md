@@ -11,6 +11,64 @@ panel/report contract is stable, and whose shipped skills are general (no loader
 version, machine or project is baked in). Earlier 0.1.x releases were development
 snapshots and are not itemised here.
 
+## 0.2.3
+
+### Fixed
+
+- **An item with no block model showed an empty preview.** A carrot, a sword: the host correctly
+  answers "no model for this" (a flat item has no `elements`), but the client kept **the previous
+  asset's 3D** on screen instead of clearing it — and the 2D fallback only drew when `scene === null`.
+  Measured before the fix: clicking a carrot left **16916 pixels of the *previous* asset** in the
+  viewport and 0 for the item itself. Clearing the scene on every picker action, and treating
+  "a scene with no quads" as nothing to draw, fixes it; the panel now says which of the two it is.
+- **One slot with no icon failed the whole page.** `atlas.itemIcons` returned
+  `{items: {<id>: undefined}}` for an item whose icon could not be fetched, and the strict
+  lossless-JSON check rejected the entire response — so 1 bad slot out of 40 took the page down.
+  A slot now carries an explicit `missing: true` with its reason, and the other 39 are unaffected.
+- **Five gates were locale-dependent.** `subprocess.run(..., text=True)` without `encoding=` decodes
+  a child's UTF-8 output using the machine's ANSI code page. On a Chinese Windows
+  `tools/test_extract_block.py` was **22 failed / 31 passed**; with `-X utf8`, **53 passed**. The
+  panel host had always passed `-X utf8`; only the gates had not. Both halves are pinned now, and a
+  gate proves it: `tools/mcart-plugin/encoding-test.js`.
+- **The shipped JDK checker could not find a working JDK.** `check_jdk.py` searched `Program Files`
+  and the game's runtime, but **not `~/tools`** — so on a machine whose only usable JDK 17 lives
+  there it said "install a JDK 17" while the repo's own runner built with it happily. Both sides now
+  share one implementation (`skills/mc-mod/scripts/jdk_env.py`).
+- **Two gates had been silently empty.** The "probe directory is not writable" fixture used
+  `os.chmod(dir, 0o500)`, a no-op on Windows; and `check_jdk.py` created the probe directory outside
+  its `try` and never pinned stdout to UTF-8, so a piped reader saw mojibake instead of the reason.
+- **Private names were in tracked files** — a mod's own vocabulary in `tools/emit_atlas.py`, a
+  machine directory name in `tools/mcmod_gametest.py`, and two copies of a full project name in
+  `tools/fix_wall_assets.py` that nothing scanned, because the check only looked at `panel/`.
+- **The vendored engine was stale and had broken line endings.** `build.mjs` vendors the `mc-art`
+  clone, which was one commit behind, so the package would have shipped **without the Windows entry
+  points added in `mc-art` `2d1912d`** — the original "the tool cannot be found" defect, unfixed.
+  And because that clone had `core.autocrlf=true` while `mc-art` had no `.gitattributes`, the POSIX
+  launcher was vendored with CRLF (53 CR bytes) and could not run under bash at all.
+
+### Added
+
+- **`mc-art` has a `.gitattributes`** pinning line endings per path — including the extensionless
+  `bin/mc-art text eol=lf`, which `*.sh` cannot match. Verified by cloning with
+  `core.autocrlf=true`: the launcher arrives byte-identical to the clean tree.
+- **`tools/mcart-plugin/batch-page-test.js`** — a page with one bad slot still returns, with the bad
+  slot marked and the others intact; the reverse fixture must be **rejected by the same check the
+  real runtime uses**, not by a new assertion.
+- **`tools/mcart-plugin/encoding-test.js`** — every Python subprocess must set UTF-8 mode and be
+  decoded as UTF-8; eight mutants (drop `encoding`, drop `-X utf8`) are all caught.
+- **`tools/check-tracked-private.mjs`** — scans **`git ls-files`**, not a hand-written directory
+  list, because that list was the reason `tools/` and `examplemod/` were never checked. Private names
+  fail anywhere; a third-party name fails only in code — a comment is a citation, not a leak.
+- **`tools/check-skill-content.mjs`** — every tool path a skill doc names must resolve from a root
+  the reader could actually be standing in. This is the check that caught the stale vendored engine.
+- **Vendor provenance and an EOL policy.** `panel/.vendor-state.json` records which commit was
+  vendored; `verify-build` compares it against the source and refuses when the snapshot is behind.
+  Line endings are normalised at copy time, so a package can no longer depend on whoever cloned it.
+
+### Changed
+
+- Vendored `mc-art` snapshot: `fc32714` → `427fd01`.
+
 ## 0.2.2
 
 ### Added

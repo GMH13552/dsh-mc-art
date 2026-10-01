@@ -21,20 +21,68 @@ becomes a support ticket. These are the differences that were measured.
 ## Python: the name is not the test
 
 - On Windows the interpreter is usually `python` or `py -3`. `python3` is often a
-  **zero-byte Store stub** that exits with code 9009 and prints nothing.
-- `py -3` can also be broken: the launcher reads a registry entry that may point at an
-  interpreter that no longer exists (measured on this machine: `Unable to create
-  process`).
-- The only honest probe is to **run it once**:
+  **zero-byte Store stub** that exits with code 9009 and prints nothing. `py -3` can be
+  just as dead: the launcher reads a registry entry that may point at an interpreter
+  **that has been deleted** (measured: `Unable to create process using '<a directory
+  that is gone>\python.exe -c "print(1)"'`, exit **101** — a different death from 9009).
+- **The `py` launcher will lie to you.** `py --list` marks the *default* entry with `*`,
+  and that default can point at a deleted interpreter:
+
+  ```bash
+  py --list
+   -V:3.12 *        Python 3.12 (64-bit)          # looks perfectly healthy
+   -V:3.12-arm64    Python 3.12 (ARM64)
+  ```
+
+  `py -0p` is the one that tells the truth: it prints the **path behind each version**.
+
+  ```bash
+  py -0p
+   -V:3.12 *        C:\tools\python312\python.exe             # this directory is gone
+   -V:3.12-arm64    %LOCALAPPDATA%\Programs\Python\Python312-arm64\python.exe
+  ```
+
+  Never trust `py -3` because `py --list` printed something. Look at the path, then run
+  it — the two are different claims.
+- The only honest probe is to **really run it once**:
 
   ```bash
   python -c "print(1)"     # require: exit code 0 and stdout exactly 1
   ```
 
 - Probe order: `python3` → `python` → `py -3` → `py`, each one really executed; an
-  explicit path in an environment variable or config wins over all of them.
-- "The command exists" is not evidence. A command that exists and fails is worse than
-  a missing one, because the failure looks like a bug in the tool.
+  explicit path in an environment variable or config wins over all of them. Treat the
+  `py` entries as **last resort** — they are the ones that lie most often.
+- "The command exists" is not evidence. A command that exists and fails is worse than a
+  missing one, because the failure looks like a bug in the tool, not like a broken
+  machine. Two different death codes (9009 and 101) both mean "not usable".
+
+## How the engine starts on Windows
+
+The art engine (`mc-art`) is a Python package with four entry forms. **All four live in
+the `mc-art` skill's root** — the directory that holds `mc_art/` and `bin/`. This skill
+(`mc-mod`) has no `bin/`, so a path in the table below is **not** relative to `mc-mod`;
+resolve it inside the `mc-art` skill root (the two possible roots are listed after the
+table). All four forms use the same probe as above (really run `print(1)`), so **none of
+them needs `python3`** to be installed first.
+
+| entry point | when to use it |
+|---|---|
+| `python -m mc_art <subcommand>` | the primary form on every platform. Run it with the **working directory = the `mc-art` skill root** (the directory holding `mc_art/` and `bin/`). Measured: `python -m mc_art --help` prints the full subcommand list from there. |
+| `bin\mc-art.cmd <subcommand>` | Windows wrapper (cmd or PowerShell). **Lives in the `mc-art` skill's root** (next to `mc_art/`), not in this one. |
+| `bin\mc-art.ps1 <subcommand>` | PowerShell wrapper. Also **in the `mc-art` skill's root**, not in this one. |
+| `bin/mc-art <subcommand>` | **POSIX only**, and also **in the `mc-art` skill's root**. Its shebang needs a real `bash`; on a Windows box it runs only if bash exists (a WSL `bash.exe` counts). On a machine without WSL it is **not usable** — do not tell anyone to run it there. |
+
+"**The `mc-art` skill root**" is one of these two directories, both of which can exist on
+the same machine and are updated by different paths:
+
+- `~/.dsh/skills/mc-art` — the clone the installer makes (`git pull --ff-only`);
+- `<npm package>/preset/mc-studio/skills/mc-art` — the snapshot vendored into the panel
+  package at publish time (`<npm package>` = the installed `dsh-mc-art-panel` directory).
+
+Their rendering results are currently identical, but do not assume they always will be.
+**To change the engine's behaviour, change the `mc-art` repository — not the packaged
+snapshot.** The `$M` used in `workflow.md` and `art-direction.md` is this CLI.
 
 ## JDK: the version number is not the test either
 
@@ -44,7 +92,10 @@ becomes a support ticket. These are the differences that were measured.
   for a file the JVM just wrote; `jdk.zipfs` then treats every jar as read-only and the
   build dies leaving an empty jar (`gametest.md`).
 - `scripts/check_jdk.py` starts each candidate and makes it write a file and a zip entry.
-  Exit code 3 means none was usable.
+  Exit code 3 means none was usable. Which directories are tried, and in what order, is one
+  implementation — `scripts/jdk_env.py` — shared with the GameTest tool, so the two cannot
+  report opposite verdicts for the same machine. Add a location **there**, never in
+  `check_jdk.py`: a drift gate fails if the checker grows its own enumeration again.
 
 ## Node and the bundled runtime
 

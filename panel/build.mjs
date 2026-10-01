@@ -21,6 +21,7 @@
  * `lib/` 是生成物且要随包发布，所以另有 verify-build.mjs 逐字节比对，防止漂移。
  */
 import { copyFileSync, cpSync, existsSync, readFileSync, readdirSync, rmdirSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -80,6 +81,8 @@ export function isJunk(path) {
 }
 
 export const PACKAGE_NAME = JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).name
+/** 上一次 vendor 的来源 provenance（不随包发布，`package.json:files` 里没有它）。 */
+export const VENDOR_STATE = join(HERE, '.vendor-state.json')
 /** 版本：渲染边界会把它画进错误信息里，于是"白屏"永远带着可报的版本号。 */
 export const PACKAGE_VERSION = JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).version
 if (typeof PACKAGE_NAME !== 'string' || PACKAGE_NAME === '') {
@@ -364,6 +367,69 @@ export function isRelease(argv = process.argv.slice(2), env = process.env) {
   return argv.includes('--release') || env.MCART_RELEASE === '1' || env.npm_command === 'publish'
 }
 
+/**
+ * 随包文本的**行尾政策**。
+ *
+ * 为什么必须有：`cpSync` 是逐字节复制，**来源 clone 的 `core.autocrlf` 会原样带进包里**。
+ * 实测过一次：`mc-art` 的克隆 `core.autocrlf=true`、那个仓库又没有 `.gitattributes`，
+ * 于是 `bin/mc-art`（一个 POSIX shebang 启动器）带着 53 个 CR 进了 npm 包 —— 在 bash 里
+ * 直接跑不了，而 `.cmd`/`.ps1` 两个 Windows 入口那时干脆还是旧的（没 vendor 到）。
+ * 包的成色**不能取决于"是谁克隆的、用什么配置克隆的"**，所以复制完在这一侧统一。
+ *
+ * 与本仓库 `.gitattributes` 同一口径：脚本 `.cmd/.bat/.ps1` 用 CRLF，其余文本用 LF。
+ */
+export const LF_EXTENSIONS = ['.py', '.md', '.json', '.js', '.mjs', '.sh', '.yml', '.yaml',
+  '.txt', '.java', '.gradle', '.properties', '.html', '.css']
+export const CRLF_EXTENSIONS = ['.cmd', '.bat', '.ps1']
+/** 无扩展名但有明确行尾要求的文件（POSIX 启动器）。 */
+export const LF_FILENAMES = ['mc-art']
+
+/** 这份文件该用哪种行尾？返回 'lf' / 'crlf' / null（不动）。 */
+export function eolPolicy(path) {
+  const name = String(path).split(/[\\/]/).pop()
+  const lower = name.toLowerCase()
+  const ext = lower.slice(lower.lastIndexOf('.'))
+  if (CRLF_EXTENSIONS.includes(ext)) return 'crlf'
+  if (LF_FILENAMES.includes(lower)) return 'lf'
+  if (LF_EXTENSIONS.includes(ext)) return 'lf'
+  return null
+}
+
+/** 把一段字节按政策统一行尾（只碰目标文件里已存在的换行序列，不凭空加）。 */
+export function normalizeEolBytes(buffer, policy) {
+  const text = buffer.toString('latin1')          // 逐字节保真：只替换 \r\n / \n
+  if (policy === 'lf') {
+    return Buffer.from(text.replace(/\r\n/g, '\n'), 'latin1')
+  }
+  const lf = text.replace(/\r\n/g, '\n')
+  return Buffer.from(lf.replace(/\n/g, '\r\n'), 'latin1')
+}
+
+/** 递归把一棵刚复制过来的树按政策统一行尾，返回改过的文件数。 */
+export function normalizeTreeEol(root) {
+  let changed = 0
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) { walk(full); continue }
+      const policy = eolPolicy(entry.name)
+      if (policy === null) continue
+      const before = readFileSync(full)
+      const after = normalizeEolBytes(before, policy)
+      if (!after.equals(before)) { writeFileSync(full, after); changed += 1 }
+    }
+  }
+  if (existsSync(root)) walk(root)
+  return changed
+}
+
+/** 来源克隆的 HEAD（记进 `.vendor-state.json`：来源是旧 clone 这件事要看得见）。 */
+export function sourceCommit(dir) {
+  if (!existsSync(dir)) return ''
+  const done = spawnSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' })
+  return done.status === 0 ? String(done.stdout ?? '').trim() : ''
+}
+
 export function vendored(options = {}) {
   const release = options.release === undefined ? isRelease() : options.release === true
   // mc-art 是**独立仓库**（有自己的历史与节奏），所以它不在本仓库里：
@@ -395,6 +461,9 @@ export function vendored(options = {}) {
     // 只带该带的东西：.git（没有历史）、__pycache__ / *.pyc（机器相关）、.cache（缓存）。
     // npm 打包时本来也会排掉其中一些，但那不该是"能不能出垃圾"的唯一防线。
     cpSync(from, to, { recursive: true, filter: (src) => !isJunk(src) && !isSkipped(src) })
+    // 复制完**统一行尾**：包的正确性不许依赖来源 clone 的 core.autocrlf（见 eolPolicy）。
+    const fixed = normalizeTreeEol(to)
+    if (fixed > 0) process.stdout.write(`已统一 ${fixed} 个文件的行尾：${to}\n`)
   }
   // **引擎脚本随包走**：参考目录（原版/模组的方块、物品、图标）要靠这两个 Python 脚本
   // 读 jar，而它们原来只从**项目目录往上找 5 层** —— 也就是"项目恰好在 dsh-mc-art 仓库里"
@@ -413,7 +482,35 @@ export function vendored(options = {}) {
     copyFileSync(from, to)
     pythonTargets.push([from, to])
   }
+  // **来源 provenance**：把这份 mc-art 是从哪个 clone、哪个 commit 快照来的记下来。
+  // "来源是个旧 clone"这次之所以没被发现，就是因为生成物里没有任何来源信息。
+  const state = {
+    schema: 'dsh-mc-art/vendor-state@1',
+    generatedAt: new Date().toISOString(),
+    mcArt: {
+      source: artSource,
+      commit: sourceCommit(artSource),
+      vendored: existsSync(join(artSource, 'SKILL.md')),
+      files: existsSync(join(HERE, 'preset', 'mc-studio', 'skills', 'mc-art'))
+        ? countFiles(join(HERE, 'preset', 'mc-studio', 'skills', 'mc-art'))
+        : 0,
+    },
+  }
+  writeFileSync(VENDOR_STATE, JSON.stringify(state, null, 2) + '\n')
   return pairs.concat(pythonTargets)
+}
+
+/** 生成物目录里的文件数（只用于 provenance 报告）。 */
+function countFiles(root) {
+  let total = 0
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) walk(join(dir, entry.name))
+      else total += 1
+    }
+  }
+  walk(root)
+  return total
 }
 
 /** 随包发布的 Python 引擎脚本（只依赖标准库）。 */

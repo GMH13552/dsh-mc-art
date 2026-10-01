@@ -142,7 +142,9 @@ a file the JVM just wrote. The access-transformer step then dies with
 `ReadOnlyFileSystemException` and leaves a 22-byte empty jar. `scripts/check_jdk.py`
 starts each candidate and makes it write a file and a zip
 (`scripts/JvmWriteSelfTest.java`), so the answer comes from the JVM you are actually
-about to build with. Full trap: `gametest.md`.
+about to build with. Which directories are candidates, and in what order, is one shared
+implementation (`scripts/jdk_env.py`) that the GameTest tool imports too — the two cannot
+disagree about this machine. Full trap: `gametest.md`.
 
 Measured once on 1.18.2 / Forge 40.2.0, on one machine: a clean run says
 `All 2 required tests passed :)` and exits 0; with `--fault` the server reports

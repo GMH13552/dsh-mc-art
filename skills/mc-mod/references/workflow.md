@@ -119,6 +119,12 @@ $M render --plan work/stone.plan.json --out outputs/stone
 #   5. LOOK at outputs/stone/sprite.png — then go back to 4 until it holds up
 ```
 
+How `$M` is actually started — and which entry point is POSIX-only — is in `windows.md`.
+All of its forms live in the **`mc-art` skill's root** (the directory holding `mc_art/`
+and `bin/`), not in `mc-mod`: `python -m mc_art` with the working directory set to that
+root is the primary form; `bin\mc-art.cmd` and `bin\mc-art.ps1` are the Windows wrappers
+there; `bin/mc-art` needs a real bash.
+
 Before any of it, point the reference correctly and list candidates instead of assuming:
 `art-direction.md` §2 has the checks and the three `reason`s a wrong root produces.
 

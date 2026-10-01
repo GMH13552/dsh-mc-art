@@ -2,15 +2,17 @@
 """门禁：两个 skill 的**散文里只准出现公共词汇与占位符**。
 
 WHY IT IS A WHITELIST, NOT A BLOCKLIST.  A blocklist can only catch leaks somebody already
-noticed.  The ones that actually shipped — `blood_sheep`, `crystal_bow_pulling_1`, `aoa3`,
-`example_soil` — were none of them on the list at the time; a new project invents new nouns.
+noticed.  The ones that actually shipped -- an author's asset name, a third-party mod's
+abbreviation, a project noun -- were none of them on the list at the time; a new project
+invents new nouns.  (This docstring deliberately does not spell them out: it is a tracked,
+public file, and copying them here would leak exactly what the gate is for.)
 Inverting it means **a new noun fails by default**, and adding an allowlist entry is a
 deliberate act ("this is vanilla / an API / a format token" — the review the leak needs).
 
 WHY IT MATTERS BEYOND PRIVACY.  Examples are **training signal**: whatever the doc shows, the
-model steers toward.  A skill that teaches with `crystal_bow` invites crystal bows, and one
-that teaches with the author's measured palette invites that palette.  So every example here
-must be either domain-standard vocabulary or an obvious placeholder
+model steers toward.  A skill that teaches with one specific example asset invites copies of
+it, and one that teaches with the author's measured palette invites that palette.  So every
+example here must be either domain-standard vocabulary or an obvious placeholder
 (`examplemod` / `example_*` / `ModelExample*` / `<…>`), and the placeholders carry no
 author's naming at all.
 
@@ -174,7 +176,8 @@ def build_predicate(samples: list[str]) -> tuple[list[bool] | None, str]:
     env = dict(os.environ, MCART_BUILD_URL=build.as_uri(), MCART_PATHS=json.dumps(samples))
     try:
         done = subprocess.run(["node", "--input-type=module", "-e", script],
-                              capture_output=True, text=True, env=env, timeout=120)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              env=env, timeout=120)
     except FileNotFoundError:
         return None, "没有 node"
     if done.returncode != 0:

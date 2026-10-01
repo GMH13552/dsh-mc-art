@@ -84,7 +84,9 @@ def compiles(source):
         handle.write("new Function(%s);" % json.dumps(source))
         path = handle.name
     try:
-        done = subprocess.run(["node", path], capture_output=True, text=True)
+        # 生成物里带着中文注释；不写 encoding 时按区域编码解，stderr 会变乱码（门禁假红）。
+        done = subprocess.run(["node", path], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
         return done.returncode == 0, (done.stderr or "").strip().split("\n")[0][:160]
     except FileNotFoundError:
         return True, "没有 node，跳过"

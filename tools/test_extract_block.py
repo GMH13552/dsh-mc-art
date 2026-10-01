@@ -27,12 +27,22 @@ TOOL = os.path.join(HERE, "mcart_extract_block.py")
 REAL_ROOT = os.environ.get("MCART_TEST_MINECRAFT", "")
 REAL_VERSION = "1.12.2-Forge_14.23.5.28641"
 REAL_VANILLA_JAR = os.path.join(REAL_ROOT, "versions", REAL_VERSION, REAL_VERSION + ".jar")
-REAL_MOD_JAR = os.path.join(REAL_ROOT, "versions", REAL_VERSION, "mods", "[虚无世界] AoA3-3.3.6.jar")
+# The mod jar the mod-only tests read.  **不写死任何一个模组的文件名**：仓库里出现
+# "作者碰巧装过哪个第三方模组" 不是契约的一部分（发布物里也曾经因此带上过模组名）。
+# 要用就把路径放进 MCART_TEST_MOD_JAR；没设就 skip。
+REAL_MOD_JAR = os.environ.get("MCART_TEST_MOD_JAR", "")
+# 那条真·模组用例要的三个值也全从环境变量来：模组 id / 中文名同样不该写死在跟踪文件里。
+REAL_MOD_BLOCK = os.environ.get("MCART_TEST_MOD_BLOCK", "")
+REAL_MOD_NAME = os.environ.get("MCART_TEST_MOD_NAME", "")
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"pretend pixels"
 
 # The live project pack, for the multi-root check against a real vanilla parent.
+# 和上面那几条同一条规矩：**不把作者本机的工程名写进跟踪文件**。要给就设
+# `MCART_TEST_PACK`（那个工程的 `pack/` 目录）与 `MCART_TEST_PACK_BLOCK`
+# （例如 `<命名空间>:<方块>`）；没设就 skip —— 这是与机器有关的检查，不是代码缺陷。
 PROJECT_PACK = os.environ.get("MCART_TEST_PACK", "")
+PROJECT_PACK_BLOCK = os.environ.get("MCART_TEST_PACK_BLOCK", "")
 
 
 # Real-jar checks skip when this machine does not have that installation.
@@ -41,8 +51,13 @@ needs_real = pytest.mark.skipif(not os.path.isfile(REAL_VANILLA_JAR),
 
 
 def run(*args):
-    result = subprocess.run([sys.executable, TOOL] + list(args),
-                            capture_output=True, text=True)
+    # 抽取器**故意**把 stdout 钉成 UTF-8（脚本自己 `sys.stdout.reconfigure(encoding="utf-8")`，
+    # 宿主那边还额外传 `-X utf8`）。而 Windows 上 `subprocess.run(..., text=True)` 不写 encoding
+    # 时按**区域编码**解（中文机器上是 cp936）—— 于是中文名字全成乱码，53 项里 22 项假红。
+    # 两道防线都要，而且要和产品宿主逐字对齐：子进程按 UTF-8 写（`-X utf8`）、父进程按
+    # UTF-8 解（`encoding="utf-8"`）。`errors="replace"` 只是别让一个坏字节把整条门禁打死。
+    result = subprocess.run([sys.executable, "-X", "utf8", TOOL] + list(args),
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
     assert result.stdout.strip(), "工具没有输出；stderr=%s" % result.stderr[-400:]
     return json.loads(result.stdout)
 
@@ -169,18 +184,18 @@ def test_own_namespace_wins_over_minecraft_for_textures(tmp_path):
 
 
 def test_bare_and_pascal_lang_keys(tmp_path):
-    """AoA3 names a block tile.AchonyLog.name with no namespace segment."""
+    """Some mods name a block `tile.ExampleLog.name` with no namespace segment."""
     root = str(tmp_path)
     pack(root, "testns",
-         models={"achony_log": {"textures": {"all": "blocks/achony_log"},
-                                "elements": [{"from": [0, 0, 0], "to": [16, 16, 16],
-                                              "faces": {"up": {"texture": "#all"}}}]}},
-         blockstates={"achony_log": {"variants": {"": {"model": "achony_log"}}}},
-         textures={"blocks/achony_log": PNG},
-         lang={"zh_cn": {"tile.AchonyLog.name": "桉格尼木"}})
-    out = run("--root", root, "--block", "testns:achony_log")
-    assert out["name"] == "桉格尼木", out["name"]
-    assert out["nameKey"] == "tile.AchonyLog.name"
+         models={"example_log": {"textures": {"all": "blocks/example_log"},
+                                 "elements": [{"from": [0, 0, 0], "to": [16, 16, 16],
+                                               "faces": {"up": {"texture": "#all"}}}]}},
+         blockstates={"example_log": {"variants": {"": {"model": "example_log"}}}},
+         textures={"blocks/example_log": PNG},
+         lang={"zh_cn": {"tile.ExampleLog.name": "示例原木"}})
+    out = run("--root", root, "--block", "testns:example_log")
+    assert out["name"] == "示例原木", out["name"]
+    assert out["nameKey"] == "tile.ExampleLog.name"
 
 
 def test_specific_key_beats_convenient_table(tmp_path):
@@ -404,8 +419,9 @@ def test_real_namespaces_are_block_counts_of_one_version():
     out = run("--root", REAL_ROOT, "--namespaces")
     assert out["version"] == REAL_VERSION, out["version"]
     got = {item["name"]: item["blocks"] for item in out["namespaces"]}
-    assert got.get("aoa3", 0) > 1000, got
     assert got.get("minecraft", 0) > 300, got
+    # **不点名任何一个第三方模组**：这份安装里还有别的命名空间就必须同样"真的有方块"，
+    # 具体是哪个模组是这台机器的事（要那份安装，设 MCART_TEST_MINECRAFT）。
     # Everything reported is a real source of blocks; nothing is listed at 0.
     assert all(item["blocks"] > 0 for item in out["namespaces"]), out["namespaces"]
     # Far fewer than the 30 namespaces the texture scanner reports, because most
@@ -416,8 +432,8 @@ def test_real_namespaces_are_block_counts_of_one_version():
 def test_list_carries_categories(tmp_path):
     """Categories must come from the pack, not from me.
 
-    A mod that files its models into folders (AoA3: decoration/generation/
-    functional) has stated its own categories; a flat pack states none and must
+    A mod that files its models into folders (decoration/generation/functional)
+    has stated its own categories; a flat pack states none and must
     then report none rather than an invented bucket.  The shape family is read
     off the id and anything unmatched is honestly 其他.
     """
@@ -703,15 +719,16 @@ def test_real_vanilla_blocks_have_chinese_names():
 
 
 @needs_real
-@pytest.mark.skipif(not os.path.isfile(REAL_MOD_JAR), reason="这台机器上没有那个模组 jar")
+@pytest.mark.skipif(not (os.path.isfile(REAL_MOD_JAR) and REAL_MOD_BLOCK and REAL_MOD_NAME),
+                    reason="没给模组 jar / 方块 id / 中文名（MCART_TEST_MOD_JAR / _BLOCK / _NAME）")
 def test_real_mod_block():
-    out = run("--root", REAL_ROOT, "--block", "aoa3:achony_log")
+    out = run("--root", REAL_ROOT, "--block", REAL_MOD_BLOCK)
     assert "error" not in out, out
-    assert out["name"] == "桉格尼木", (out["name"], out["nameKey"])
+    assert out["name"] == REAL_MOD_NAME, (out["name"], out["nameKey"])
     assert out["missingTextures"] == []
     assert len(out["textures"]) == 2
-    # The mod does not ship block/cube_column, so this only resolves if the
-    # parent fell through to the vanilla jar.
+    # The mod in question does not ship block/cube_column, so this only resolves
+    # if the parent fell through to the vanilla jar.
     assert len(out["models"]) >= 4, list(out["models"])
 
 
@@ -730,7 +747,7 @@ def test_real_probe_reports_why(tmp_path):
     out = run("--root", REAL_ROOT, "--probe")
     assert out["version"] == REAL_VERSION, out["version"]
     assert out["versionWhy"], "选版本的理由必须说出来"
-    assert "aoa3" in out["namespaces"]
+    assert "minecraft" in out["namespaces"]
 
 
 def test_object_store_is_not_an_extracted_pack(tmp_path):
@@ -979,7 +996,7 @@ def test_real_stairs_are_three_questions_not_forty_buttons():
 def test_a_project_pack_resolves_the_vanilla_parent_it_inherits(tmp_path):
     """A project model is usually a thin child of a vanilla parent.
 
-    `eyeball_log` is `{"parent": "block/cube_column", ...}` and `cube_column`
+    `example_log` is `{"parent": "block/cube_column", ...}` and `cube_column`
     lives in the version jar, not in the project.  One root therefore finds no
     `elements` anywhere and reports "这个方块没有几何模型" -- true of that chain,
     misleading about the block.  Two roots, the pack first.
@@ -1073,19 +1090,23 @@ def test_one_root_behaves_exactly_as_before(tmp_path):
 
 @needs_real
 def test_real_project_block_through_its_vanilla_parent():
-    """The live case: our own log, read together with the reference it inherits.
+    """The live case: a project's own block, read together with the reference it inherits.
 
-    Also the answer to "does our log have an orientation": it does not, and the
-    tool says so with `variantAxes == []` rather than leaving it to be guessed.
+    Also the answer to "does this block have an orientation": the tool says so with
+    `variantAxes == []` rather than leaving it to be guessed.
+
+    与机器有关：工程包与方块 id 都从 `MCART_TEST_PACK` / `MCART_TEST_PACK_BLOCK` 来，
+    没设就 skip（**不在跟踪文件里写死任何一个工程的目录名或方块名**）。
     """
     if not os.path.isdir(PROJECT_PACK):
-        pytest.skip("这台机器上没有 eyeball_tree/pack")
-    out = run("--root", PROJECT_PACK, "--root", REAL_ROOT, "--block", "eyeballtree:eyeball_log")
+        pytest.skip("没设 MCART_TEST_PACK（本机某个工程包的 pack/ 目录）——与机器有关")
+    if not PROJECT_PACK_BLOCK:
+        pytest.skip("没设 MCART_TEST_PACK_BLOCK（例如 <命名空间>:<方块>）——与机器有关")
+    out = run("--root", PROJECT_PACK, "--root", REAL_ROOT, "--block", PROJECT_PACK_BLOCK)
     assert "error" not in out, out
     assert out["missingTextures"] == [], out["missingTextures"]
     assert "minecraft:block/cube_column" in out["models"], list(out["models"])
     assert out["variantAxes"] == [], out["variantAxes"]
-    assert out["name"] == "眼球原木", out["name"]
 
 
 # --------------------------------------------------------------------------
@@ -1407,7 +1428,7 @@ def test_the_game_builtin_parent_is_not_a_missing_model(tmp_path):
 def test_entity_scan_reads_both_texture_spellings_grouping_and_geometry(tmp_path):
     """The four sources, and which one answered.
 
-    `textures/entity/` (vanilla) and `textures/entities/` (AoA3) are both real;
+    `textures/entity/` (vanilla) and `textures/entities/` (some mods) are both real;
     a mod's loot-table folders are its own grouping; and GeckoLib is the one
     family that ships geometry -- so `draw` is `geo` for exactly those.
     """

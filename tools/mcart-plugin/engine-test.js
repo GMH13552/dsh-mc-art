@@ -55,14 +55,15 @@ function makeJar(path, namespace) {
   // 少这一样，一个"看着没问题"的 jar 会让整条链回空 —— 第一版夹具就是这么骗过我一次。
   put('assets/' + namespace + '/blockstates/x.json', Buffer.from('{"variants":{"":{"model":"' + namespace + ':block/x"}}}\n'))
   nodeFs.mkdirSync(nodePath.dirname(path), { recursive: true })
-  // 用 python 的 zipfile 打（这里一定有 python —— 没有它这条门禁本身就跑不了）
-  execFileSync(pythonForTest(), ['-c', [
+  // 用 python 的 zipfile 打（这里一定有 python —— 没有它这条门禁本身就跑不了）。
+  // 子进程按 UTF-8 模式起、父进程按 UTF-8 解：和宿主同一条判据（见 encoding-test.js）。
+  execFileSync(pythonForTest(), ['-X', 'utf8', '-c', [
     'import os,sys,zipfile',
     'stage,out=sys.argv[1],sys.argv[2]',
     'z=zipfile.ZipFile(out,"w")',
     '[z.write(os.path.join(root,f), os.path.relpath(os.path.join(root,f),stage)) for root,_,files in os.walk(stage) for f in files]',
     'z.close()',
-  ].join(';'), stage, path])
+  ].join(';'), stage, path], { encoding: 'utf8' })
   nodeFs.rmSync(stage, { recursive: true, force: true })
 }
 
@@ -228,10 +229,13 @@ async function main() {
   // 前提证明（不靠改仓库里的文件）：同一段探针，不加 -X utf8 时**确实**会乱码。
   // 没有这一条，上面那条断言可能是空的（"无论怎样都过"）。
   const probe = 'import json;print(json.dumps({"n":"星陨石"},ensure_ascii=False))'
+  // 下面这一条是**故意复刻旧写法**的对照：子进程刻意**不带** `-X utf8`，用来证明
+  // "没有那一层时中文确实会乱码"。父进程仍然按 UTF-8 解（它就是被断言的那个解码器）。
+  // utf8-check: exempt —— 只有这一处是 A/B 夹具，别在别处用这个豁免。
   const rawOut = require('child_process').execFileSync(pythonForTest(), ['-c', probe],
-    { env: Object.assign({}, process.env, { PYTHONIOENCODING: 'gbk' }) }).toString('utf8')
+    { encoding: 'utf8', env: Object.assign({}, process.env, { PYTHONIOENCODING: 'gbk' }) }).toString('utf8')
   const pinnedOut = require('child_process').execFileSync(pythonForTest(), ['-X', 'utf8', '-c', probe],
-    { env: Object.assign({}, process.env, { PYTHONIOENCODING: 'gbk' }) }).toString('utf8')
+    { encoding: 'utf8', env: Object.assign({}, process.env, { PYTHONIOENCODING: 'gbk' }) }).toString('utf8')
   check('前提：区域编码（gbk）下、不加 -X utf8 时中文确实会乱码（所以这条检查有意义）',
     rawOut.indexOf('星陨石') < 0, rawOut.trim().slice(0, 60))
   // 注意这里**会失败**才是事实：`-X utf8` 被环境里的 `PYTHONIOENCODING` 盖过。
