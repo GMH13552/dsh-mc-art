@@ -2531,6 +2531,10 @@ def main(argv):
     # one whose shape/version is reported; any others are searched after it, which
     # is how a project pack resolves the vanilla parents it inherits.
     args = {"roots": [], "namespace": None, "block": None, "version": None,
+            # `models` 必须在默认值里：我加的 `--model` 分支是**每次调用**都会读的，
+            # 少了这个键就是 KeyError —— 抽取器一崩，所有用到它的门禁（refs/multipart/
+            # icon/engine）全部变红，而错误信息只写着"扫描脚本退出码 1"。
+            "models": [],
             "list": False, "probe": False, "icons": None, "namespaces": False,
             "variant": None, "kind": "block", "codeBlocks": False, "limit": None,
             "item": None, "items": None}

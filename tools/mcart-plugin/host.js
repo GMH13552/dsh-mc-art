@@ -420,6 +420,62 @@ return {
     // 每次用的时候现取，代价是一次属性查找。
     const fsOf = () => ctx.get('fs')
     const sessionsOf = () => ctx.get('sessions')
+    const agentsOf = () => ctx.get('agents')
+
+    // 最近一次从面板听到的会话 id。`atlas.scene` 不带它，但 `atlas.session`/
+    // `atlas.settings` 每一次开面板都会带 —— 通知 agent 时用它找到"这个会话的那个 agent"。
+    let lastSessionId = ''
+
+    // 同一件事只通知一次：渲染是每帧跑的，不去重就是刷屏。判据是**报告文本本身**，
+    // 所以"修了一半、失败原因变了"会再通知一次，"还是同一个毛病"不会。
+    const agentNotices = new Map()
+
+    /**
+     * 把一条报告投进当前会话那个 agent 的上下文（下一个 step 边界就看见）。
+     *
+     * 为什么是注入而不是"生成一段话让用户去粘"：模组模型千奇百怪，失败原因只有 agent
+     * 自己能判；把它投进上下文，它就能自己决定补模型、改 parent、还是回去问人。
+     * 官方路径是 `Agent.steer(UserMessage)`（`dsh-agent-loop` 的 `Agent`），退路是
+     * `Agent.inbox.append('next-step', …)`；两样都拿不到就把尝试过的路原样带回去。
+     * `UserMessage` 的形状在类型里是 `@deepseek-ai/dsh-llm` 的导出，这里**逐层试**并
+     * 如实报告哪一层成的 —— 猜一个形状然后说"发不出去"是最没用的结果。
+     */
+    async function notifyAgent(key, text) {
+      if (agentNotices.get(key) === text) return { sent: false, via: null, why: '同一份报告已经发过' }
+      const service = agentsOf()
+      const attempts = []
+      if (service === undefined) return { sent: false, via: null, attempts: ['宿主没有 agents 服务'] }
+      let agent
+      try {
+        if (typeof service.get === 'function' && lastSessionId !== '') agent = service.get(lastSessionId)
+        if (agent === undefined && typeof service.currentInitiator === 'function') agent = service.currentInitiator()
+        if (agent === undefined && typeof service.list === 'function') {
+          const all = service.list()
+          if (Array.isArray(all) && all.length === 1) agent = all[0]
+        }
+      } catch (error) { attempts.push('找 agent：' + messageOf(error)) }
+      if (agent === undefined) {
+        attempts.push('找不到这个会话的 agent（agents.get(' + JSON.stringify(lastSessionId) + ') 没有结果）')
+        return { sent: false, via: null, attempts: attempts }
+      }
+      const shapes = [
+        ['content-blocks', { role: 'user', content: [{ type: 'text', text: text }] }],
+        ['content-string', { role: 'user', content: text }],
+        ['text-field', { role: 'user', text: text }],
+      ]
+      for (const pair of shapes) {
+        if (typeof agent.steer === 'function') {
+          try { agent.steer(pair[1]); agentNotices.set(key, text); return { sent: true, via: 'steer/' + pair[0] } } catch (error) { attempts.push('steer ' + pair[0] + '：' + messageOf(error)) }
+        }
+      }
+      const inbox = agent.inbox
+      if (inbox !== undefined && inbox !== null && typeof inbox.append === 'function') {
+        for (const pair of shapes) {
+          try { inbox.append('next-step', pair[1]); agentNotices.set(key, text); return { sent: true, via: 'inbox.append/' + pair[0] } } catch (error) { attempts.push('inbox.append ' + pair[0] + '：' + messageOf(error)) }
+        }
+      } else attempts.push('这个 agent 上没有 inbox.append')
+      return { sent: false, via: null, attempts: attempts }
+    }
     const shellOf = () => ctx.get('shell')
     const errors = []
     let preloads = new Map()
@@ -740,18 +796,105 @@ return {
       return other === undefined ? undefined : other.textures.get(namespace + ':' + name)
     }
 
-    function elementsOf(load, modelName) {
+    function elementsOf(load, modelName, extra) {
       let key = modelName
       const colon = key.indexOf(':')
       if (colon >= 0) key = key.slice(colon + 1)
-      const model = load.models.get(key)
+      const model = load.models.get(key) || (extra === undefined ? undefined : extra.get(key))
       if (model === undefined) return undefined
       return resolveBlockModel(model, (id) => {
         let parentKey = id
         const c = parentKey.indexOf(':')
         if (c >= 0) parentKey = parentKey.slice(c + 1)
-        return load.models.get(parentKey)
+        const own = load.models.get(parentKey)
+        if (own !== undefined) return own
+        if (extra === undefined) return undefined
+        // 现取回来的那份表按 `minecraft:block/x` 存，查的时候带不带命名空间都要能命中。
+        return extra.get(id) || extra.get(parentKey) || extra.get('minecraft:' + parentKey)
       }, (reference) => texturePath(load, reference))
+    }
+
+    // 现取回来的原版模型，按"参考目录签名 + 名字"缓存。签名变了（换了版本目录）自然失效。
+    const vanillaModels = new Map()
+
+    /**
+     * 项目模型链里"项目包没有、内置表也没有"的那几个原版母模型。
+     *
+     * 面板内置的原版母模型表只有 7 条（cube/cross 那几种），而楼梯、台阶、墙、栅栏、
+     * 门、活板门、梯子、压力板、按钮继承的原版母模型都不在里面 —— 用户实测：43 个方块
+     * 只能画出 16 个。这里不再靠那张手抄表：缺什么就去参考目录的 jar 里现取什么。
+     */
+    function missingParents(load, modelName, extra, out) {
+      const seen = {}
+      let key = String(modelName === undefined ? '' : modelName)
+      let colon = key.indexOf(':')
+      if (colon >= 0) key = key.slice(colon + 1)
+      for (let depth = 0; depth < 12; depth++) {
+        const model = load.models.get(key) || (extra === undefined ? undefined : extra.get(key))
+        if (model === undefined) { if (key !== '') out.push(key); return }
+        const parent = model.parent
+        if (typeof parent !== 'string' || parent === '' || seen[parent] === true) return
+        seen[parent] = true
+        const bare = parent.indexOf(':') >= 0 ? parent.slice(parent.indexOf(':') + 1) : parent
+        if (load.models.get(bare) !== undefined) { key = bare; continue }
+        if (extra !== undefined && (extra.get(bare) !== undefined || extra.get(parent) !== undefined)) { key = bare; continue }
+        // 内置表里有就还用内置的（省一次进程），没有才记为"要去 jar 里取"。
+        if (VANILLA_PARENTS[parent] !== undefined || VANILLA_PARENTS[bare] !== undefined) return
+        out.push(bare.indexOf('block/') === 0 || bare.indexOf('/') > 0 ? bare : bare)
+        return
+      }
+    }
+
+    async function fetchVanillaModels(project, names) {
+      const directory = await referenceDirectory(project)
+      if (directory === '') return { models: new Map(), why: '这台机器上还没有设置参考目录（面板设置里指到 .minecraft/versions/<版本>）' }
+      const signature = await refSignatureOf(directory)
+      const want = []
+      for (const name of names) {
+        const cached = vanillaModels.get(signature + '|' + name)
+        if (cached === undefined) want.push(name)
+        else if (cached !== null) want.push(name)      // 命中缓存，下面照旧装进 out
+      }
+      if (want.length > 0) {
+        const extractor = await findTool(project.dir, EXTRACT_SCRIPT)
+        if (extractor === null || extractor === undefined) return { models: new Map(), why: '找不到 ' + EXTRACT_SCRIPT }
+        const parsed = await runScanner(extractor, ['--root', directory, '--model', want.join(',')],
+          120000, project.dir, REFERENCE_MAX_BYTES)
+        if (parsed === undefined || parsed.error !== undefined) {
+          return { models: new Map(), why: String(parsed === undefined ? '抽取脚本没有返回任何东西' : parsed.error) }
+        }
+        for (const key of Object.keys(parsed.models || {})) {
+          // 抽取器回的是 `minecraft:block/slab`，而调用方问的是 `block/slab` ——
+          // 两个名字都存一份，不然查不到，表现成"取回来了却还是画不出来"。
+          const bare = key.indexOf(':') >= 0 ? key.slice(key.indexOf(':') + 1) : key
+          vanillaModels.set(signature + '|' + key, parsed.models[key])
+          vanillaModels.set(signature + '|' + bare, parsed.models[key])
+        }
+        for (const name of want) {
+          if (vanillaModels.get(signature + '|' + name) === undefined) vanillaModels.set(signature + '|' + name, null)
+        }
+      }
+      const out = new Map()
+      for (const name of names) {
+        const hit = vanillaModels.get(signature + '|' + name)
+        if (hit !== undefined && hit !== null) out.set(name, hit)
+      }
+      return { models: out, why: '' }
+    }
+
+    /** 把项目模型解成元素：缺的原版母模型先去 jar 里取，取不到就带着原因回来。 */
+    async function projectElements(project, load, modelName) {
+      const extra = new Map()
+      const gaps = []
+      for (let round = 0; round < 4; round++) {
+        const need = []
+        missingParents(load, modelName, extra, need)
+        if (need.length === 0) return { elements: elementsOf(load, modelName, extra), extra: extra, gaps: gaps }
+        const fetched = await fetchVanillaModels(project, need)
+        if (fetched.models.size === 0) { gaps.push({ names: need, why: fetched.why }); return { elements: undefined, extra: extra, gaps: gaps } }
+        for (const pair of fetched.models.entries()) extra.set(pair[0], pair[1])
+      }
+      return { elements: elementsOf(load, modelName, extra), extra: extra, gaps: gaps }
     }
 
     async function blockIds(load) {
@@ -760,7 +903,13 @@ return {
         if (entry.type !== 'file' || !/\.json$/.test(entry.name)) continue
         const id = entry.name.replace(/\.json$/, '')
         const state = await readJson(load.assets + '/blockstates/' + entry.name)
-        let model = id
+        // 默认按"每个方块一个模型文件"来猜：`models/block/<id>.json`。
+        // 以前这里是裸 id（`mist_fence`），而模型表里的键是 `block/mist_fence` ——
+        // 于是**所有 multipart 方块**（墙、栅栏、门…）都报"项目包里没有这个文件"。
+        // 默认按"每个方块一个模型文件"来猜：`models/block/<id>.json`。
+        // 以前这里是裸 id（`mist_fence`），而模型表里的键是 `block/mist_fence` —— 于是
+        // **所有 multipart 方块**（墙、栅栏、门…）都报"项目包里没有这个文件"。
+        let model = 'block/' + id
         if (state !== undefined && state.variants !== undefined) {
           const keys = Object.keys(state.variants)
           if (keys.length > 0) {
@@ -769,6 +918,7 @@ return {
             if (value !== undefined && typeof value.model === 'string') model = value.model
           }
         }
+
         out.push({ id: id, model: model })
       }
       return out
@@ -2042,8 +2192,31 @@ return {
       if (kind === 'block') {
         const found = (await blockIds(load)).filter((block) => block.id === id)[0]
         if (found === undefined) return { error: 'block not found: ' + id }
-        const elements = elementsOf(load, found.model)
-        if (elements === undefined) return { error: 'cannot resolve model for ' + id }
+        const built = await projectElements(project, load, found.model)
+        const elements = built.elements
+        if (elements === undefined) {
+          // 画不出来时**不要只说一句英文**：把"哪一层断的、试过哪些路、抽取器原话"
+          // 整理成一份报告，注入当前会话那个 agent 的上下文（下一个 step 边界它就看见），
+          // 同时也作为错误文本回给面板 —— 拿不到 agent 时人还能自己看到原因。
+          const directory = await referenceDirectory(project)
+          const lines = ['[MC 资产面板] 画不出 ' + namespace + ':' + id]
+          lines.push('· 它自己的模型：' + String(found.model)
+            + (load.models.get(String(found.model).replace(/^[^:]*:/, '').replace(/^block\//, 'block/')) === undefined
+              ? '（项目包里没有这个文件）' : '（在项目包里）'))
+          lines.push('· 缺的原版母模型：' + (built.gaps.length === 0
+            ? '（链上没缺，是别的原因）'
+            : built.gaps.map((gap) => gap.names.join('、')).join('；')))
+          for (const gap of built.gaps) if (gap.why !== '') lines.push('· 现取失败的原因：' + gap.why)
+          lines.push('· 已试过的路：项目包 → 面板内置的原版母模型表 → 从参考目录的 jar 现取')
+          lines.push('· 参考目录：' + (directory === '' ? '（没设）' : directory))
+          lines.push('· 修法：补上 <命名空间>:block/<名字> 的模型文件，或把 parent 改成原版真实存在的名字'
+            + '（1.16 之后墙是 template_wall_post/side/side_tall）；参考目录没设的话先在面板里指到 .minecraft/versions/<版本>。')
+          const report = lines.join('\n')
+          const notice = await notifyAgent('model:' + namespace + ':' + id, report)
+          const how = notice.sent === true ? '已经发给 AI（' + notice.via + '）'
+            : '没能发给 AI（' + (notice.attempts || [notice.why]).join('；') + '）'
+          return { error: report + '\n· ' + how, notified: notice.sent === true, notifyVia: notice.via || null }
+        }
         quads = quadsFromElements(elements, note)
         refs = [rel(root, load.assets + '/textures/block/' + id + '.png'),
           rel(root, load.assets + '/models/block/' + id + '.json'),
@@ -3115,6 +3288,7 @@ return {
       const request = args || {}
       try {
         const id = typeof request.sessionId === 'string' ? request.sessionId : ''
+        if (id !== '') lastSessionId = id
         const session = (sessionsOf() === undefined || id === '') ? undefined : sessionsOf().get(id)
         if (session === undefined) return { cwd: null }
         const cwd = session.header.cwd

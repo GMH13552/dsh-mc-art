@@ -2531,6 +2531,10 @@ def main(argv):
     # one whose shape/version is reported; any others are searched after it, which
     # is how a project pack resolves the vanilla parents it inherits.
     args = {"roots": [], "namespace": None, "block": None, "version": None,
+            # `models` 必须在默认值里：我加的 `--model` 分支是**每次调用**都会读的，
+            # 少了这个键就是 KeyError —— 抽取器一崩，所有用到它的门禁（refs/multipart/
+            # icon/engine）全部变红，而错误信息只写着"扫描脚本退出码 1"。
+            "models": [],
             "list": False, "probe": False, "icons": None, "namespaces": False,
             "variant": None, "kind": "block", "codeBlocks": False, "limit": None,
             "item": None, "items": None}
@@ -2567,6 +2571,9 @@ def main(argv):
         elif token == "--item" and index + 1 < len(argv):
             args["item"] = argv[index + 1]
             index += 2
+        elif token == "--model" and index + 1 < len(argv):
+            args["models"] = [name for name in argv[index + 1].split(",") if name]
+            index += 2
         elif token == "--kind" and index + 1 < len(argv):
             args["kind"] = argv[index + 1]
             index += 2
@@ -2592,6 +2599,26 @@ def main(argv):
 
     if args["namespaces"]:
         return namespaces(root, args["version"])
+
+    if args["models"]:
+        # 只取模型链本身，不取方块：面板遇到"项目自己的模型继承了原版母模型，而内置表里
+        # 没有它"时，用这一条去 jar 里把整条链现取回来（`block/template_wall_side`
+        # → `block/block`），这样面板不必维护一张手抄的原版模型表，换版本也不会过期。
+        providers, detail = build_providers_multi(args["roots"], args["version"])
+        if providers is None:
+            return {"error": detail["error"]}
+        repository = Repository(providers)
+        out_models = {}
+        sources = []
+        missing = []
+        for reference in args["models"]:
+            walk_model(repository, "minecraft", reference, out_models, sources, missing)
+        if not out_models:
+            return {"error": "一个模型都没取到：" + ",".join(args["models"]),
+                    "missing": missing[:8], "root": root}
+        return {"models": out_models, "missing": missing[:8], "roots": args["roots"],
+                "requested": args["models"], "version": detail.get("version"),
+                "shape": detail.get("shape")}
 
     if args["items"]:
         if not args["namespace"]:
