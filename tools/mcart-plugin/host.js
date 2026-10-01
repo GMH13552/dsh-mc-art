@@ -2212,9 +2212,17 @@ return {
           lines.push('· 修法：补上 <命名空间>:block/<名字> 的模型文件，或把 parent 改成原版真实存在的名字'
             + '（1.16 之后墙是 template_wall_post/side/side_tall）；参考目录没设的话先在面板里指到 .minecraft/versions/<版本>。')
           const report = lines.join('\n')
-          const notice = await notifyAgent('model:' + namespace + ':' + id, report)
+          // **0.1.27：注入停用。** 0.1.26 这里 `agent.steer({role:'user', content:[…]})` 写的
+          // 那条消息没有 `source`（v4 要求 producer-owned source kind），宿主把它当合法输入
+          // 落进了持久化日志的 `agent/inbox/spliced`，于是那个会话**再也加载不了**
+          // （"历史加载失败：stored log is corrupt"，甚至整个窗口消失）。
+          // 往别人的持久化日志里写字，形状不对不是"没生效"，是**把日志写坏** ——
+          // 在拿真实校验器验过一条 UserMessage 之前，这条路上不再写任何东西，
+          // 报告只留在屏幕上（人自己决定要不要交给 AI）。
+          const notice = { sent: false, via: null,
+            why: '注入已停用（0.1.26 写坏了会话日志）；报告在屏幕上，人自己决定怎么用' }
           const how = notice.sent === true ? '已经发给 AI（' + notice.via + '）'
-            : '没能发给 AI（' + (notice.attempts || [notice.why]).join('；') + '）'
+            : '这条报告没有注入到 AI 上下文（' + String(notice.why) + '）'
           return { error: report + '\n· ' + how, notified: notice.sent === true, notifyVia: notice.via || null }
         }
         quads = quadsFromElements(elements, note)
