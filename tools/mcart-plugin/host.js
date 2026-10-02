@@ -183,7 +183,43 @@ const VANILLA_PARENTS = {
   'block/tinted_cross': { parent: 'block/cross', textures: {} },
 }
 
-function resolveBlockModel(model, loadParent, resolveTexture) {
+/**
+ * `minecraft:block/cube_all` → `block/cube_all`；别的命名空间原样返回。
+ *
+ * `VANILLA_PARENTS` 的键是**不带命名空间**的，而原版 1.18.2 自己的模型写的是
+ * **带**命名空间的 `minecraft:block/cube_all` —— 本项目生成的模型照原版写，
+ * 于是 `VANILLA_PARENTS['minecraft:block/cube_all']` 查不到，
+ * 整条链退化成 `{textures:{}}`、**一个面都画不出来**（面板报
+ * "模型链是完整的，但整条链里一个面都没画出来"，并让人以为是方块实体）。
+ *
+ * 只有 `minecraft` 才剥前缀：别的命名空间本来就不该命中原版表。
+ */
+function vanillaBare(parent) {
+  const prefix = 'minecraft:'
+  return parent.slice(0, prefix.length) === prefix ? parent.slice(prefix.length) : parent
+}
+
+/**
+ * 一个从**别处取回来**的母模型，是不是"能用"的？
+ *
+ * `loadParent()` 可能回一个**真值但空**的壳（`{}` / `{textures:{}}`）：那是"文件取到了、
+ * 里面既没有 `elements` 也没有 `parent`"。对这条链来说它等于**没解析到** —— 而旧代码
+ * `loadParent(parent) || VANILLA_PARENTS[...]` 把它当成"解析到了"，于是**短路掉内置母模型表**，
+ * 链到此为止：一个面都没有，报告还写着"这个方块可能靠方块实体渲染 / 原因：unknown"
+ * （用户实测：同族逐字同形的模型都能画，就那一个不行）。
+ *
+ * 判据只有两条：**有非空 `elements`**，或者**还有可继续的 `parent`**。
+ * 唯一的例外是 `block/block`（只带 `display`、既没有 elements 也没有 parent）——
+ * 它只会来自 `VANILLA_PARENTS`，不会经过这个函数，所以不受影响。
+ */
+function parentModelUsable(candidate) {
+  if (candidate === null || typeof candidate !== 'object') return false
+  if (Array.isArray(candidate.elements) && candidate.elements.length > 0) return true
+  if (typeof candidate.parent === 'string' && candidate.parent !== '') return true
+  return false
+}
+
+function resolveBlockModel(model, loadParent, resolveTexture, trace) {
   const chain = []
   let node = model
   const seen = {}
@@ -192,7 +228,30 @@ function resolveBlockModel(model, loadParent, resolveTexture) {
     const parent = node.parent
     if (typeof parent !== 'string' || seen[parent] === true) break
     seen[parent] = true
-    node = loadParent(parent) || VANILLA_PARENTS[parent] || { textures: {} }
+    // 兜底链**只接受能用的模型**：取回来的空壳不算数，继续往下走到内置表。
+    const loaded = loadParent(parent)
+    let next
+    if (parentModelUsable(loaded)) {
+      next = loaded
+      if (Array.isArray(trace)) trace.push({ parent: parent, from: 'loaded' })
+    } else {
+      const key = VANILLA_PARENTS[parent] !== undefined ? parent
+        : (VANILLA_PARENTS[vanillaBare(parent)] !== undefined ? vanillaBare(parent) : '')
+      if (key !== '') {
+        next = VANILLA_PARENTS[key]
+        if (Array.isArray(trace)) {
+          trace.push({ parent: parent, from: 'builtin', key: key,
+            shell: loaded === undefined || loaded === null ? false : true })
+        }
+      } else {
+        if (Array.isArray(trace)) {
+          trace.push({ parent: parent, from: 'none',
+            shell: loaded === undefined || loaded === null ? false : true })
+        }
+        next = { textures: {} }
+      }
+    }
+    node = next
   }
   const textures = {}
   for (let i = chain.length - 1; i >= 0; i--) {
@@ -851,7 +910,7 @@ return {
       return fetched === undefined ? undefined : fetched
     }
 
-    function elementsOf(load, modelName, extra, unresolved) {
+    function elementsOf(load, modelName, extra, unresolved, trace) {
       let key = modelName
       const colon = key.indexOf(':')
       if (colon >= 0) key = key.slice(colon + 1)
@@ -872,7 +931,7 @@ return {
         // 把解不出来的引用收上来，报告才能说清"是哪几个面、用的是谁"。
         if (tex === undefined && typeof unresolved === 'function') unresolved(String(reference))
         return tex
-      })
+      }, trace)
     }
 
     // 现取回来的原版模型，按"参考目录签名 + 名字"缓存。签名变了（换了版本目录）自然失效。
@@ -1134,7 +1193,10 @@ return {
       }
       let unresolvedTextures = []
       const collect = (name) => { if (unresolvedTextures.indexOf(name) < 0) unresolvedTextures.push(name) }
-      let elements = elementsOf(load, modelName, extra, collect)
+      // 链上每一步"从哪来"（项目包 / 现取 / 内置表 / 断掉）——报告里的"已试过的路"
+      // 要按**实际走过哪条**说，而不是在什么都没缺时也写"（这次没走到）"。
+      let trace = []
+      let elements = elementsOf(load, modelName, extra, collect, trace)
       let textureWhy = ''
       if (unresolvedTextures.length > 0) {
         // 裸名按抽取器的惯例当成"先试项目、再退回 minecraft"，所以带上项目命名空间请求；
@@ -1145,12 +1207,13 @@ return {
         textureWhy = fetched.why
         if (fetched.fetched > 0) {
           unresolvedTextures = []
-          elements = elementsOf(load, modelName, extra, collect)
+          trace = []
+          elements = elementsOf(load, modelName, extra, collect, trace)
         }
       }
       return { elements: elements, extra: extra, project: scan.project, vanilla: scan.vanilla,
         cycle: scan.cycle === true, fetchReason: '', why: '',
-        unresolvedTextures: unresolvedTextures, textureWhy: textureWhy }
+        unresolvedTextures: unresolvedTextures, textureWhy: textureWhy, trace: trace }
     }
 
     /**
@@ -2670,21 +2733,39 @@ return {
       // 屏幕上什么都不说，取景框一片空白。
       else if (textures.length > 0) reason = directory === '' ? 'no-reference-directory' : 'textures-unresolved'
       else if (built.noQuads === true) reason = 'no-quads'
+      // **整条链一个 `elements` 都没有**：以前这里掉进 `unknown`（`noQuads` 只在
+      // `elements !== undefined` 时才置位），而 `unknown` 等于没有诊断。
+      else if (built.noElements === true) reason = 'no-geometry'
       // 结构化字段一律非 undefined：宿主的运行时会拒收含 undefined 的返回值。
       const allowed = { 'project-model-missing': 1, 'vanilla-parent-missing': 1,
         'no-reference-directory': 1, 'reference-jar-missing': 1, 'extractor-failed': 1,
-        'parent-cycle': 1, 'textures-unresolved': 1, 'no-quads': 1, 'unknown': 1 }
+        'parent-cycle': 1, 'textures-unresolved': 1, 'no-quads': 1, 'no-geometry': 1, 'unknown': 1 }
       if (allowed[reason] !== 1) reason = 'unknown'
 
       const bareModel = String(found.model).replace(/^[^:]*:/, '')
+      // "已试过的路"要按**实际走过哪条**说：内置表可能正是兜住这条链的那一个，
+      // 以前在 `vanilla` 为空时一律打"（这次没走到）"，于是用户以为内置表没参与。
+      const trace = Array.isArray(built.trace) ? built.trace : []
+      const builtinHits = trace.filter((step) => step.from === 'builtin').map((step) => step.key)
+      const builtinConsulted = trace.some((step) => step.from === 'builtin' || step.from === 'none')
+      const shells = trace.filter((step) => step.shell === true).map((step) => step.parent)
+      const builtinLine = builtinHits.length > 0
+        ? '面板内置的原版母模型表：' + builtinHits.join('、') + '（这一条是它兜住的）'
+        : (builtinConsulted
+          ? '面板内置的原版母模型表：查过，没有 ' + trace.filter((step) => step.from === 'none')
+            .map((step) => step.parent).join('、')
+          : '面板内置的原版母模型表：这次不需要它')
       const tried = [
         '项目包：' + load.assets + '/models/'
           + (bareModel.indexOf('block/') === 0 ? bareModel : 'block/' + bareModel) + '.json',
-        '面板内置的原版母模型表：'
-          + (vanilla.length === 0 ? '（这次没走到）' : vanilla.map((entry) => entry.name).join('、')),
+        builtinLine,
         directory === '' ? '参考目录：没设，从 jar 现取这条路没走'
           : '参考目录的 jar 现取：' + directory,
       ]
+      if (shells.length > 0) {
+        tried.push('取回来但是**空壳**（既没有 elements 也没有 parent，等于没取到）：'
+          + shells.slice(0, 3).join('、'))
+      }
       if (textures.length > 0) {
         tried.push('贴图现取（--textures）：' + (directory === '' ? '没设参考目录，没走' : directory))
       }
@@ -2714,7 +2795,11 @@ return {
         if (textures.length > 4) lines.push('  - …（还有 ' + (textures.length - 4) + ' 个，见结构化诊断）')
       }
       if (project.length === 0 && vanilla.length === 0 && textures.length === 0) {
-        lines.push('· 模型链是完整的，但整条链里一个面都没画出来（这个方块可能靠方块实体渲染）')
+        lines.push(built.noElements === true
+          // 这句以前一律说"可能靠方块实体渲染"，把"某个母模型没取到"指成了"这个方块本来就没几何"。
+          ? '· 整条模型链里**没有任何 elements**（不是"画出来是空的"）：通常是链上某个母模型'
+            + '没取到（空壳/版本不对/参考目录没设），而不是这个方块真的靠方块实体渲染'
+          : '· 模型链是完整的，但整条链里一个面都没画出来（这个方块可能靠方块实体渲染）')
       }
       lines.push('· 原因：' + reason)
       if (typeof built.why === 'string' && built.why !== '') lines.push('· 现取失败的原因：' + built.why)
@@ -2761,6 +2846,11 @@ return {
         return '模型链是完整的但一个面都没画出来：这个方块很可能靠方块实体在代码里渲染，'
           + '面板画不出它的实体模型；要 3D 预览就得在项目包里补一个带 elements 的模型'
       }
+      if (reason === 'no-geometry') {
+        return '整条模型链里没有任何 elements：先看"已试过的路"那一行 —— 链上哪个母模型是空壳/没取到，'
+          + '就补哪个（项目包里的补文件；原版的把参考目录指到 .minecraft/versions/<版本>）。'
+          + '这不等于"这个方块靠方块实体渲染"'
+      }
       if (reason === 'parent-cycle') {
         return '模型 parent 成环了：把链上重复出现的那个 parent 去掉'
       }
@@ -2798,7 +2888,10 @@ return {
         // 两个面用的都是原版贴图 `block/ladder`，贴图在项目包里没有 → 面被静默丢掉）。
         // 任何"取不到"都必须上报告，不许静默。
         if (elements === undefined || quads.length === 0) {
+          // 两条要分开：`elements` 有但一个面都没解出来（贴图/朝向）vs 整条链根本没有
+          // `elements`。后者以前落进 `unknown`（等于没诊断）。
           if (elements !== undefined) built.noQuads = true
+          else built.noElements = true
           // 画不出来时给一份**准确**的报告：结构化诊断（客户端按它渲染）+ ≤20 行可复制文本。
           //
           // **0.1.26 的教训：绝不注入。** 那时这里 `agent.steer({role:'user', content:[…]})`

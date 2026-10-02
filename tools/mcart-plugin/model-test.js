@@ -295,6 +295,15 @@ def project(name, namespace, directory):
     state('solo', variants({'': namespace + ':block/solo'}))
     model('solo', {'parent': 'block/cube_all', 'textures': {'all': tex}})
 
+    # 1b. **同一个母模型，带命名空间的写法。**
+    #     原版 1.18.2 自己的模型写的就是 'minecraft:block/cube_all'
+    #     （见 jar 里 oak_log.json / oak_leaves.json），本项目生成的模型照原版写。
+    #     内置表的键是**不带**命名空间的，所以两条路都要通 ——
+    #     只通一条时，面板会对着一整类方块报"模型链是完整的，但整条链里一个面都没画出来"，
+    #     而那句话会把人引向"这个方块大概是靠方块实体渲染的"（错的结论）。用户实测过。
+    state('solo_qualified', variants({'': namespace + ':block/solo_qualified'}))
+    model('solo_qualified', {'parent': 'minecraft:block/cube_all', 'textures': {'all': tex}})
+
     # 2. 项目自己的模型文件**缺失**（blockstate 指着它，文件不在）。
     state('gone', variants({'': namespace + ':block/gone'}))
 
@@ -554,6 +563,15 @@ async function main() {
     check('no_ref: 内置母模型表能覆盖的方块照样画得出来（parent = block/cube_all）',
       solo !== undefined && solo.error === undefined && solo.quads.length > 0,
       solo === undefined ? 'undefined' : (solo.error === undefined ? solo.quads.length + ' 面' : String(solo.error).split('\n')[0]))
+    // **同一条路的带命名空间写法**（原版自己的写法，也是本项目生成器的写法）。
+    // 这一条以前是红的：内置表的键不带命名空间，于是 `minecraft:block/cube_all`
+    // 查不到、整条链退化成空、一个面都画不出来。
+    const soloQualified = await handlers['atlas.scene']({ root: WORK, project: 'noref', kind: 'block', id: 'solo_qualified' })
+    check('no_ref: parent 写成 minecraft:block/cube_all（原版 1.18.2 自己的写法）同样画得出来',
+      soloQualified !== undefined && soloQualified.error === undefined && soloQualified.quads.length > 0,
+      soloQualified === undefined ? 'undefined'
+        : (soloQualified.error === undefined ? soloQualified.quads.length + ' 面'
+          : String(soloQualified.error).split('\n')[0]))
   }
 
   // ── 5. 贴图：原版贴图从参考目录现取；取不到必须报，不许静默空 ────────────────

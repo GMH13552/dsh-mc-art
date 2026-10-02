@@ -11,6 +11,41 @@ panel/report contract is stable, and whose shipped skills are general (no loader
 version, machine or project is baked in). Earlier 0.1.x releases were development
 snapshots and are not itemised here.
 
+## 0.2.7
+
+### Fixed
+
+- **A block whose model parents `minecraft:block/cube_all` could report "the chain is complete, but
+  not one face was drawn" with `原因：unknown`.** Two separate defects sat behind that one message:
+  - The parent fallback chain accepted any **truthy** result as "resolved", so a parent fetched as
+    an **empty shell** (`{}` / `{textures:{}}`) short-circuited the built-in vanilla parent table
+    and the chain ended with no geometry. An empty shell is not a resolution. This is not a
+    hypothetical shape: the game's own `block/block` carries only `display`/`gui_light` — no
+    elements, no parent — so an ordinary chain really does contain one.
+  - `no-quads` was only set when `elements !== undefined`, so "the whole chain has no elements" fell
+    through to `unknown` — and `unknown` is not a diagnosis. It is now **`no-geometry`**, and the
+    text names the real cause (a parent that could not be fetched) and says explicitly that this is
+    **not** evidence of a block entity.
+- The report's line about the built-in parent table printed **"（这次没走到）" whenever nothing was
+  missing** — i.e. it claimed the table had not been used even when the table was what resolved the
+  chain. It now says what actually happened: the keys it hit and which one caught the chain, or that
+  it was consulted and did not have the key, or that it was not needed at all.
+- `tools/mcart-plugin/parent-fallback-test.js`: a self-contained project whose pack contains an empty
+  shell must still draw; the control (no `cube_all` in the pack, so the built-in table must do the
+  work) must **not** go red; and the reason must not be `unknown`. The reverse fixture turns three
+  assertions red.
+
+### Note
+
+The build that produced the report predated `vanillaBare()` (present from 0.2.3): a project model
+written the way vanilla writes it resolved to nothing there. Worth recording because the panel's
+**host half only reloads when DSH is fully restarted** — approving a new version is not enough on
+its own.
+
+### Changed
+
+- Vendored `mc-art` snapshot unchanged (`49793ad`): this release is panel-side only.
+
 ## 0.2.6
 
 This release is mostly one thing a user's own second session measured and wrote down: a
