@@ -352,3 +352,10 @@ accent_ramp_min_monotone        # engine：plan 字段，默认 0.6——簇内�
 accent_base_gap        # engine：门禁名（`accent_base_gap_min/max` 的上位概念，也是报错里的名字）
 reference_geometry     # engine：模块名 `mc_art/reference_geometry.py`（几何/轮廓那条）
 tiling_ok              # engine：`check-tiling.py` 报告里的结果字段（平铺边距是否达标）
+
+# ── 第十一轮：“写出的模型在游戏里不能用”那条修复带进来的词（art-engine 的 a6e224c）──
+# 公共词汇：原版方块名、引擎公开函数名、报错里作为形状说明出现的占位符。
+powder_snow            # **原版**方块名（Minecraft 自带）——用作"裸值是路径"的例子（block/powder_snow）
+write_block_model      # engine：公开函数名（spec → Minecraft 模型的那个写入器）
+written_textures       # engine：`write_block_model` 里的局部表名，出现在文档的代码片段里
+ns                     # engine：报错/文档里的**命名空间占位符**（`<ns>:textures/…`）

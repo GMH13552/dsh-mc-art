@@ -263,20 +263,25 @@ function resolveBlockModel(model, loadParent, resolveTexture, trace) {
     if (Array.isArray(candidate.elements) && candidate.elements.length > 0) { elements = candidate.elements; break }
   }
   if (elements === undefined) return undefined
-  const dereference = (reference) => {
+  // 每个面的上下文（面名 / 原始写法 / 这张模型 textures 的键）都要交给 `resolveTexture`：
+  // 报告里那句"面 up 引用的是裸词 stone，你大概想写 #stone"没有它就说不出来。
+  const textureKeys = Object.keys(textures)
+  const dereference = (reference, context) => {
     let name = String(reference === undefined ? '' : reference)
     for (let i = 0; i < 8 && name.charAt(0) === '#'; i++) {
       const next = textures[name.slice(1)]
       if (next === undefined) break
       name = String(next)
     }
-    return resolveTexture(name)
+    return resolveTexture(name, context)
   }
-  return elements.map((element) => {
+  return elements.map((element, elementIndex) => {
     const faces = {}
     for (const face of Object.keys(element.faces || {})) {
       const data = element.faces[face]
-      const tex = dereference(data.texture)
+      const raw = String(data === undefined || data.texture === undefined ? '' : data.texture)
+      const tex = dereference(data.texture,
+        { face: face, element: elementIndex, raw: raw, keys: textureKeys })
       if (tex === undefined) continue
       faces[face] = { tex: tex, uv: data.uv || [0, 0, 16, 16], rotation: data.rotation || 0 }
     }
@@ -925,11 +930,12 @@ return {
         if (extra === undefined) return undefined
         // 现取回来的那份表按 `minecraft:block/x` 存，查的时候带不带命名空间都要能命中。
         return extra.get(id) || extra.get(parentKey) || extra.get('minecraft:' + parentKey)
-      }, (reference) => {
+      }, (reference, context) => {
         const tex = texturePath(load, reference)
         // `resolveBlockModel` 在贴图解不出来时会 `continue` 掉那个面（`quads` 于是可能是空的）。
-        // 把解不出来的引用收上来，报告才能说清"是哪几个面、用的是谁"。
-        if (tex === undefined && typeof unresolved === 'function') unresolved(String(reference))
+        // 把解不出来的引用收上来（连面的上下文），报告才能说清"是哪几个面、用的是谁"，
+        // 以及分清"写漏了 #" / "#变量找不到" / "路径真的不存在"这三种。
+        if (tex === undefined && typeof unresolved === 'function') unresolved(String(reference), context)
         return tex
       }, trace)
     }
@@ -1192,7 +1198,30 @@ return {
         scan = chainGaps(load, modelName, extra)
       }
       let unresolvedTextures = []
-      const collect = (name) => { if (unresolvedTextures.indexOf(name) < 0) unresolvedTextures.push(name) }
+      // 三种"面取不到贴图"要分开收，因为**修法不同**（见 `blockDiagnostic`）：
+      //   * `bareWords`：裸词（没有 `#`、没有 `:`、没有 `/`）而且**恰好是**这张模型
+      //     `textures` 映射里的键 —— 作者写漏了 `#`，裸词被当成路径。
+      //   * `danglingVariables`：`#变量` 在映射里根本找不到。
+      //   * 其余（真·路径不存在）仍走 `unresolvedTextures`。
+      let bareWords = []
+      let danglingVariables = []
+      const collect = (name, context) => {
+        if (unresolvedTextures.indexOf(name) < 0) unresolvedTextures.push(name)
+        const info = context === undefined || context === null ? {} : context
+        const raw = String(info.raw === undefined ? '' : info.raw)
+        const keys = Array.isArray(info.keys) ? info.keys : []
+        const face = String(info.face === undefined ? '' : info.face)
+        const bare = raw !== '' && raw.indexOf('#') < 0 && raw.indexOf(':') < 0 && raw.indexOf('/') < 0
+        if (bare && keys.indexOf(raw) >= 0) {
+          if (!bareWords.some((one) => one.raw === raw)) bareWords.push({ raw: raw, face: face, keys: keys.slice(0, 12) })
+          return
+        }
+        if (raw.charAt(0) === '#' && keys.indexOf(raw.slice(1)) < 0) {
+          if (!danglingVariables.some((one) => one.name === raw)) {
+            danglingVariables.push({ name: raw, face: face })
+          }
+        }
+      }
       // 链上每一步"从哪来"（项目包 / 现取 / 内置表 / 断掉）——报告里的"已试过的路"
       // 要按**实际走过哪条**说，而不是在什么都没缺时也写"（这次没走到）"。
       let trace = []
@@ -1207,13 +1236,16 @@ return {
         textureWhy = fetched.why
         if (fetched.fetched > 0) {
           unresolvedTextures = []
+          bareWords = []
+          danglingVariables = []
           trace = []
           elements = elementsOf(load, modelName, extra, collect, trace)
         }
       }
       return { elements: elements, extra: extra, project: scan.project, vanilla: scan.vanilla,
         cycle: scan.cycle === true, fetchReason: '', why: '',
-        unresolvedTextures: unresolvedTextures, textureWhy: textureWhy, trace: trace }
+        unresolvedTextures: unresolvedTextures, bareWords: bareWords,
+        danglingVariables: danglingVariables, textureWhy: textureWhy, trace: trace }
     }
 
     /**
@@ -2718,6 +2750,9 @@ return {
       const project = Array.isArray(built.project) ? built.project : []
       const vanilla = Array.isArray(built.vanilla) ? built.vanilla : []
       const textures = Array.isArray(built.unresolvedTextures) ? built.unresolvedTextures : []
+      // 写漏 `#` 的裸词 / 找不到的 `#变量`：这两种**不是**"缺贴图"，修法完全不同。
+      const bareWords = Array.isArray(built.bareWords) ? built.bareWords : []
+      const dangling = Array.isArray(built.danglingVariables) ? built.danglingVariables : []
       const missing = project.concat(vanilla).map((entry) => ({
         kind: entry.kind === 'project' ? 'project' : 'vanilla',
         name: String(entry.name),
@@ -2731,7 +2766,18 @@ return {
       // 模型链是完整的、面也都解出来了，只是**贴图**解不出来（原版贴图不在项目包里）
       // 或者整条链一个面都没有 —— 这两种以前会返回一个"成功但 quads 是空"的对象，
       // 屏幕上什么都不说，取景框一片空白。
-      else if (textures.length > 0) reason = directory === '' ? 'no-reference-directory' : 'textures-unresolved'
+      // 写漏 `#` **先于** "缺贴图" 报：它的修法是把裸词改成 `#裸词`，不是去补 PNG
+      // （用户实测：`"texture": "stone"` 被当成路径 `<命名空间>:textures/stone.png`，
+      //  整块丢掉；报告原来说"贴图解不出来"，人就去翻贴图目录了）。
+      else if (bareWords.length > 0) reason = 'texture-missing-hash'
+      else if (dangling.length > 0) reason = 'texture-variable-unresolved'
+      else if (textures.length > 0) {
+        // 解不出来的**全是项目自己的**贴图 → 那就是项目包里缺文件（`textures-unresolved`），
+        // 跟"没设参考目录"没关系；只有掺了原版/别的命名空间的，才可能是参考目录那条路的问题。
+        // （以前只要没设参考目录就一律说 no-reference-directory，把项目里少一张 PNG 也说成设置问题。）
+        const onlyProject = textures.every((name) => textureMissingOf(load, name, directory).kind === 'project')
+        reason = directory === '' && !onlyProject ? 'no-reference-directory' : 'textures-unresolved'
+      }
       else if (built.noQuads === true) reason = 'no-quads'
       // **整条链一个 `elements` 都没有**：以前这里掉进 `unknown`（`noQuads` 只在
       // `elements !== undefined` 时才置位），而 `unknown` 等于没有诊断。
@@ -2739,7 +2785,8 @@ return {
       // 结构化字段一律非 undefined：宿主的运行时会拒收含 undefined 的返回值。
       const allowed = { 'project-model-missing': 1, 'vanilla-parent-missing': 1,
         'no-reference-directory': 1, 'reference-jar-missing': 1, 'extractor-failed': 1,
-        'parent-cycle': 1, 'textures-unresolved': 1, 'no-quads': 1, 'no-geometry': 1, 'unknown': 1 }
+        'parent-cycle': 1, 'textures-unresolved': 1, 'no-quads': 1, 'no-geometry': 1,
+        'texture-missing-hash': 1, 'texture-variable-unresolved': 1, 'unknown': 1 }
       if (allowed[reason] !== 1) reason = 'unknown'
 
       const bareModel = String(found.model).replace(/^[^:]*:/, '')
@@ -2786,13 +2833,35 @@ return {
         lines.push('· 原版母模型缺失（' + vanilla.length + ' 个）：')
         for (const entry of vanilla) lines.push('  - ' + entry.name + ' → ' + fixPathOf(load, entry, directory))
       }
-      if (textures.length > 0) {
-        lines.push('· 面引用的贴图解不出来（' + textures.length + ' 个，这些面被丢掉了）：')
-        for (const name of textures.slice(0, 4)) {
+      if (bareWords.length > 0) {
+        lines.push('· 有 ' + bareWords.length + ' 个面把**裸词**当贴图写（模型格式里裸词是路径，不是变量）：')
+        for (const one of bareWords.slice(0, 4)) {
+          lines.push('  - 面 ' + one.face + ' 引用的是裸词 `' + one.raw + '`。模型格式里它被当成**路径**（'
+            + load.namespace + ':textures/' + one.raw + '.png），而不是你 `textures` 映射里的那个键。'
+            + '**你大概想写 `#' + one.raw + '`。**')
+          if (Array.isArray(one.keys) && one.keys.length > 0) {
+            lines.push('    这张模型 textures 里的键：' + one.keys.join('、'))
+          }
+        }
+        if (bareWords.length > 4) lines.push('  - …（还有 ' + (bareWords.length - 4) + ' 个，见结构化诊断）')
+      }
+      if (dangling.length > 0) {
+        lines.push('· 有 ' + dangling.length + ' 个面引用 `#变量`，但模型的 textures 映射里没有这个键：')
+        for (const one of dangling.slice(0, 4)) {
+          lines.push('  - 面 ' + one.face + ' 引用 `' + one.name + '` → 补上这个键，或改成映射里已有的键')
+        }
+      }
+      // 裸词 / 悬空变量已经在上面单独说过，这里只列**真·路径**解不出来的那些
+      // （不然会出现一个"0 个"的标题）。
+      const otherTextures = textures.filter((name) =>
+        !bareWords.some((one) => one.raw === name) && !dangling.some((one) => one.name === name))
+      if (otherTextures.length > 0) {
+        lines.push('· 面引用的贴图解不出来（' + otherTextures.length + ' 个，这些面被丢掉了）：')
+        for (const name of otherTextures.slice(0, 4)) {
           const entry = textureMissingOf(load, name, directory)
           lines.push('  - ' + entry.name + ' → ' + entry.fixPath)
         }
-        if (textures.length > 4) lines.push('  - …（还有 ' + (textures.length - 4) + ' 个，见结构化诊断）')
+        if (otherTextures.length > 4) lines.push('  - …（还有 ' + (otherTextures.length - 4) + ' 个，见结构化诊断）')
       }
       if (project.length === 0 && vanilla.length === 0 && textures.length === 0) {
         lines.push(built.noElements === true
@@ -2841,6 +2910,14 @@ return {
       if (reason === 'textures-unresolved') {
         return '这些面引用的贴图在项目包里没有、参考目录里也没取到：把参考目录指对版本，'
           + '或者在项目包里补上同名的 PNG（路径已经给出）'
+      }
+      if (reason === 'texture-missing-hash') {
+        return '把这些面里的裸词前面补上 `#`：贴图**变量**必须带 `#`，不带 `#` 的裸词会被当成路径，'
+          + '于是去找 <命名空间>:textures/<词>.png（那里通常没有）—— 例如 `"texture": "stone"` 要写 `"texture": "#stone"`。'
+          + '这两个方块在游戏里同样是坏的（会渲染成缺失贴图）'
+      }
+      if (reason === 'texture-variable-unresolved') {
+        return '`#变量` 在模型的 textures 映射里找不到：把映射里缺的键补上，或者把面改成映射里已有的那个键'
       }
       if (reason === 'no-quads') {
         return '模型链是完整的但一个面都没画出来：这个方块很可能靠方块实体在代码里渲染，'

@@ -11,6 +11,59 @@ panel/report contract is stable, and whose shipped skills are general (no loader
 version, machine or project is baked in). Earlier 0.1.x releases were development
 snapshots and are not itemised here.
 
+## 0.2.8
+
+### Fixed
+
+- **The block models the engine wrote were unusable in the game, and every gate said they were
+  fine.** `write_block_model` passed the spec's `elements` through verbatim, so a face written as
+  `"stone"` — a **key** into the model's own `textures` map, which is the spec's convention and what
+  the engine's own audit validates — stayed `"stone"` in the emitted Minecraft model, where a value
+  without `#` is a **path**: `<namespace>:textures/stone.png`, which does not exist. Every face lost
+  its texture, so the model was invisible in game *and* undrawable in the panel. Measured on a real
+  project: **42** references in one hand-authored model, **38** in another — and those two were the
+  only broken ones, because they were the only ones going through the block-entity path.
+  Face textures are now emitted as `#key`; values that are already `#…` or namespaced paths are left
+  alone (vanilla writes those too).
+- **The artifact is now validated by reading it back.** `validate_written_model` re-reads the model
+  it just wrote and requires every face to be a `#variable` present in that model's own `textures`,
+  or a path the pack really ships; otherwise it **raises**, so an illegal model cannot leave the
+  generator. It sits *on* the generation path, ahead of the preview — because the preview reads PNGs
+  from disk and therefore renders correctly even when the written model is broken. That split is
+  exactly why this shipped: the picture was right and the artifact was wrong.
+- The engine's own example `examples/example_block_entity/desk.json` is a **spec** whose generated
+  model was broken; it now emits `#wood`/`#paper`, and the emitted model is read back and validated
+  (20 faces, zero bare words).
+- **A second source of truth, removed by choice.** A spec may now declare a texture's real asset id
+  (`{"path": …, "id": "ns:block/real_name"}`), in which case nothing is copied. Copying stays the
+  default, but when the spec key differs from the source file's name the copy is **reported** with
+  its consequence: the pack ships those bytes *renamed*, so anything referring to the real asset id
+  will not find them.
+
+### Added
+
+- **The panel now names this mistake instead of sending you hunting for a missing PNG.** A face
+  texture that is a bare word *and* matches a key in the model's `textures` map is reported as
+  **`texture-missing-hash`**: it names the face, says the bare word is being read as a path, lists
+  the model's texture keys, and says **"you probably meant `#stone`"** — adding that the block is
+  broken in the game too, not only in the panel. A `#variable` that is not in the map is a separate
+  reason (`texture-variable-unresolved`), and a genuinely missing file stays `textures-unresolved`;
+  the three no longer share one sentence. `tools/mcart-plugin/texture-syntax-test.js` covers all
+  three plus two **legal** forms (`"#stone"`, and a bare *path* like `block/stone_tex`) so the advice
+  cannot fire on correct input.
+- Unresolved textures that are the project's own no longer report `no-reference-directory`; a
+  missing PNG in your own pack has nothing to do with whether a reference directory is set.
+
+### Changed
+
+- Vendored `mc-art` snapshot: `49793ad` → `a6e224c`.
+
+### Note
+
+`mc-art doctor` caught the installer's clone being one commit behind before this release — the
+commit being this fix — and said which side was stale. Fast-forwarding that clone is now part of the
+re-vendor step; without it the package would have shipped the broken model writer again.
+
 ## 0.2.7
 
 ### Fixed
