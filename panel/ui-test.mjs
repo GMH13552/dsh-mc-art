@@ -50,6 +50,8 @@ const FAULT_AUTOFILL = process.argv.includes('--fault-autofill')
 const FAULT_FLAT_BLANK = process.argv.includes('--fault-flat-blank')
 // 缺图标的那一格被渲染成静默空白（旧行为）：没有"缺"角标、title 里也没有原因。
 const FAULT_MISSING_BLANK = process.argv.includes('--fault-missing-blank')
+// 忽略宿主给的 `animationNotes`（旧行为）→ ".mcmeta 在但读不了"又被说成"没有动画描述"。
+const FAULT_ANIMNOTES = process.argv.includes('--fault-animnotes')
 
 let failures = 0
 function check(label, ok, detail) {
@@ -261,11 +263,14 @@ function fakeContext(canvas) {
   }
 }
 function fakeCanvas() { return makeFakeCanvas(256, 256) }
-/** 假 <img>：一上来就 complete，像素是真的 —— 解码那条路才真的把字节搬进 `decoded`。 */
+/** 假 <img>：一上来就 complete，像素是真的 —— 解码那条路才真的把字节搬进 `decoded`。
+ *  尺寸可调：动画那段夹具要一张**竖条**贴图（16×64），不然"形状像条带"那句根本不会轮到。 */
+let fakeImageSize = { width: 16, height: 16 }
 function fakeImage() {
+  const width = fakeImageSize.width, height = fakeImageSize.height
   const img = {
-    complete: true, naturalWidth: 16, naturalHeight: 16, width: 16, height: 16,
-    _data: fakePixels(16, 16),
+    complete: true, naturalWidth: width, naturalHeight: height, width: width, height: height,
+    _data: fakePixels(width, height),
     addEventListener: () => {}, removeEventListener: () => {},
   }
   return img
@@ -690,6 +695,10 @@ async function main() {
           'const lacking = false')
         .replace('const posterRecipe = sceneDrawsNothing && pickedRecipe !== null && pickedRecipe.missing !== true',
           'const posterRecipe = sceneDrawsNothing && pickedRecipe !== null') },
+    // 忽略宿主查过的 `.mcmeta` 真话：C（文件在但读不了）会被说成"没有动画描述"。
+    { flag: FAULT_ANIMNOTES, name: '--fault-animnotes', hint: '找不到 animNotes 那一行',
+      apply: (src) => src.replace('const animNotes = scene === null ? {} : (scene.animationNotes || {})',
+        'const animNotes = {}') },
   ]
   const chosen = FAULTS.filter((entry) => entry.flag)
   if (chosen.length > 1) {
@@ -1522,6 +1531,59 @@ async function main() {
   const pageAsksAfter = callsM.filter((call) => call.name === 'atlas.itemIcons').length
   check('一个缺的格子不会让宿主被反复重问（稳定后请求次数不再涨）',
     pageAsksAfter === pageAsksBefore, pageAsksBefore + ' -> ' + pageAsksAfter)
+
+  // ── 动画描述：宿主查过 .mcmeta 就照它说，不许自己按形状下结论 ────────────────────
+  //
+  // 用户报："项目自己的动图在面板里糊，而且提示说'没有动画描述'，可 `.mcmeta` 明明在"。
+  // 宿主只查参考贴图、从不读项目自己的 `.png.mcmeta` —— 那条已在宿主侧修好；剩下的
+  // **情况 C** 是：`.mcmeta` 在、但读不了（坏 JSON / 没有 animation 段 / 图不是竖条）。
+  // 现在宿主把真话放进 `scene.animationNotes[id].text`，屏幕必须**照抄**它，而不是退回
+  // "形状像条带但没有动画描述" —— 文件明明在，那句话就是在指责产物。
+  console.log('--- 动画描述：A 合法 / B 真没有 / C 有但读不了（宿主说了就照抄）')
+  const ANIM_TEX = 'ui_probe:block/example_anim'
+  const animScene = (animations, animationNotes) => ({
+    kind: 'block', id: 'example_anim', title: '示例动图',
+    quads: [ONE_QUAD_SOLID(ANIM_TEX)], textureIds: [ANIM_TEX],
+    textures: { [ANIM_TEX]: PNG_DATA_URL }, animations: animations || {},
+    animationNotes: animationNotes || {}, cells: null, refs: [], box: null, errors: [], palette: [],
+  })
+  async function animRun(reply) {
+    handlers = makeHandlers({ sceneReply: reply })
+    const reactA = createReact()
+    const hostA = makeHost([])
+    const built = buildPanel(faulted, hostA, reactA.api)
+    const ui = await mount(built.main, { sessionId: 'ui-test' }, hostA, reactA, 'main')
+    if (ui.buttonProps('用本会话目录') !== undefined) await ui.click('用本会话目录')
+    await ui.settle()
+    // 竖条贴图（16×192 = 12 帧 × 16）：只有形状像条带，"没有动画描述"那句才有机会出现，
+    // 而且 `strip` 必须真的能整除（12×16=192），否则判定会走上"不是条带"那条。
+    fakeImageSize = { width: 16, height: 192 }
+    try { await decodeTextures(ui) } finally { fakeImageSize = { width: 16, height: 16 } }
+    return ui
+  }
+  // A：`.mcmeta` 合法 —— 宿主会把它放进 `animations`，那一行画出"单帧 12"。
+  const uiAnimA = await animRun(animScene({ [ANIM_TEX]: { strip: 12, frames: 12, frametime: 4 } }, {}))
+  const saidA = uiAnimA.text()
+  check('A（.mcmeta 合法）：画出动画那一行，两句"没有/读不了"都不出现',
+    saidA.indexOf('动画 ' + ANIM_TEX) >= 0 && saidA.indexOf('判定 单帧 12') >= 0
+    && saidA.indexOf('没有动画描述') < 0 && saidA.indexOf('读不了') < 0,
+    saidA.slice(0, 300))
+  // B：旁边**真的没有** `.mcmeta`（宿主没话说）—— 这时那句形状判断才是对的。
+  const uiAnimB = await animRun(animScene({}, {}))
+  const saidB = uiAnimB.text()
+  check('B（真没有 .mcmeta）：才轮到"没有动画描述"，而且说清补哪个文件',
+    saidB.indexOf('没有动画描述') >= 0 && saidB.indexOf('.png.mcmeta') >= 0
+    && saidB.indexOf('读不了') < 0, saidB.slice(0, 320))
+  // C：`.mcmeta` 在、但读不了 —— 必须原样显示宿主那句真话，绝不说"没有动画描述"。
+  const NOTE_C = '这张贴图**有**动画描述文件，但我读不了它：'
+    + 'pack/assets/ui_probe/textures/block/example_anim.png.mcmeta —— 坏 JSON（第 3 行多了个逗号）'
+  const uiAnimC = await animRun(animScene({}, { [ANIM_TEX]: { state: 'unreadable', text: NOTE_C } }))
+  const saidC = uiAnimC.text()
+  check('C（.mcmeta 在但读不了）：原样显示宿主的真话（文件在、读不了、原因）',
+    saidC.indexOf('有**动画描述文件，但我读不了它') >= 0 && saidC.indexOf('坏 JSON') >= 0,
+    saidC.slice(-260))
+  check('C：**绝不**出现"没有动画描述"（文件明明在，那句话是在指责产物）',
+    saidC.indexOf('没有动画描述') < 0, saidC.slice(-260))
 
   console.log(failures === 0 ? '全部通过' : failures + ' 项失败')
   process.exit(failures === 0 ? 0 : 1)

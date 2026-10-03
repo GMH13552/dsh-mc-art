@@ -163,6 +163,14 @@ function scanText(text) {
       report(call, 'text 模式没写 encoding=（父进程会按区域编码解）')
     }
   }
+  // 同一个洞的另一半：**捕获了输出**却连 `text=True` 都省了、也没写怎么解。
+  // `capture_output=True` 拿到的是 bytes，不声明 `encoding=`/`text=` 就没人解它。
+  for (const position of occurrences(text, mask, 'capture_output=True')) {
+    const call = enclosingCall(text, mask, position)
+    if (call !== null && !/encoding\s*=/.test(call.text) && !/text\s*=/.test(call.text)) {
+      report(call, '捕获了子进程输出却没写怎么解（encoding= / text=）')
+    }
+  }
   for (const position of occurrences(text, mask, 'sys.executable')) {
     const call = enclosingCall(text, mask, position)
     if (call !== null && !(/-X/.test(call.text) && /utf8/.test(call.text))) {

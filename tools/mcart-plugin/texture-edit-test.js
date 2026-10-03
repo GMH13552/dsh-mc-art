@@ -95,8 +95,8 @@ async function main() {
   if (FAULT) {
     // 老的 `preload()`：value 是绝对路径（用户踩到的那一版）。
     const before = source
-    source = source.replace("'pack/assets/' + namespace + '/textures/' + kind + '/' + entry.name)",
-      "assets + '/textures/' + kind + '/' + entry.name)")
+    source = source.replace("const relative = 'pack/assets/' + namespace + '/textures/' + kind + '/' + entry.name",
+      "const relative = assets + '/textures/' + kind + '/' + entry.name")
     if (source === before) {
       console.log('  FAIL --fault 没生效：宿主里没找到 preload() 的那个 value（门禁要跟着改）')
       process.exit(2)

@@ -11,6 +11,48 @@ panel/report contract is stable, and whose shipped skills are general (no loader
 version, machine or project is baked in). Earlier 0.1.x releases were development
 snapshots and are not itemised here.
 
+## 0.2.9
+
+### Fixed
+
+- **An animated texture in your own pack was never animated in the panel, and the panel blamed the
+  file for it.** `animationsFor()` consulted only the *reference* textures' animation table, and
+  `preload()` collected the project's textures without ever looking for `<name>.png.mcmeta` — the
+  word `mcmeta` did not appear in the host at all. A 16×192 strip (12 frames of 16, `frametime` 4)
+  was therefore drawn as **one 16×192 texture**, which is the blur you saw, while the game read the
+  `.mcmeta` and animated it correctly. The host now reads the project's `.mcmeta` (its own IHDR size
+  reader; the same acceptance rules as the extractor's `animation_of`) and `animationsFor()` consults
+  both tables.
+- **The message no longer accuses the file of something the tool never checked.** "shaped like a
+  strip but has no animation description" was printed whenever the shape looked like a strip and no
+  animation entry existed — including when the `.mcmeta` was right there. There are now three cases
+  saying three different things: a valid `.mcmeta` → nothing is shown; **`.mcmeta` present but
+  unreadable** (bad JSON, no `animation` section, or the image is not a strip) → "this texture
+  **has** an animation description file, but I cannot read it: `<path>.mcmeta` — `<the real
+  reason>`"; genuinely absent → the shape-based message, which now also names the file to add.
+- Two unrelated drifts surfaced by gating this: `check_jdk_test.py` had been rewritten to capture
+  output without declaring how to decode it, so `encoding-test.js --fault` could not catch its own
+  reverse fixture (the static rule now requires `encoding=`/`text=` whenever output is captured);
+  and the host's line endings had been normalised to CRLF, which made multi-line `--fault` patches
+  match nothing **silently** (`readHostSource()` now normalises to LF). Both guards reported
+  "did not take effect" rather than turning green.
+
+### Added
+
+- `tools/mcart-plugin/project-animation-test.js`: fixture A (valid `.mcmeta` — must be 12 frames and
+  must produce neither message), B (absent — may produce the shape message), C (present but broken —
+  must produce the truthful message and must **never** say "no animation description"), D (a plain
+  16×16 — silent). `--fault` (remove the project `.mcmeta` reading) turns 8 assertions red.
+- `panel/ui-test.mjs` gained the same three cases plus `--fault-animnotes`, whose reverse fixture
+  turns exactly case C red while **case B stays green** — the fallback message is *correct* when the
+  host has nothing to say, so only "the host spoke and the client ignored it" may fail.
+
+### Note
+
+The `.mcmeta` path was already parsed on the reference side (that is where the jar's animations come
+from), which is why this only broke for textures **in your own pack** — precisely the case the panel
+exists for.
+
 ## 0.2.8
 
 ### Fixed

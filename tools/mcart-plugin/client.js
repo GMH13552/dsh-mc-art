@@ -846,6 +846,10 @@ const sceneOf = (payload) => ({
   textureIds: idsOf(payload),
   textures: objectOf(payload.textures),
   animations: objectOf(payload.animations),
+  // 「这张贴图有没有动画描述、读不读得了」——宿主已经查过 `.mcmeta` 时把**真话**放这里
+  // （`{ state:'unreadable', text:'…有动画描述文件，但我读不了它…' }`）。屏幕只许照抄它，
+  // 不许自己按形状再下一个"没有动画描述"的结论：文件明明在，那句话就是在指责产物。
+  animationNotes: objectOf(payload.animationNotes),
   cells: isAbsent(payload.cells) ? null : payload.cells,
   faceStep: payload.faceStep,
   refs: arrayOf(payload.refs),
@@ -3944,6 +3948,9 @@ return {
         //     canvas down whenever it grows, so a click aimed at a block lands
         //     somewhere else.  It is appended after the viewport instead.
         const animIndex = scene === null ? {} : (scene.animations || {})
+        // 宿主查过 `.mcmeta` 时说的话（“有文件但读不了”“旁边根本没有这个文件”…）。
+        // **它说了就照抄**；只有它没说话时，才轮到下面那句按形状猜的话。
+        const animNotes = scene === null ? {} : (scene.animationNotes || {})
         for (const id of Object.keys(animIndex).sort()) {
           const tex = decoded[id]
           const size = tex === undefined ? '还没解码' : (tex.width + '×' + tex.height)
@@ -3959,13 +3966,22 @@ return {
         }
         for (const id of idsOf(scene)) {
           if (animIndex[id] !== undefined) continue
+          const note = animNotes[id]
+          if (note !== undefined && note !== null && typeof note.text === 'string' && note.text !== '') {
+            // 宿主给了真话（例如"文件在，但我读不了"）——原样显示，**不再**自己下结论。
+            animRows.push(React.createElement('div', { className: 'mcart-hint', key: 'noanim:' + id }, note.text))
+            continue
+          }
           const tex = decoded[id]
           if (tex === undefined) continue
           // Only worth reporting when the shape says "this is a strip": a
           // plain 16x16 static texture having no description is normal.
           if (!(tex.height > tex.width && tex.height % tex.width === 0)) continue
+          // 宿主没说话 = 旁边**真的没有** `.mcmeta`（它查过了）。这时这句才是对的，
+          // 并且要说清补什么：`<贴图>.png.mcmeta`。
           animRows.push(React.createElement('div', { className: 'mcart-hint', key: 'noanim:' + id },
-            '形状像条带但没有动画描述 ' + id + ' · 解码 ' + tex.width + '×' + tex.height + ' ← 会糊'))
+            '形状像条带但没有动画描述 ' + id + ' · 解码 ' + tex.width + '×' + tex.height
+            + ' ← 会糊；补一个 ' + String(id).split('/').pop() + '.png.mcmeta（animation 段里写明 frametime/frames）'))
         }
         if (scene.palette && scene.palette.length > 0) {
           stage.push(React.createElement('div', { className: 'mcart-bar', key: 'palette' },

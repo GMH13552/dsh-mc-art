@@ -61,9 +61,15 @@ const FAULTS = [
     to: '        if (elements === undefined) {' },
 ]
 
-/** 原样的宿主源码（不套本文件的 --fault 替换）——别的门禁要自己注入故障时用它。 */
+/**
+ * 原样的宿主源码（不套本文件的 --fault 替换）——别的门禁要自己注入故障时用它。
+ *
+ * **行尾统一成 LF**：宿主的行尾会被仓库的规范化脚本改成 CRLF，而 `--fault` 的补丁串
+ * 都是按 `\n` 写的（多行补丁在 CRLF 上会静默匹配不到）。`new Function` 不在乎行尾，
+ * 所以这里归一化一次，门禁就不必各自处理两种行尾。
+ */
 function readHostSource() {
-  return nodeFs.readFileSync(nodePath.join(__dirname, 'host.js'), 'utf8')
+  return String(nodeFs.readFileSync(nodePath.join(__dirname, 'host.js'), 'utf8')).split('\r\n').join('\n')
 }
 
 function hostSource() {

@@ -200,6 +200,22 @@ function vanillaBare(parent) {
 }
 
 /**
+ * PNG 的像素尺寸（只看 IHDR 头，前 24 字节）。认不出就 undefined。
+ *
+ * 项目 `.mcmeta` 那条路要它才算得出 `strip`（竖条有几帧）—— 抽取器那边有 `png_size`，
+ * 宿主这边以前没有，于是项目自己的动图**没有**帧数可言。
+ */
+function pngSizeOf(bytes) {
+  if (bytes === undefined || bytes === null || bytes.length === undefined || bytes.length < 24) return undefined
+  const magic = [137, 80, 78, 71, 13, 10, 26, 10]
+  for (let i = 0; i < magic.length; i++) if (bytes[i] !== magic[i]) return undefined
+  const width = ((bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19]) >>> 0
+  const height = ((bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23]) >>> 0
+  if (width === 0 || height === 0) return undefined
+  return { width: width, height: height }
+}
+
+/**
  * 一个从**别处取回来**的母模型，是不是"能用"的？
  *
  * `loadParent()` 可能回一个**真值但空**的壳（`{}` / `{textures:{}}`）：那是"文件取到了、
@@ -686,6 +702,21 @@ return {
       try { return JSON.parse(text) } catch (error) { return undefined }
     }
 
+    /** 读文本（`.mcmeta` 这类）。失败返回 undefined —— 调用方负责把"读不到"说成读不到。 */
+    async function readTextOf(path) {
+      const fs = fsOf()
+      if (fs !== undefined) {
+        try {
+          const target = await fs.resolve(path)
+          return await fs.readText(target)
+        } catch (error) { return undefined }
+      }
+      const local = localOf()
+      if (local === null) return undefined
+      const text = await local.readText(path)
+      return typeof text === 'string' ? text : undefined
+    }
+
     async function statOf(path) {
       const fs = fsOf()
       if (fs !== undefined) {
@@ -845,10 +876,88 @@ return {
     function animationsFor(ids) {
       const out = {}
       for (const id of ids) {
+        // **两个表都查**：参考侧（jar 里取的）在 `referenceAnimations`，项目侧（包里自己的
+        // `.mcmeta`）在各自 load 的 `animations` 里。以前只查参考侧，于是**项目自己的动图
+        // 在面板里不被当动图**：整条竖条被当成一张贴图贴上去（糊），而游戏里它是动的。
         const animation = referenceAnimations.get(id)
-        if (animation !== undefined) out[id] = animation
+        if (animation !== undefined) { out[id] = animation; continue }
+        for (const load of preloads.values()) {
+          const own = load.animations === undefined ? undefined : load.animations.get(id)
+          if (own !== undefined) { out[id] = own; break }
+        }
       }
       return out
+    }
+
+    /**
+     * 与 `animationsFor` 配套：**条带形状但动画用不了**的贴图，给出真话（客户端原样显示）。
+     *
+     * 三种情况必须分开，因为修法不同：
+     *   1. `.mcmeta` 在、解析成功 → 进 `animations`，**不产生提示**；
+     *   2. `.mcmeta` 在、但读不了/不是 JSON/没有 animation 段/图不是竖条 → 这里的 `text`
+     *      （"**有** `.mcmeta` 但我读不了它：<原因>"）—— 这是在说**我们**的问题；
+     *   3. 旁边真的没有 `.mcmeta` → 宿主不说话（客户端按解码出来的形状说"没有动画描述"，
+     *      那才是对的）。绝不能在有文件的情况下说"没有动画描述"。
+     */
+    function animationNotesFor(ids) {
+      const out = {}
+      for (const id of ids) {
+        for (const load of preloads.values()) {
+          const note = load.animationNotes === undefined ? undefined : load.animationNotes.get(id)
+          if (note !== undefined) { out[id] = note; break }
+        }
+      }
+      return out
+    }
+
+    /**
+     * 项目包里一张 PNG 旁边的 `.mcmeta` 怎么说 —— 判据与抽取器的 `animation_of()` **同一套**
+     * （不然参考贴图和项目贴图的动画行为会漂移）。
+     *
+     * 三种结果：
+     *   `{ animation }`  合法、而且图确实是竖条 → 交给播放器；
+     *   `{ why }`        **有** `.mcmeta` 但用不了（读不到 / 不是 JSON / 没有 animation 段 /
+     *                    图不是竖条）—— 原因要留着，报告里说成"我读不了"，不许说成"没有描述"；
+     *   `undefined`      旁边没有 `.mcmeta`（这是客户端自己那句话的情形）。
+     */
+    async function projectAnimationOf(pngPath) {
+      let text
+      try { text = await readTextOf(pngPath + '.mcmeta') } catch (error) { text = undefined }
+      if (text === undefined || text === null) return { why: '.mcmeta 读不出来（权限、编码或文件损坏）' }
+      let parsed
+      try { parsed = JSON.parse(String(text)) } catch (error) {
+        return { why: '.mcmeta 不是合法 JSON：' + messageOf(error) }
+      }
+      const declared = parsed !== null && typeof parsed === 'object' ? parsed.animation : undefined
+      if (declared === null || declared === undefined || typeof declared !== 'object') {
+        return { why: '.mcmeta 里没有 animation 段' }
+      }
+      let bytes
+      try { bytes = await readBytesOf(pngPath, 16 * 1024 * 1024) } catch (error) { bytes = undefined }
+      const size = pngSizeOf(bytes)
+      if (size === undefined) return { why: 'PNG 的尺寸读不出来（文件可能坏了）' }
+      if (size.height <= size.width || size.height % size.width !== 0) {
+        return { why: '图不是竖条（' + size.width + '×' + size.height + '；高必须是宽的整数倍）' }
+      }
+      const strip = Math.trunc(size.height / size.width)
+      const order = []
+      const listed = declared.frames
+      if (Array.isArray(listed)) {
+        for (const item of listed) {
+          const index = item !== null && typeof item === 'object' ? item.index : item
+          const number = Math.trunc(Number(index))
+          if (isFinite(number) && number >= 0 && number < strip) order.push(number)
+        }
+      }
+      if (order.length === 0) for (let index = 0; index < strip; index++) order.push(index)
+      const declaredTime = Math.trunc(Number(declared.frametime === undefined ? 1 : declared.frametime))
+      return { animation: {
+        frames: order.length,
+        strip: strip,
+        order: order,
+        frametime: !isFinite(declaredTime) || declaredTime < 1 ? 1 : declaredTime,
+        interpolate: declared.interpolate === true,
+      } }
     }
 
     async function preload(dir, namespace) {
@@ -860,6 +969,10 @@ return {
         if (parsed !== undefined) models.set('block/' + entry.name.replace(/\.json$/, ''), parsed)
       }
       const textures = new Map()
+      // 项目自己的动画：键是**包内相对路径**（和 `textures` 的 value 同一个形态），
+      // 因为 `quad.tex` / `textureIds` 里流的就是它。
+      const animations = new Map()
+      const animationNotes = new Map()
       for (const kind of ['block', 'blocks', 'entity', 'item']) {
         for (const entry of await listDir(assets + '/textures/' + kind)) {
           if (entry.type !== 'file' || !/\.png$/.test(entry.name)) continue
@@ -869,11 +982,29 @@ return {
           // 还说"这条贴图句柄不是项目包里的相对路径"（用户实测；那句话对着一张明明就在
           // 项目包里的图说，读起来自相矛盾）。
           // 读：`textureFileOf()` 按项目根解析回绝对路径；写：`atlas.saveTexture` 同样解析。
-          textures.set(namespace + ':' + kind + '/' + entry.name.replace(/\.png$/, ''),
-            'pack/assets/' + namespace + '/textures/' + kind + '/' + entry.name)
+          const relative = 'pack/assets/' + namespace + '/textures/' + kind + '/' + entry.name
+          textures.set(namespace + ':' + kind + '/' + entry.name.replace(/\.png$/, ''), relative)
+          // **项目自己的 `.mcmeta` 也要读**（以前只收 `.png`，`mcmeta` 一次都没提）：
+          // 项目里的动图因此没有动画描述，3D 视图把整条竖条当成一张贴图贴上去 —— 糊；
+          // 而游戏读 `.mcmeta`，动得好好的。
+          const absolute = assets + '/textures/' + kind + '/' + entry.name
+          const meta = await statOf(absolute + '.mcmeta')
+          if (meta === undefined || meta.type !== 'file') continue
+          const info = await projectAnimationOf(absolute)
+          if (info.animation !== undefined) {
+            animations.set(relative, info.animation)
+          } else {
+            animationNotes.set(relative, {
+              state: 'unreadable',
+              why: info.why,
+              // 客户端原样显示这句：**有** `.mcmeta` 就绝不能说成"没有动画描述"。
+              text: '这张贴图**有**动画描述文件，但我读不了它：' + relative + '.mcmeta —— ' + info.why,
+            })
+          }
         }
       }
-      return { dir: dir, namespace: namespace, assets: assets, models: models, textures: textures }
+      return { dir: dir, namespace: namespace, assets: assets, models: models, textures: textures,
+        animations: animations, animationNotes: animationNotes }
     }
 
     async function readLang(assets) {
@@ -2158,6 +2289,7 @@ return {
       }
       out.textures = textures
       out.animations = animationsFor(ids)
+      out.animationNotes = animationNotesFor(ids)
       return out
     }
 
@@ -3137,7 +3269,7 @@ return {
       return { kind: kind, id: id, title: labelFor(namespace, kind, id),
         project: project.title || project.id,
         quads: quads, textureIds: textureIds, textures: textures,
-        animations: animationsFor(textureIds),
+        animations: animationsFor(textureIds), animationNotes: animationNotesFor(textureIds),
         cells: cells, faceStep: FACE_STEP,
         // 只有 kind==='block' 有值；结构 / 实体是 null / []（形状恒定，客户端好处理）。
         model: blockModel, models: blockModels,
@@ -3902,7 +4034,7 @@ return {
           if (url !== undefined) textures[path] = url
         }
         return { block: block, at: at, quads: built.quads, textureIds: textureIds, textures: textures,
-          animations: animationsFor(textureIds),
+          animations: animationsFor(textureIds), animationNotes: animationNotesFor(textureIds),
           variants: built.variants || [], axes: built.axes || [], defaults: built.defaults || {},
           multipart: built.multipart === true, derived: built.derived === true,
           variant: built.variant === undefined ? null : built.variant }
