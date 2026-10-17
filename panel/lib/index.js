@@ -4,8 +4,7 @@ import { mkdir as nodeMkdir, readdir as nodeReaddir, readFile as nodeReadFile, r
 import { dirname as nodeDirname } from 'node:path'
 import { fileURLToPath as nodeFileURLToPath } from 'node:url'
 
-const SOURCE = "const FACE_SHADE = { up: 1.0, down: 0.5, north: 0.8, south: 0.8, east: 0.6, west: 0.6 }\r\nconst FACE_ORDER = ['down', 'up', 'north', 'south', 'west', 'east']\r\n\r\nconst sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]]\r\nconst add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]]\r\nconst mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k]\r\nconst dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]\r\nconst cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]\r\nconst vlen = (a) => Math.sqrt(dot(a, a))\r\nfunction unit(a) { const n = vlen(a); return n < 1e-12 ? [0, 0, 0] : mul(a, 1 / n) }\r\n\r\nfunction faceCorners(x1, y1, z1, x2, y2, z2, face) {\r\n  if (face === 'down') return [[x1, y1, z2], [x1, y1, z1], [x2, y1, z1], [x2, y1, z2]]\r\n  if (face === 'up') return [[x1, y2, z1], [x1, y2, z2], [x2, y2, z2], [x2, y2, z1]]\r\n  if (face === 'north') return [[x2, y2, z1], [x2, y1, z1], [x1, y1, z1], [x1, y2, z1]]\r\n  if (face === 'south') return [[x1, y2, z2], [x1, y1, z2], [x2, y1, z2], [x2, y2, z2]]\r\n  if (face === 'west') return [[x1, y2, z1], [x1, y1, z1], [x1, y1, z2], [x1, y2, z2]]\r\n  return [[x2, y2, z2], [x2, y1, z2], [x2, y1, z1], [x2, y2, z1]]\r\n}\r\n\r\nfunction rotateAbout(point, origin, axis, degrees) {\r\n  if (!degrees) return point\r\n  const angle = (degrees * Math.PI) / 180\r\n  const p = sub(point, origin)\r\n  const c = Math.cos(angle)\r\n  const s = Math.sin(angle)\r\n  let r\r\n  if (axis === 'x') r = [p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c]\r\n  else if (axis === 'y') r = [p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c]\r\n  else r = [p[0] * c - p[1] * s, p[0] * s + p[1] * c, p[2]]\r\n  return add(r, origin)\r\n}\r\n\r\nconst FACE_VECTORS = {\r\n  down: [0, -1, 0], up: [0, 1, 0], north: [0, 0, -1],\r\n  south: [0, 0, 1], west: [-1, 0, 0], east: [1, 0, 0],\r\n}\r\n\r\nfunction faceAfter(face, x, y) {\r\n  const vector = FACE_VECTORS[face]\r\n  if (vector === undefined) return face\r\n  let p = vector\r\n  if (x) p = rotateAbout(p, [0, 0, 0], 'x', x)\r\n  if (y) p = rotateAbout(p, [0, 0, 0], 'y', -y)\r\n  for (const name of FACE_ORDER) {\r\n    const want = FACE_VECTORS[name]\r\n    if (Math.abs(p[0] - want[0]) < 1e-6 && Math.abs(p[1] - want[1]) < 1e-6 && Math.abs(p[2] - want[2]) < 1e-6) return name\r\n  }\r\n  return face\r\n}\r\n\r\nfunction rotateQuads(quads, rotation) {\r\n  if (rotation === undefined || rotation === null) return quads\r\n  const x = rotation.x || 0\r\n  const y = rotation.y || 0\r\n  if (x === 0 && y === 0) return quads\r\n  return quads.map((quad) => {\r\n    let p = x ? quad.p.map((point) => rotateAbout(point, [0.5, 0.5, 0.5], 'x', x)) : quad.p\r\n    p = y ? p.map((point) => rotateAbout(point, [0.5, 0.5, 0.5], 'y', -y)) : p\r\n    const face = faceAfter(quad.face, x, y)\r\n    const shade = quad.shaded === false ? 1.0 : (FACE_SHADE[face] === undefined ? quad.shade : FACE_SHADE[face])\r\n    const turned = { p: p, uv: quad.uv, tex: quad.tex, shade: shade, mode: quad.mode,\r\n      face: face, shaded: quad.shaded }\r\n    if (quad.pick !== undefined) turned.pick = quad.pick\r\n    return turned\r\n  })\r\n}\r\n\r\nfunction degenerate(corners) {\r\n  for (let i = 0; i < 4; i++) {\r\n    for (let j = i + 1; j < 4; j++) {\r\n      const a = corners[i], b = corners[j]\r\n      if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) return true\r\n    }\r\n  }\r\n  return false\r\n}\r\n\r\nfunction quadsFromElements(elements, report) {\r\n  const quads = []\r\n  for (const element of elements) {\r\n    const x1 = element.from[0], y1 = element.from[1], z1 = element.from[2]\r\n    const x2 = element.to[0], y2 = element.to[1], z2 = element.to[2]\r\n    const rotation = element.rotation\r\n    const emitted = {}\r\n    for (const face of Object.keys(element.faces || {})) {\r\n      const data = element.faces[face]\r\n      if (data === undefined || data.tex === undefined) continue\r\n      let corners = faceCorners(x1, y1, z1, x2, y2, z2, face)\r\n      if (rotation) {\r\n        corners = corners.map((p) => rotateAbout(p, rotation.origin || [0, 0, 0], rotation.axis || 'y', rotation.angle || 0))\r\n      }\r\n      corners = corners.map((p) => [p[0] / 16, p[1] / 16, p[2] / 16])\r\n      if (degenerate(corners)) {\r\n        if (report !== undefined) report('退化面 ' + face + '：四角有重合，已跳过（几何代码写错了）')\r\n        continue\r\n      }\r\n      const uv = data.uv || [0, 0, 16, 16]\r\n      const base = [[uv[0], uv[1]], [uv[0], uv[3]], [uv[2], uv[3]], [uv[2], uv[1]]]\r\n      const steps = Math.trunc(data.rotation || 0) / 90\r\n      const uvs = [0, 1, 2, 3].map((i) => {\r\n        const pick = base[((i - steps) % 4 + 4) % 4]\r\n        return [pick[0] / 16, pick[1] / 16]\r\n      })\r\n      const fingerprint = corners.map((p) => p[0].toFixed(6) + ',' + p[1].toFixed(6) + ',' + p[2].toFixed(6)).sort().join('|')\r\n        + '#' + uvs.map((pair) => pair[0] + ',' + pair[1]).join('|') + '#' + data.tex\r\n      if (emitted[fingerprint] === true) continue\r\n      emitted[fingerprint] = true\r\n      quads.push({ p: corners, uv: uvs, tex: data.tex, shade: element.shade === false ? 1.0 : FACE_SHADE[face],\r\n        mode: 'opaque', face: face, shaded: element.shade !== false })\r\n    }\r\n  }\r\n  return quads\r\n}\r\n\r\nfunction translateQuads(quads, offset) {\r\n  if (!offset || (offset[0] === 0 && offset[1] === 0 && offset[2] === 0)) return quads\r\n  return quads.map((quad) => ({\r\n    p: quad.p.map((p) => [p[0] + offset[0], p[1] + offset[1], p[2] + offset[2]]),\r\n    uv: quad.uv, tex: quad.tex, shade: quad.shade, mode: quad.mode, face: quad.face,\r\n    shaded: quad.shaded,\r\n  }))\r\n}\r\n\r\nfunction cubeElements(pick) {\r\n  const faces = {}\r\n  for (const face of FACE_ORDER) faces[face] = { texture: pick[face], uv: [0, 0, 16, 16] }\r\n  return [{ from: [0, 0, 0], to: [16, 16, 16], faces: faces }]\r\n}\r\n\r\nconst CROSS_ELEMENTS = [\r\n  { from: [0.8, 0, 8], to: [15.2, 16, 8], rotation: { origin: [8, 8, 8], axis: 'y', angle: 45, rescale: true }, shade: false,\r\n    faces: { north: { uv: [0, 0, 16, 16], texture: '#cross' }, south: { uv: [0, 0, 16, 16], texture: '#cross' } } },\r\n  { from: [8, 0, 0.8], to: [8, 16, 15.2], rotation: { origin: [8, 8, 8], axis: 'y', angle: 45, rescale: true }, shade: false,\r\n    faces: { west: { uv: [0, 0, 16, 16], texture: '#cross' }, east: { uv: [0, 0, 16, 16], texture: '#cross' } } },\r\n]\r\n\r\nconst VANILLA_PARENTS = {\r\n  'block/block': { textures: {}, gui_light: 'side', display: { gui: {\r\n    rotation: [30, 225, 0], translation: [0, 0, 0], scale: [0.625, 0.625, 0.625] } } },\r\n  'block/cube': { parent: 'block/block', textures: { particle: '#north' },\r\n    elements: cubeElements({ down: '#down', up: '#up', north: '#north',\r\n      south: '#south', west: '#west', east: '#east' }) },\r\n  'block/cube_all': { parent: 'block/cube', textures: { particle: '#all', down: '#all', up: '#all',\r\n    north: '#all', south: '#all', west: '#all', east: '#all' } },\r\n  'block/cube_column': { parent: 'block/cube', textures: { particle: '#side', end: '#end', side: '#side',\r\n    down: '#end', up: '#end', north: '#side', south: '#side', west: '#side', east: '#side' } },\r\n  'block/cube_bottom_top': { parent: 'block/cube', textures: { particle: '#side', bottom: '#bottom',\r\n    top: '#top', side: '#side', down: '#bottom', up: '#top', north: '#side',\r\n    south: '#side', west: '#side', east: '#side' } },\r\n  'block/cross': { textures: { particle: '#cross' }, elements: CROSS_ELEMENTS },\r\n  'block/tinted_cross': { parent: 'block/cross', textures: {} },\r\n}\r\n\r\n\r\nfunction vanillaBare(parent) {\r\n  const prefix = 'minecraft:'\r\n  return parent.slice(0, prefix.length) === prefix ? parent.slice(prefix.length) : parent\r\n}\r\n\r\n\r\nfunction pngSizeOf(bytes) {\r\n  if (bytes === undefined || bytes === null || bytes.length === undefined || bytes.length < 24) return undefined\r\n  const magic = [137, 80, 78, 71, 13, 10, 26, 10]\r\n  for (let i = 0; i < magic.length; i++) if (bytes[i] !== magic[i]) return undefined\r\n  const width = ((bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19]) >>> 0\r\n  const height = ((bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23]) >>> 0\r\n  if (width === 0 || height === 0) return undefined\r\n  return { width: width, height: height }\r\n}\r\n\r\n\r\nfunction parentModelUsable(candidate) {\r\n  if (candidate === null || typeof candidate !== 'object') return false\r\n  if (Array.isArray(candidate.elements) && candidate.elements.length > 0) return true\r\n  if (typeof candidate.parent === 'string' && candidate.parent !== '') return true\r\n  return false\r\n}\r\n\r\nfunction resolveBlockModel(model, loadParent, resolveTexture, trace) {\r\n  const chain = []\r\n  let node = model\r\n  const seen = {}\r\n  for (let depth = 0; depth < 8 && node !== undefined; depth++) {\r\n    chain.push(node)\r\n    const parent = node.parent\r\n    if (typeof parent !== 'string' || seen[parent] === true) break\r\n    seen[parent] = true\r\n    const loaded = loadParent(parent)\r\n    let next\r\n    if (parentModelUsable(loaded)) {\r\n      next = loaded\r\n      if (Array.isArray(trace)) trace.push({ parent: parent, from: 'loaded' })\r\n    } else {\r\n      const key = VANILLA_PARENTS[parent] !== undefined ? parent\r\n        : (VANILLA_PARENTS[vanillaBare(parent)] !== undefined ? vanillaBare(parent) : '')\r\n      if (key !== '') {\r\n        next = VANILLA_PARENTS[key]\r\n        if (Array.isArray(trace)) {\r\n          trace.push({ parent: parent, from: 'builtin', key: key,\r\n            shell: loaded === undefined || loaded === null ? false : true })\r\n        }\r\n      } else {\r\n        if (Array.isArray(trace)) {\r\n          trace.push({ parent: parent, from: 'none',\r\n            shell: loaded === undefined || loaded === null ? false : true })\r\n        }\r\n        next = { textures: {} }\r\n      }\r\n    }\r\n    node = next\r\n  }\r\n  const textures = {}\r\n  for (let i = chain.length - 1; i >= 0; i--) {\r\n    const table = chain[i].textures\r\n    if (table) for (const key of Object.keys(table)) textures[key] = table[key]\r\n  }\r\n  let elements\r\n  for (const candidate of chain) {\r\n    if (Array.isArray(candidate.elements) && candidate.elements.length > 0) { elements = candidate.elements; break }\r\n  }\r\n  if (elements === undefined) return undefined\r\n  const textureKeys = Object.keys(textures)\r\n  const dereference = (reference, context) => {\r\n    let name = String(reference === undefined ? '' : reference)\r\n    for (let i = 0; i < 8 && name.charAt(0) === '#'; i++) {\r\n      const next = textures[name.slice(1)]\r\n      if (next === undefined) break\r\n      name = String(next)\r\n    }\r\n    return resolveTexture(name, context)\r\n  }\r\n  return elements.map((element, elementIndex) => {\r\n    const faces = {}\r\n    for (const face of Object.keys(element.faces || {})) {\r\n      const data = element.faces[face]\r\n      const raw = String(data === undefined || data.texture === undefined ? '' : data.texture)\r\n      const tex = dereference(data.texture,\r\n        { face: face, element: elementIndex, raw: raw, keys: textureKeys })\r\n      if (tex === undefined) continue\r\n      faces[face] = { tex: tex, uv: data.uv || [0, 0, 16, 16], rotation: data.rotation || 0 }\r\n    }\r\n    return { from: element.from, to: element.to, rotation: element.rotation, shade: element.shade, faces: faces }\r\n  })\r\n}\r\n\r\nconst FOOT_OFFSET = 1.5078125\r\nconst LIGHT0 = unit([0.2, 1.0, -0.7])\r\nconst LIGHT1 = unit([-0.2, 1.0, 0.7])\r\nfunction toWorld(point) { return [point[0] / 16, FOOT_OFFSET - point[1] / 16, -point[2] / 16] }\r\nfunction entityShade(normal) {\r\n  return 0.4 + 0.6 * (Math.max(0, dot(normal, LIGHT0)) + Math.max(0, dot(normal, LIGHT1)))\r\n}\r\nfunction place(point, pivot, rotation) {\r\n  let p = point\r\n  for (const axis of ['z', 'y', 'x']) {\r\n    const degrees = rotation === undefined ? 0 : (rotation[axis] || 0)\r\n    if (degrees) p = rotateAbout(p, [0, 0, 0], axis, degrees)\r\n  }\r\n  return add(p, pivot)\r\n}\r\nfunction modelCorners(x1, y1, z1, x2, y2, z2) {\r\n  return { A: [x1, y1, z1], B: [x2, y1, z1], C: [x2, y2, z1], D: [x1, y2, z1],\r\n    E: [x1, y1, z2], F: [x2, y1, z2], G: [x2, y2, z2], H: [x1, y2, z2] }\r\n}\r\nconst ENTITY_QUADS = [\r\n  ['right', 'FBCG', (u, v, w, h, d) => [u + d + w, v + d, u + d + w + d, v + d + h]],\r\n  ['left', 'AEHD', (u, v, w, h, d) => [u, v + d, u + d, v + d + h]],\r\n  ['top', 'FEAB', (u, v, w, h, d) => [u + d, v, u + d + w, v + d]],\r\n  ['bottom', 'CDHG', (u, v, w, h, d) => [u + d + w, v + d, u + d + w + w, v]],\r\n  ['front', 'BADC', (u, v, w, h, d) => [u + d, v + d, u + d + w, v + d + h]],\r\n  ['back', 'EFGH', (u, v, w, h, d) => [u + 2 * d + w, v + d, u + 2 * d + w + w, v + d + h]],\r\n]\r\n\r\nfunction entityQuads(spec, texId, mode) {\r\n  const quads = []\r\n  const texW = (spec.tex && spec.tex[0]) || 64\r\n  const texH = (spec.tex && spec.tex[1]) || 32\r\n  for (const part of spec.parts) {\r\n    const pivot = part.pivot || [0, 0, 0]\r\n    const rotation = part.rot || {}\r\n    for (const box of part.boxes) {\r\n      const ox = box.at[0], oy = box.at[1], oz = box.at[2]\r\n      const w = box.w, h = box.h, d = box.d\r\n      const inflate = box.inflate || 0\r\n      const table = modelCorners(ox - inflate, oy - inflate, oz - inflate, ox + w + inflate, oy + h + inflate, oz + d + inflate)\r\n      for (const entry of ENTITY_QUADS) {\r\n        const keys = entry[1]\r\n        const rect = entry[2](box.u, box.v, w, h, d)\r\n        const modelPts = [0, 1, 2, 3].map((i) => place(table[keys.charAt(i)], pivot, rotation))\r\n        const normal = unit(toWorld(cross(sub(modelPts[2], modelPts[1]), sub(modelPts[0], modelPts[1]))))\r\n        const u1 = rect[0], v1 = rect[1], u2 = rect[2], v2 = rect[3]\r\n        const uvs = [[u2, v1], [u1, v1], [u1, v2], [u2, v2]].map((pair) => [pair[0] / texW, pair[1] / texH])\r\n        quads.push({ p: modelPts.map(toWorld), uv: uvs, tex: texId, shade: entityShade(normal), mode: mode })\r\n      }\r\n    }\r\n  }\r\n  return quads\r\n}\r\n\r\nfunction boxOfQuads(quads) {\r\n  const min = [Infinity, Infinity, Infinity]\r\n  const max = [-Infinity, -Infinity, -Infinity]\r\n  for (const quad of quads) for (const p of quad.p) for (let i = 0; i < 3; i++) {\r\n    if (p[i] < min[i]) min[i] = p[i]\r\n    if (p[i] > max[i]) max[i] = p[i]\r\n  }\r\n  if (!isFinite(min[0])) return { min: [-1, -1, -1], max: [1, 1, 1] }\r\n  return { min: min, max: max }\r\n}\r\n\r\nconst BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'\r\nfunction toBase64(bytes) {\r\n  let out = ''\r\n  let i = 0\r\n  for (; i + 2 < bytes.length; i += 3) {\r\n    const n = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2]\r\n    out += BASE64[(n >> 18) & 63] + BASE64[(n >> 12) & 63] + BASE64[(n >> 6) & 63] + BASE64[n & 63]\r\n  }\r\n  const rest = bytes.length - i\r\n  if (rest === 1) {\r\n    const n = bytes[i] << 16\r\n    out += BASE64[(n >> 18) & 63] + BASE64[(n >> 12) & 63] + '=='\r\n  } else if (rest === 2) {\r\n    const n = (bytes[i] << 16) | (bytes[i + 1] << 8)\r\n    out += BASE64[(n >> 18) & 63] + BASE64[(n >> 12) & 63] + BASE64[(n >> 6) & 63] + '='\r\n  }\r\n  return out\r\n}\r\n\r\nconst SQUOTE = String.fromCharCode(39)\r\nconst BACKSLASH = String.fromCharCode(92)\r\nconst PICK_BEGIN = 'MCART_PICK_BEGIN'\r\nconst PICK_END = 'MCART_PICK_END'\r\n\r\nfunction utf16leBase64(text) {\r\n  const bytes = []\r\n  for (let i = 0; i < text.length; i++) {\r\n    const code = text.charCodeAt(i)\r\n    bytes.push(code & 255, (code >> 8) & 255)\r\n  }\r\n  return toBase64(Uint8Array.from(bytes))\r\n}\r\n\r\nfunction base64OfString(text) {\r\n  return toBase64(new TextEncoder().encode(String(text)))\r\n}\r\n\r\nfunction quoteRaw(b64) {\r\n  return SQUOTE + b64 + SQUOTE\r\n}\r\n\r\nfunction shellDecoded(value) {\r\n  return '\"$(printf %s ' + quoteRaw(base64OfString(value)) + ' | base64 -d)\"'\r\n}\r\n\r\nfunction parentOf(path) {\r\n  const normalized = String(path).replace(/[\\\\/]+$/, '')\r\n  const cut = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf(BACKSLASH))\r\n  if (cut < 0) return null\r\n  if (cut === 0) return '/'\r\n  const head = normalized.slice(0, cut)\r\n  const isDrive = head.length === 2 && head.charAt(1) === ':'\r\n  return isDrive ? head + BACKSLASH : head\r\n}\r\n\r\nfunction betweenMarkers(text) {\r\n  const raw = String(text === undefined || text === null ? '' : text)\r\n  const begin = raw.indexOf(PICK_BEGIN)\r\n  const end = raw.lastIndexOf(PICK_END)\r\n  if (begin < 0 || end < 0 || end <= begin) return ''\r\n  return raw.slice(begin + PICK_BEGIN.length, end).trim()\r\n}\r\n\r\nfunction beforeStderr(text) {\r\n  const raw = String(text === undefined || text === null ? '' : text)\r\n  const cut = raw.indexOf('[stderr]')\r\n  return (cut >= 0 ? raw.slice(0, cut) : raw).trim()\r\n}\r\n\r\nfunction releaseUnused(referenceBlocks, keep, referenceTextures, referenceAnimations) {\r\n  const doomed = []\r\n  for (const key of Array.from(referenceBlocks.keys())) {\r\n    if (key.indexOf('list:') === 0) continue\r\n    if (keep[key] === true) continue\r\n    doomed.push(key)\r\n  }\r\n  const stillUsed = {}\r\n  for (const key of Array.from(referenceBlocks.keys())) {\r\n    if (key.indexOf('list:') === 0) continue\r\n    if (doomed.indexOf(key) >= 0) continue\r\n    const entry = referenceBlocks.get(key)\r\n    if (entry === undefined || entry.load === undefined || entry.load.textures === undefined) continue\r\n    for (const value of entry.load.textures.values()) stillUsed[value] = true\r\n  }\r\n  let dropped = 0\r\n  for (const key of doomed) {\r\n    const entry = referenceBlocks.get(key)\r\n    if (entry !== undefined && entry.load !== undefined && entry.load.textures !== undefined) {\r\n      for (const value of entry.load.textures.values()) {\r\n        if (stillUsed[value] === true) continue\r\n        referenceTextures.delete(value)\r\n        referenceAnimations.delete(value)\r\n      }\r\n    }\r\n    referenceBlocks.delete(key)\r\n    dropped += 1\r\n  }\r\n  let held = 0\r\n  for (const key of referenceBlocks.keys()) if (key.indexOf('list:') !== 0) held += 1\r\n  return { dropped: dropped, held: held }\r\n}\r\n\r\nreturn {\r\n  apply(ctx) {\r\n    const fsOf = () => ctx.get('fs')\r\n    const sessionsOf = () => ctx.get('sessions')\r\n\r\n\r\n\r\n\r\n    const shellOf = () => ctx.get('shell')\r\n    const errors = []\r\n    let preloads = new Map()\r\n    let langs = new Map()\r\n    const indexCache = new Map()\r\n    const textureCache = {}\r\n    const referenceTextures = new Map()\r\n    const referenceAnimations = new Map()\r\n    const referenceBlocks = new Map()\r\n    const refSignatures = new Map()\r\n    let hasWslpath = null\r\n\r\n    function note(message) {\r\n      if (errors.indexOf(message) < 0) errors.push(message)\r\n    }\r\n\r\n    const messageOf = (error) => String(error && error.message ? error.message : error)\r\n\r\n    function localOf() {\r\n      if (typeof nodeFs === 'undefined' || nodeFs === null || nodeFs.available !== true) return null\r\n      return nodeFs\r\n    }\r\n\r\n\r\n    const subprocessOf = () => ctx.get('subprocess')\r\n\r\n\r\n    async function withDeadline(run, ms) {\r\n      const timer = ctx.get('timer')\r\n      if (timer === undefined || typeof timer.timeout !== 'function') return await run()\r\n      let timeout = false\r\n      const deadline = new Promise((resolve) => {\r\n        timer.timeout(() => { timeout = true; resolve() }, ms)\r\n      })\r\n      const finished = Promise.resolve().then(run).then((value) => ({ value: value }), (error) => ({ error: error }))\r\n      const winner = await Promise.race([finished, deadline.then(() => ({ deadline: true }))])\r\n      if (winner.deadline === true) return { deadlineExpired: true }\r\n      if (winner.error !== undefined) throw winner.error\r\n      return winner.value\r\n    }\r\n\r\n\r\n    async function runProcess(argv, options) {\r\n      const settings = options || {}\r\n      const service = subprocessOf()\r\n      if (service === undefined || typeof service.spawn !== 'function') return null\r\n      const maxBytes = settings.maxBytes === undefined ? 1024 * 1024 : settings.maxBytes\r\n      const collect = { maxBytes: maxBytes }\r\n      let handle = null\r\n      try {\r\n        handle = service.spawn({\r\n          argv: argv,\r\n          cwd: settings.cwd === undefined || settings.cwd === '' ? '.' : settings.cwd,\r\n          stdio: { stdin: 'ignore', stdout: collect, stderr: collect },\r\n          graceMs: settings.graceMs === undefined ? 5000 : settings.graceMs,\r\n        })\r\n      } catch (error) {\r\n        return { exitCode: null, text: '', err: 'subprocess.spawn 失败：' + messageOf(error), via: 'subprocess' }\r\n      }\r\n      let exitCode = null\r\n      try {\r\n        const done = await handle.done\r\n        exitCode = done === undefined || done === null || done.exitCode === undefined ? null : done.exitCode\r\n      } catch (error) {\r\n        exitCode = null\r\n      }\r\n      const read = (reader) => {\r\n        try { return reader === undefined ? '' : String(reader.readFrom(0).text) } catch (error) { return '' }\r\n      }\r\n      const collected = handle.collected || {}\r\n      return { exitCode: exitCode, text: read(collected.stdout), err: read(collected.stderr), via: 'subprocess' }\r\n    }\r\n\r\n\r\n    async function resolveExecutable(name) {\r\n      const service = subprocessOf()\r\n      if (service === undefined || typeof service.resolveExecutable !== 'function') return null\r\n      try {\r\n        const found = await service.resolveExecutable(name)\r\n        return typeof found === 'string' && found !== '' ? found : null\r\n      } catch (error) { return null }\r\n    }\r\n\r\n    const isPathLike = (value) => String(value).indexOf('/') >= 0 || String(value).indexOf(BACKSLASH) >= 0\r\n\r\n    function policyFor(workspaceRoot) {\r\n      if (typeof workspaceRoot !== 'string' || workspaceRoot === '') return undefined\r\n      return { mode: 'workspace-write', workspaceRoot: workspaceRoot }\r\n    }\r\n\r\n    function labelFor(namespace, kind, id) {\r\n      const table = langs.get(namespace)\r\n      if (table === undefined) return id\r\n      const tries = []\r\n      if (kind === 'project') tries.push('mc-art.project.' + namespace)\r\n      else if (kind === 'structure') tries.push('mc-art.structure.' + namespace + '.' + id, 'structure.' + namespace + '.' + id)\r\n      else tries.push(kind + '.' + namespace + '.' + id)\r\n      for (const key of tries) {\r\n        const found = table[key]\r\n        if (typeof found === 'string' && found.length > 0) return found\r\n      }\r\n      return id\r\n    }\r\n\r\n    function rel(root, absolute) {\r\n      const prefix = root.charAt(root.length - 1) === '/' ? root : root + '/'\r\n      return absolute.indexOf(prefix) === 0 ? absolute.slice(prefix.length) : absolute\r\n    }\r\n\r\n\r\n    async function isDirectoryOf(path) {\r\n      const info = await statOf(path)\r\n      return info !== undefined && info.type === 'directory'\r\n    }\r\n\r\n    async function listDir(path) {\r\n      const fs = fsOf()\r\n      if (fs !== undefined) {\r\n        try {\r\n          const target = await fs.resolve(path)\r\n          const info = await fs.stat(target)\r\n          if (info === undefined || info.type !== 'directory') return []\r\n          return await fs.listDir(target)\r\n        } catch (error) { return [] }\r\n      }\r\n      const local = localOf()\r\n      return local === null ? [] : await local.listDir(path)\r\n    }\r\n\r\n    async function readJson(path) {\r\n      const fs = fsOf()\r\n      if (fs !== undefined) {\r\n        try {\r\n          const target = await fs.resolve(path)\r\n          const info = await fs.stat(target)\r\n          if (info === undefined || info.type !== 'file') return undefined\r\n          return JSON.parse(await fs.readText(target))\r\n        } catch (error) { return undefined }\r\n      }\r\n      const local = localOf()\r\n      if (local === null) return undefined\r\n      const text = await local.readText(path)\r\n      if (typeof text !== 'string') return undefined\r\n      try { return JSON.parse(text) } catch (error) { return undefined }\r\n    }\r\n\r\n\r\n    async function readTextOf(path) {\r\n      const fs = fsOf()\r\n      if (fs !== undefined) {\r\n        try {\r\n          const target = await fs.resolve(path)\r\n          return await fs.readText(target)\r\n        } catch (error) { return undefined }\r\n      }\r\n      const local = localOf()\r\n      if (local === null) return undefined\r\n      const text = await local.readText(path)\r\n      return typeof text === 'string' ? text : undefined\r\n    }\r\n\r\n    async function statOf(path) {\r\n      const fs = fsOf()\r\n      if (fs !== undefined) {\r\n        try {\r\n          const target = await fs.resolve(path)\r\n          return await fs.stat(target)\r\n        } catch (error) { return undefined }\r\n      }\r\n      const local = localOf()\r\n      return local === null ? undefined : await local.stat(path)\r\n    }\r\n\r\n\r\n    async function readBytesOf(path, maxBytes) {\r\n      const fs = fsOf()\r\n      if (fs !== undefined) {\r\n        try {\r\n          const target = await fs.resolve(path)\r\n          return await fs.readBytes(target, undefined, maxBytes)\r\n        } catch (error) { /* 落到本地垫片 */ }\r\n      }\r\n      const local = localOf()\r\n      return local === null ? undefined : await local.readBytes(path, maxBytes)\r\n    }\r\n\r\n    async function dirSignature(path) {\r\n      const entries = await listDir(path)\r\n      const parts = []\r\n      for (const entry of entries) {\r\n        parts.push(entry.name + ':' + (entry.version === undefined ? '-' : String(entry.version)) + ':' + (entry.size === undefined ? '-' : String(entry.size)))\r\n      }\r\n      parts.sort()\r\n      return parts.join(',')\r\n    }\r\n\r\n    async function signatureOf(root) {\r\n      const pieces = []\r\n      const top = await listDir(root)\r\n      for (const entry of top) {\r\n        if (entry.type !== 'directory' || entry.name.charAt(0) === '.') continue\r\n        const dir = root + '/' + entry.name\r\n        const atlasInfo = await statOf(dir + '/mc-art.atlas.json')\r\n        pieces.push('A' + entry.name + ':' + (atlasInfo === undefined ? 'none' : String(atlasInfo.version) + ':' + String(atlasInfo.size)))\r\n        const assets = await listDir(dir + '/pack/assets')\r\n        for (const ns of assets) {\r\n          if (ns.type !== 'directory') continue\r\n          const base = dir + '/pack/assets/' + ns.name\r\n          pieces.push(await dirSignature(base + '/blockstates'))\r\n          pieces.push(await dirSignature(base + '/models/block'))\r\n          pieces.push(await dirSignature(base + '/lang'))\r\n          for (const kind of ['block', 'blocks', 'entity', 'item']) pieces.push(await dirSignature(base + '/textures/' + kind))\r\n        }\r\n      }\r\n      return pieces.join('|')\r\n    }\r\n\r\n    async function textureUrl(path) {\r\n      const info = await statOf(path)\r\n      if (info === undefined || info.type !== 'file') return undefined\r\n      const key = path + '@' + String(info.version) + ':' + String(info.size)\r\n      if (textureCache[key] !== undefined) return textureCache[key]\r\n      try {\r\n        const bytes = await readBytesOf(path, 8 * 1024 * 1024)\r\n        if (bytes === undefined) return undefined\r\n        const url = 'data:image/png;base64,' + toBase64(bytes)\r\n        textureCache[key] = url\r\n        return url\r\n      } catch (error) { return undefined }\r\n    }\r\n\r\n\r\n    function normalizePath(value) {\r\n      let text = String(value === undefined || value === null ? '' : value).split(BACKSLASH).join('/')\r\n      const drive = /^[A-Za-z]:\\//.test(text) ? text.slice(0, 2) : ''\r\n      if (drive !== '') text = text.slice(2)\r\n      const lead = text.charAt(0) === '/' ? '/' : ''\r\n      const parts = []\r\n      for (const piece of text.split('/')) {\r\n        if (piece === '' || piece === '.') continue\r\n        if (piece === '..') {\r\n          if (parts.length > 0 && parts[parts.length - 1] !== '..') parts.pop()\r\n          else parts.push('..')\r\n          continue\r\n        }\r\n        parts.push(piece)\r\n      }\r\n      return drive + lead + parts.join('/')\r\n    }\r\n\r\n\r\n    const samePath = (left, right) =>\r\n      platformOf() === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right\r\n\r\n\r\n    function packPathOf(project, value) {\r\n      const raw = String(value === undefined || value === null ? '' : value)\r\n      if (raw === '') return { ok: false, reason: '贴图句柄是空的，拒绝写' }\r\n      if (raw.indexOf('\\u0000') >= 0) return { ok: false, reason: '贴图句柄里有 NUL 字符，拒绝写' }\r\n      const projectDir = normalizePath(String(project.dir))\r\n      const pack = normalizePath(projectDir + '/pack')\r\n      const driveAbsolute = /^[A-Za-z]:[\\\\/]/.test(raw)\r\n      const absolute = driveAbsolute || raw.charAt(0) === '/' || raw.charAt(0) === BACKSLASH\r\n      const at = normalizePath(absolute ? raw : projectDir + '/' + raw.split(BACKSLASH).join('/'))\r\n      const inside = samePath(at, pack) || samePath(at.slice(0, pack.length + 1), pack + '/')\r\n      if (inside) return { ok: true, path: at }\r\n      const shape = driveAbsolute ? '盘符绝对路径'\r\n        : (absolute ? '前导斜杠的绝对路径'\r\n          : (raw.split(/[\\\\/]/).indexOf('..') >= 0 ? '相对路径里带 ..' : '包内相对路径'))\r\n      return { ok: false, reason: '这条贴图解析之后落在项目包外面（句柄形态：' + shape\r\n        + '；解析后 = ' + at + '；项目包 = ' + pack + '），拒绝写' }\r\n    }\r\n\r\n\r\n    function textureFileOf(project, value) {\r\n      const text = String(value === undefined || value === null ? '' : value).split(BACKSLASH).join('/')\r\n      if (text === '' || text.slice(0, 4) === 'ref:') return text\r\n      if (/^[A-Za-z]:\\//.test(text) || text.charAt(0) === '/') return text\r\n      const dir = project !== undefined && project !== null && typeof project.dir === 'string'\r\n        ? String(project.dir).split(BACKSLASH).join('/').replace(/\\/+$/, '') : ''\r\n      return dir === '' ? text : dir + '/' + text.replace(/^\\.\\//, '')\r\n    }\r\n\r\n    async function textureUrlFor(entry, project) {\r\n      if (typeof entry !== 'string' || entry === '') return undefined\r\n      if (entry.slice(0, 4) === 'ref:') return referenceTextures.get(entry)\r\n      return await textureUrl(textureFileOf(project, entry))\r\n    }\r\n\r\n    function animationsFor(ids) {\r\n      const out = {}\r\n      for (const id of ids) {\r\n        const animation = referenceAnimations.get(id)\r\n        if (animation !== undefined) { out[id] = animation; continue }\r\n        for (const load of preloads.values()) {\r\n          const own = load.animations === undefined ? undefined : load.animations.get(id)\r\n          if (own !== undefined) { out[id] = own; break }\r\n        }\r\n      }\r\n      return out\r\n    }\r\n\r\n\r\n    function animationNotesFor(ids) {\r\n      const out = {}\r\n      for (const id of ids) {\r\n        for (const load of preloads.values()) {\r\n          const note = load.animationNotes === undefined ? undefined : load.animationNotes.get(id)\r\n          if (note !== undefined) { out[id] = note; break }\r\n        }\r\n      }\r\n      return out\r\n    }\r\n\r\n\r\n    async function projectAnimationOf(pngPath) {\r\n      let text\r\n      try { text = await readTextOf(pngPath + '.mcmeta') } catch (error) { text = undefined }\r\n      if (text === undefined || text === null) return { why: '.mcmeta 读不出来（权限、编码或文件损坏）' }\r\n      let parsed\r\n      try { parsed = JSON.parse(String(text)) } catch (error) {\r\n        return { why: '.mcmeta 不是合法 JSON：' + messageOf(error) }\r\n      }\r\n      const declared = parsed !== null && typeof parsed === 'object' ? parsed.animation : undefined\r\n      if (declared === null || declared === undefined || typeof declared !== 'object') {\r\n        return { why: '.mcmeta 里没有 animation 段' }\r\n      }\r\n      let bytes\r\n      try { bytes = await readBytesOf(pngPath, 16 * 1024 * 1024) } catch (error) { bytes = undefined }\r\n      const size = pngSizeOf(bytes)\r\n      if (size === undefined) return { why: 'PNG 的尺寸读不出来（文件可能坏了）' }\r\n      if (size.height <= size.width || size.height % size.width !== 0) {\r\n        return { why: '图不是竖条（' + size.width + '×' + size.height + '；高必须是宽的整数倍）' }\r\n      }\r\n      const strip = Math.trunc(size.height / size.width)\r\n      const order = []\r\n      const listed = declared.frames\r\n      if (Array.isArray(listed)) {\r\n        for (const item of listed) {\r\n          const index = item !== null && typeof item === 'object' ? item.index : item\r\n          const number = Math.trunc(Number(index))\r\n          if (isFinite(number) && number >= 0 && number < strip) order.push(number)\r\n        }\r\n      }\r\n      if (order.length === 0) for (let index = 0; index < strip; index++) order.push(index)\r\n      const declaredTime = Math.trunc(Number(declared.frametime === undefined ? 1 : declared.frametime))\r\n      return { animation: {\r\n        frames: order.length,\r\n        strip: strip,\r\n        order: order,\r\n        frametime: !isFinite(declaredTime) || declaredTime < 1 ? 1 : declaredTime,\r\n        interpolate: declared.interpolate === true,\r\n      } }\r\n    }\r\n\r\n    async function preload(dir, namespace) {\r\n      const assets = dir + '/pack/assets/' + namespace\r\n      const models = new Map()\r\n      for (const entry of await listDir(assets + '/models/block')) {\r\n        if (entry.type !== 'file' || !/\\.json$/.test(entry.name)) continue\r\n        const parsed = await readJson(assets + '/models/block/' + entry.name)\r\n        if (parsed !== undefined) models.set('block/' + entry.name.replace(/\\.json$/, ''), parsed)\r\n      }\r\n      const textures = new Map()\r\n      const animations = new Map()\r\n      const animationNotes = new Map()\r\n      for (const kind of ['block', 'blocks', 'entity', 'item']) {\r\n        for (const entry of await listDir(assets + '/textures/' + kind)) {\r\n          if (entry.type !== 'file' || !/\\.png$/.test(entry.name)) continue\r\n          const relative = 'pack/assets/' + namespace + '/textures/' + kind + '/' + entry.name\r\n          textures.set(namespace + ':' + kind + '/' + entry.name.replace(/\\.png$/, ''), relative)\r\n          const absolute = assets + '/textures/' + kind + '/' + entry.name\r\n          const meta = await statOf(absolute + '.mcmeta')\r\n          if (meta === undefined || meta.type !== 'file') continue\r\n          const info = await projectAnimationOf(absolute)\r\n          if (info.animation !== undefined) {\r\n            animations.set(relative, info.animation)\r\n          } else {\r\n            animationNotes.set(relative, {\r\n              state: 'unreadable',\r\n              why: info.why,\r\n              text: '这张贴图**有**动画描述文件，但我读不了它：' + relative + '.mcmeta —— ' + info.why,\r\n            })\r\n          }\r\n        }\r\n      }\r\n      return { dir: dir, namespace: namespace, assets: assets, models: models, textures: textures,\r\n        animations: animations, animationNotes: animationNotes }\r\n    }\r\n\r\n    async function readLang(assets) {\r\n      const merged = {}\r\n      for (const locale of ['en_us', 'zh_cn']) {\r\n        const parsed = await readJson(assets + '/lang/' + locale + '.json')\r\n        if (parsed === undefined || parsed === null || typeof parsed !== 'object') continue\r\n        for (const key of Object.keys(parsed)) {\r\n          const value = parsed[key]\r\n          if (typeof value === 'string' && value.length > 0) merged[key] = value\r\n        }\r\n      }\r\n      return merged\r\n    }\r\n\r\n    let vanillaTextureHandles = new Map()\r\n    let vanillaTextureSignature = null\r\n\r\n    function texturePath(load, reference) {\r\n      let name = String(reference === undefined ? '' : reference)\r\n      let namespace = load.namespace\r\n      const colon = name.indexOf(':')\r\n      if (colon >= 0) { namespace = name.slice(0, colon); name = name.slice(colon + 1) }\r\n      const key = namespace + ':' + name\r\n      const own = load.textures.get(key)\r\n      if (own !== undefined) return own\r\n      const other = preloads.get(namespace)\r\n      if (other !== undefined) {\r\n        const hit = other.textures.get(key)\r\n        if (hit !== undefined) return hit\r\n      }\r\n      const fetched = vanillaTextureHandles.get(key)\r\n      return fetched === undefined ? undefined : fetched\r\n    }\r\n\r\n    function elementsOf(load, modelName, extra, unresolved, trace) {\r\n      let key = modelName\r\n      const colon = key.indexOf(':')\r\n      if (colon >= 0) key = key.slice(colon + 1)\r\n      const model = load.models.get(key) || (extra === undefined ? undefined : extra.get(key))\r\n      if (model === undefined) return undefined\r\n      return resolveBlockModel(model, (id) => {\r\n        let parentKey = id\r\n        const c = parentKey.indexOf(':')\r\n        if (c >= 0) parentKey = parentKey.slice(c + 1)\r\n        const own = load.models.get(parentKey)\r\n        if (own !== undefined) return own\r\n        if (extra === undefined) return undefined\r\n        return extra.get(id) || extra.get(parentKey) || extra.get('minecraft:' + parentKey)\r\n      }, (reference, context) => {\r\n        const tex = texturePath(load, reference)\r\n        if (tex === undefined && typeof unresolved === 'function') unresolved(String(reference), context)\r\n        return tex\r\n      }, trace)\r\n    }\r\n\r\n    const vanillaModels = new Map()\r\n\r\n\r\n    function chainGaps(load, modelName, extra) {\r\n      const project = []\r\n      const vanilla = []\r\n      const seen = {}\r\n      let cycle = false\r\n      let key = String(modelName === undefined ? '' : modelName)\r\n      let nameNamespace = load.namespace\r\n      const colon = key.indexOf(':')\r\n      if (colon >= 0) { nameNamespace = key.slice(0, colon); key = key.slice(colon + 1) }\r\n      const own = (namespace) => namespace === '' || namespace === load.namespace\r\n      for (let depth = 0; depth < 24; depth++) {\r\n        const fromExtra = extra === undefined ? undefined\r\n          : (extra.get(key) !== undefined ? extra.get(key) : extra.get('minecraft:' + key))\r\n        const model = load.models.get(key) || fromExtra\r\n        if (model === undefined) {\r\n          if (key === '') break\r\n          const isOwn = own(nameNamespace)\r\n          const entry = { name: isOwn ? key : nameNamespace + ':' + key, bare: key,\r\n            namespace: isOwn ? load.namespace : nameNamespace, kind: isOwn ? 'project' : 'vanilla' }\r\n          if (isOwn) project.push(entry); else vanilla.push(entry)\r\n          break\r\n        }\r\n        const parent = model.parent\r\n        if (typeof parent !== 'string' || parent === '') break\r\n        if (seen[parent] === true) { cycle = true; break }\r\n        seen[parent] = true\r\n        let parentNamespace = 'minecraft'\r\n        let bare = parent\r\n        const at = parent.indexOf(':')\r\n        if (at >= 0) { parentNamespace = parent.slice(0, at); bare = parent.slice(at + 1) }\r\n        if (load.models.get(bare) !== undefined) { key = bare; nameNamespace = parentNamespace; continue }\r\n        if (extra !== undefined && (extra.get(parent) !== undefined || extra.get(bare) !== undefined)) {\r\n          key = bare; nameNamespace = parentNamespace; continue\r\n        }\r\n        if (VANILLA_PARENTS[parent] !== undefined || VANILLA_PARENTS[bare] !== undefined) break\r\n        const isOwn = own(parentNamespace)\r\n        const entry = { name: parent, bare: bare, namespace: parentNamespace,\r\n          kind: isOwn ? 'project' : 'vanilla' }\r\n        if (isOwn) project.push(entry); else vanilla.push(entry)\r\n        break\r\n      }\r\n      return { project: project, vanilla: vanilla, cycle: cycle }\r\n    }\r\n\r\n\r\n    function fixPathOf(load, entry, directory) {\r\n      if (entry.kind === 'project') {\r\n        const rest = entry.bare.replace(/^block\\//, '')\r\n        return 'pack/assets/' + load.namespace + '/models/block/' + rest + '.json'\r\n      }\r\n      const where = directory === ''\r\n        ? '把参考目录指到 .minecraft/versions/<版本>（面板设置里那一栏）'\r\n        : directory + ' 里的 <版本>.jar'\r\n      return where + ' → assets/' + (entry.namespace || 'minecraft') + '/models/' + entry.bare + '.json'\r\n    }\r\n\r\n\r\n    async function referenceLooksReadable(directory) {\r\n      const hasJar = async (dir) => {\r\n        for (const entry of await listDir(dir)) {\r\n          if (entry.type === 'file' && /\\.jar$/i.test(entry.name)) return true\r\n        }\r\n        return false\r\n      }\r\n      const hasTree = async (dir) => {\r\n        for (const entry of await listDir(dir + '/assets')) {\r\n          if (entry.type !== 'directory') continue\r\n          if (entry.name === 'indexes' || entry.name === 'objects' || entry.name === 'skins') continue\r\n          return true\r\n        }\r\n        return false\r\n      }\r\n      if (await hasJar(directory)) return true\r\n      if (await hasJar(directory + '/mods')) return true\r\n      if (await hasTree(directory)) return true\r\n      for (const version of await listDir(directory + '/versions')) {\r\n        if (version.type !== 'directory') continue\r\n        if (await hasJar(directory + '/versions/' + version.name)) return true\r\n        if (await hasJar(directory + '/versions/' + version.name + '/mods')) return true\r\n        if (await hasTree(directory + '/versions/' + version.name)) return true\r\n      }\r\n      return false\r\n    }\r\n\r\n    async function fetchVanillaModels(project, names) {\r\n      const directory = await referenceDirectory(project)\r\n      if (directory === '') {\r\n        return { models: new Map(), reason: 'no-reference-directory',\r\n          why: '这台机器上还没有设置参考目录（面板设置里指到 .minecraft/versions/<版本>，'\r\n            + '或写进 mc-art.settings.json 的 reference.directory）' }\r\n      }\r\n      const signature = await refSignatureOf(directory)\r\n      const want = []\r\n      for (const name of names) {\r\n        const cached = vanillaModels.get(signature + '|' + name)\r\n        if (cached === undefined) want.push(name)\r\n        else if (cached !== null) want.push(name)      // 命中缓存，下面照旧装进 out\r\n      }\r\n      if (want.length > 0) {\r\n        const extractor = await findTool(project.dir, EXTRACT_SCRIPT)\r\n        if (extractor === null || extractor === undefined) {\r\n          return { models: new Map(), reason: 'extractor-failed', why: '找不到 ' + EXTRACT_SCRIPT }\r\n        }\r\n        const parsed = await runScanner(extractor, ['--root', directory, '--model', want.join(',')],\r\n          120000, project.dir, REFERENCE_MAX_BYTES)\r\n        if (parsed === undefined || parsed.error !== undefined) {\r\n          const why = String(parsed === undefined ? '抽取脚本没有返回任何东西' : parsed.error)\r\n          let reason = 'extractor-failed'\r\n          if (why.indexOf('路径不存在') >= 0) reason = 'reference-jar-missing'\r\n          else if (why.indexOf('一个模型都没取到') >= 0) {\r\n            reason = (await referenceLooksReadable(directory)) ? 'vanilla-parent-missing' : 'reference-jar-missing'\r\n          }\r\n          return { models: new Map(), reason: reason, why: why }\r\n        }\r\n        for (const key of Object.keys(parsed.models || {})) {\r\n          const bare = key.indexOf(':') >= 0 ? key.slice(key.indexOf(':') + 1) : key\r\n          vanillaModels.set(signature + '|' + key, parsed.models[key])\r\n          vanillaModels.set(signature + '|' + bare, parsed.models[key])\r\n        }\r\n        for (const name of want) {\r\n          if (vanillaModels.get(signature + '|' + name) === undefined) vanillaModels.set(signature + '|' + name, null)\r\n        }\r\n      }\r\n      const out = new Map()\r\n      for (const name of names) {\r\n        const hit = vanillaModels.get(signature + '|' + name)\r\n        if (hit !== undefined && hit !== null) out.set(name, hit)\r\n      }\r\n      return { models: out, reason: '', why: '' }\r\n    }\r\n\r\n\r\n    async function fetchVanillaTextures(project, names) {\r\n      if (names.length === 0) return { fetched: 0, reason: '', why: '' }\r\n      const directory = await referenceDirectory(project)\r\n      if (directory === '') {\r\n        return { fetched: 0, reason: 'no-reference-directory',\r\n          why: '这台机器上还没有设置参考目录（原版贴图在 .minecraft/versions/<版本> 的 jar 里）' }\r\n      }\r\n      const signature = await refSignatureOf(directory)\r\n      if (vanillaTextureSignature !== signature) {\r\n        vanillaTextureHandles = new Map()\r\n        vanillaTextureSignature = signature\r\n      }\r\n      const want = names.filter((name) => vanillaTextureHandles.get(name) === undefined)\r\n      if (want.length === 0) return { fetched: 0, reason: '', why: '' }\r\n      const extractor = await findTool(project.dir, EXTRACT_SCRIPT)\r\n      if (extractor === null || extractor === undefined) {\r\n        return { fetched: 0, reason: 'extractor-failed', why: '找不到 ' + EXTRACT_SCRIPT }\r\n      }\r\n      const parsed = await runScanner(extractor, ['--root', directory, '--textures', want.join(',')],\r\n        120000, project.dir, REFERENCE_MAX_BYTES)\r\n      if (parsed === undefined || parsed.error !== undefined) {\r\n        const why = String(parsed === undefined ? '抽取脚本没有返回任何东西' : parsed.error)\r\n        let reason = 'extractor-failed'\r\n        if (why.indexOf('路径不存在') >= 0) reason = 'reference-jar-missing'\r\n        else if (why.indexOf('一个贴图都没取到') >= 0) {\r\n          reason = (await referenceLooksReadable(directory)) ? 'textures-unresolved' : 'reference-jar-missing'\r\n        }\r\n        return { fetched: 0, reason: reason, why: why }\r\n      }\r\n      let fetched = 0\r\n      for (const key of Object.keys(parsed.textures || {})) {\r\n        const refKey = 'ref:' + key\r\n        referenceTextures.set(refKey, 'data:image/png;base64,' + parsed.textures[key])\r\n        const animation = (parsed.animations || {})[key]\r\n        if (animation !== undefined && animation !== null) referenceAnimations.set(refKey, animation)\r\n        vanillaTextureHandles.set(key, refKey)\r\n        const file = (parsed.textureFiles || {})[key]\r\n        if (typeof file === 'string') {\r\n          const parts = file.split('/')\r\n          if (parts.length > 3 && parts[0] === 'assets') {\r\n            vanillaTextureHandles.set(parts[1] + ':' + parts.slice(3).join('/').replace(/\\.png$/, ''), refKey)\r\n          }\r\n        }\r\n        fetched += 1\r\n      }\r\n      return { fetched: fetched, reason: '', why: '' }\r\n    }\r\n\r\n\r\n    async function projectElements(project, load, modelName) {\r\n      const extra = new Map()\r\n      let scan = chainGaps(load, modelName, extra)\r\n      for (let round = 0; round < 4; round++) {\r\n        if (scan.cycle === true) {\r\n          return { elements: undefined, extra: extra, project: [], vanilla: [], cycle: true,\r\n            fetchReason: 'parent-cycle', why: '', unresolvedTextures: [], textureWhy: '' }\r\n        }\r\n        if (scan.project.length > 0) {\r\n          return { elements: undefined, extra: extra, project: scan.project, vanilla: [], cycle: false,\r\n            fetchReason: '', why: '', unresolvedTextures: [], textureWhy: '' }\r\n        }\r\n        if (scan.vanilla.length === 0) break\r\n        const fetched = await fetchVanillaModels(project, scan.vanilla.map((entry) => entry.name))\r\n        if (fetched.models.size === 0) {\r\n          return { elements: undefined, extra: extra, project: [], vanilla: scan.vanilla, cycle: false,\r\n            fetchReason: fetched.reason === undefined ? '' : fetched.reason, why: fetched.why,\r\n            unresolvedTextures: [], textureWhy: '' }\r\n        }\r\n        for (const pair of fetched.models.entries()) extra.set(pair[0], pair[1])\r\n        scan = chainGaps(load, modelName, extra)\r\n      }\r\n      let unresolvedTextures = []\r\n      let bareWords = []\r\n      let danglingVariables = []\r\n      const collect = (name, context) => {\r\n        if (unresolvedTextures.indexOf(name) < 0) unresolvedTextures.push(name)\r\n        const info = context === undefined || context === null ? {} : context\r\n        const raw = String(info.raw === undefined ? '' : info.raw)\r\n        const keys = Array.isArray(info.keys) ? info.keys : []\r\n        const face = String(info.face === undefined ? '' : info.face)\r\n        const bare = raw !== '' && raw.indexOf('#') < 0 && raw.indexOf(':') < 0 && raw.indexOf('/') < 0\r\n        if (bare && keys.indexOf(raw) >= 0) {\r\n          if (!bareWords.some((one) => one.raw === raw)) bareWords.push({ raw: raw, face: face, keys: keys.slice(0, 12) })\r\n          return\r\n        }\r\n        if (raw.charAt(0) === '#' && keys.indexOf(raw.slice(1)) < 0) {\r\n          if (!danglingVariables.some((one) => one.name === raw)) {\r\n            danglingVariables.push({ name: raw, face: face })\r\n          }\r\n        }\r\n      }\r\n      let trace = []\r\n      let elements = elementsOf(load, modelName, extra, collect, trace)\r\n      let textureWhy = ''\r\n      if (unresolvedTextures.length > 0) {\r\n        const wanted = unresolvedTextures.map((name) =>\r\n          name.indexOf(':') >= 0 ? name : load.namespace + ':' + name)\r\n        const fetched = await fetchVanillaTextures(project, wanted)\r\n        textureWhy = fetched.why\r\n        if (fetched.fetched > 0) {\r\n          unresolvedTextures = []\r\n          bareWords = []\r\n          danglingVariables = []\r\n          trace = []\r\n          elements = elementsOf(load, modelName, extra, collect, trace)\r\n        }\r\n      }\r\n      return { elements: elements, extra: extra, project: scan.project, vanilla: scan.vanilla,\r\n        cycle: scan.cycle === true, fetchReason: '', why: '',\r\n        unresolvedTextures: unresolvedTextures, bareWords: bareWords,\r\n        danglingVariables: danglingVariables, textureWhy: textureWhy, trace: trace }\r\n    }\r\n\r\n\r\n    function modelsInState(state) {\r\n      const out = []\r\n      const seen = {}\r\n      const push = (value) => {\r\n        if (value === undefined || value === null) return\r\n        if (Array.isArray(value)) { for (const item of value) push(item); return }\r\n        if (typeof value !== 'object') return\r\n        const model = value.model\r\n        if (typeof model === 'string' && model !== '' && seen[model] !== true) {\r\n          seen[model] = true\r\n          out.push(model)\r\n        }\r\n      }\r\n      if (state === undefined || state === null || typeof state !== 'object') return out\r\n      if (state.variants !== undefined && state.variants !== null && typeof state.variants === 'object') {\r\n        for (const key of Object.keys(state.variants)) push(state.variants[key])\r\n      }\r\n      if (Array.isArray(state.multipart)) {\r\n        for (const part of state.multipart) {\r\n          if (part === null || typeof part !== 'object') continue\r\n          push(part.apply)\r\n        }\r\n      }\r\n      return out\r\n    }\r\n\r\n\r\n    function modelRank(id, name) {\r\n      const base = String(name).replace(/^[^:]*:/, '').replace(/^block\\//, '').replace(/\\.json$/, '')\r\n      if (base === id) return 0\r\n      if (/_post$/.test(base)) return 1\r\n      if (/_bottom$/.test(base)) return 2\r\n      if (base.indexOf(id) === 0) return 3\r\n      return 4\r\n    }\r\n\r\n    function chooseModel(load, id, models) {\r\n      if (models.length === 0) return { model: 'block/' + id, guessed: true }\r\n      const inPack = (name) => load.models.get(String(name).replace(/^[^:]*:/, '')) !== undefined\r\n      let best = null\r\n      for (const name of models) {\r\n        if (!inPack(name)) continue\r\n        const rank = modelRank(id, name)\r\n        if (best === null || rank < best.rank) best = { model: name, rank: rank }\r\n      }\r\n      if (best !== null) return { model: best.model, guessed: false }\r\n      return { model: models[0], guessed: false }\r\n    }\r\n\r\n    async function blockIds(load) {\r\n      const out = []\r\n      for (const entry of await listDir(load.assets + '/blockstates')) {\r\n        if (entry.type !== 'file' || !/\\.json$/.test(entry.name)) continue\r\n        const id = entry.name.replace(/\\.json$/, '')\r\n        const state = await readJson(load.assets + '/blockstates/' + entry.name)\r\n        const models = modelsInState(state)\r\n        const chosen = chooseModel(load, id, models)\r\n        out.push({ id: id, model: chosen.model, models: models, guessed: chosen.guessed })\r\n      }\r\n      return out\r\n    }\r\n\r\n    async function build(root) {\r\n      const staged = []\r\n      const nextPreloads = new Map()\r\n      const nextLangs = new Map()\r\n      for (const entry of await listDir(root)) {\r\n        if (entry.type !== 'directory' || entry.name.charAt(0) === '.') continue\r\n        const dir = root + '/' + entry.name\r\n        const atlas = await readJson(dir + '/mc-art.atlas.json')\r\n        const assets = await listDir(dir + '/pack/assets')\r\n        const namespaces = []\r\n        for (const candidate of assets) if (candidate.type === 'directory') namespaces.push(candidate.name)\r\n        if (namespaces.length === 0 && atlas === undefined) continue\r\n        const namespace = (atlas && typeof atlas.namespace === 'string' && namespaces.indexOf(atlas.namespace) >= 0)\r\n          ? atlas.namespace : namespaces[0]\r\n        if (namespace === undefined) continue\r\n        const load = await preload(dir, namespace)\r\n        nextPreloads.set(namespace, load)\r\n        nextLangs.set(namespace, await readLang(load.assets))\r\n        staged.push({ entry: entry.name, dir: dir, atlas: atlas, namespace: namespace, load: load })\r\n      }\r\n      preloads = nextPreloads\r\n      langs = nextLangs\r\n\r\n      const projects = []\r\n      for (const item of staged) {\r\n        const namespace = item.namespace\r\n        const atlas = item.atlas\r\n        const blocks = []\r\n        for (const block of await blockIds(item.load)) {\r\n          blocks.push({ id: block.id, title: labelFor(namespace, 'block', block.id) })\r\n        }\r\n        projects.push({\r\n          id: item.entry, title: labelFor(namespace, 'project', item.entry),\r\n          namespace: namespace, root: root, dir: item.dir, blocks: blocks,\r\n          entities: (atlas && atlas.entities ? atlas.entities : []).map((e) => ({ id: e.id, title: labelFor(namespace, 'entity', e.id) })),\r\n          biomes: (atlas && atlas.biomes ? atlas.biomes : []).map((b) => ({ id: b.id, title: labelFor(namespace, 'biome', b.id) })),\r\n          structures: (atlas && atlas.structures ? atlas.structures : []).map((s) => ({ id: s.id, title: labelFor(namespace, 'structure', s.id) })),\r\n        })\r\n      }\r\n      return { projects: projects, preloads: nextPreloads, langs: nextLangs }\r\n    }\r\n\r\n    async function indexOf(root) {\r\n      const signature = await signatureOf(root)\r\n      const cached = indexCache.get(root)\r\n      if (cached !== undefined && cached.signature === signature) {\r\n        preloads = cached.preloads\r\n        langs = cached.langs\r\n        return { projects: cached.projects, cached: true }\r\n      }\r\n      const built = await build(root)\r\n      indexCache.set(root, { signature: signature, projects: built.projects, preloads: built.preloads, langs: built.langs })\r\n      return { projects: built.projects, cached: false }\r\n    }\r\n\r\n    async function projectFor(root, projectId) {\r\n      if (root === '' || projectId === '') return undefined\r\n      const index = await indexOf(root)\r\n      return index.projects.filter((item) => item.id === projectId)[0]\r\n    }\r\n\r\n    async function looksLikeProject(dir) {\r\n      if ((await statOf(dir + '/mc-art.atlas.json')) !== undefined) return true\r\n      const assets = await listDir(dir + '/pack/assets')\r\n      return assets.length > 0\r\n    }\r\n\r\n    const SCAN_SCRIPT = 'tools/mcart_scan_refs.py'\r\n    const EXTRACT_SCRIPT = 'tools/mcart_extract_block.py'\r\n    const REFERENCE_MAX_BYTES = 8 * 1024 * 1024\r\n    const toolPaths = new Map()\r\n\r\n\r\n    function trimTrailing(value) {\r\n      let at = String(value === undefined || value === null ? '' : value)\r\n      while (at.length > 1 && (at.charAt(at.length - 1) === '/' || at.charAt(at.length - 1) === BACKSLASH)) {\r\n        at = at.slice(0, at.length - 1)\r\n      }\r\n      return at\r\n    }\r\n\r\n\r\n    function absoluteOf(value) {\r\n      const raw = String(value === undefined || value === null ? '' : value)\r\n      if (raw === '') return ''\r\n      if (raw.charAt(0) === '/' || /^[A-Za-z]:[\\\\/]/.test(raw) || raw.slice(0, 2) === '\\\\\\\\') return raw\r\n      const cwd = (typeof process !== 'undefined' && process !== null && typeof process.cwd === 'function')\r\n        ? process.cwd() : ''\r\n      if (cwd === '') return raw\r\n      return trimTrailing(cwd.split(BACKSLASH).join('/')) + '/' + raw\r\n    }\r\n\r\n    async function findTool(start, relative) {\r\n      const base = absoluteOf(trimTrailing(start))\r\n      const cacheKey = relative + '|' + base\r\n      if (toolPaths.has(cacheKey)) return toolPaths.get(cacheKey)\r\n      let found = null\r\n      for (const candidate of skillToolCandidates(relative)) {\r\n        const full = absoluteOf(trimTrailing(candidate))\r\n        const info = await statOf(full)\r\n        if (info !== undefined && info.type === 'file') { found = full; break }\r\n      }\r\n      if (found === null) {\r\n        let at = base\r\n        for (let depth = 0; depth < 5 && at !== ''; depth++) {\r\n          const info = await statOf(at + '/' + relative)\r\n          if (info !== undefined && info.type === 'file') { found = at + '/' + relative; break }\r\n          at = parentOf(at) || ''\r\n        }\r\n      }\r\n      toolPaths.set(cacheKey, found)\r\n      return found\r\n    }\r\n\r\n    async function findScanner(start) { return await findTool(start, SCAN_SCRIPT) }\r\n\r\n\r\n    function skillToolCandidates(relative) {\r\n      const out = []\r\n      const push = (value) => {\r\n        if (typeof value !== 'string' || value === '') return\r\n        const trimmed = value.charAt(value.length - 1) === '/' ? value.slice(0, value.length - 1) : value\r\n        if (trimmed !== '' && out.indexOf(trimmed) < 0) out.push(trimmed)\r\n      }\r\n      const dir = moduleDirOf()\r\n      if (dir !== '') {\r\n        const pkg = parentOf(dir) || ''                       // <包>/lib → <包>\r\n        const above = pkg === '' ? '' : (parentOf(pkg) || '')  // <包> → profile / 仓库根\r\n        const base = relative.slice(relative.lastIndexOf('/') + 1)\r\n        push(pkg + '/python/' + base)\r\n        push(above + '/python/' + base)\r\n        push(above + '/' + relative)\r\n        push(pkg + '/preset/mc-studio/skills/mc-art/' + relative)\r\n        push(above + '/preset/mc-studio/skills/mc-art/' + relative)\r\n        push(above + '/skills/mc-art/' + relative)\r\n      }\r\n      const named = envOf('MC_ART_SKILL_DIR')\r\n      if (named !== '') push(named + '/' + relative)\r\n      const home = envOf('USERPROFILE') || envOf('HOME')\r\n      const dshHome = envOf('DSH_HOME') || (home === '' ? '' : home + '/.dsh')\r\n      if (dshHome !== '') push(dshHome + '/skills/mc-art/' + relative)\r\n      if (home !== '') push(home + '/.agents/skills/mc-art/' + relative)\r\n      return out\r\n    }\r\n\r\n    const PYTHON_CANDIDATES = [\r\n      { bin: 'python3', args: [] },\r\n      { bin: 'python', args: [] },\r\n      { bin: 'py', args: ['-3'] },\r\n      { bin: 'py', args: [] },\r\n    ]\r\n    let pythonLauncher = ''\r\n    let pythonExe = ''        // 原样的可执行（subprocess 用 argv，shell 用转义过的 launcher）\r\n    let pythonArgs = []       // 解释器自己的参数（`py -3` 的那个 -3）\r\n    let pythonVia = null      // 'subprocess' | 'shell' —— 出错时要说清走的哪条\r\n    let pythonWhy = null\r\n\r\n\r\n    function bundledPythonDirs() {\r\n      const out = []\r\n      const push = (value) => {\r\n        if (typeof value !== 'string' || value === '') return\r\n        const trimmed = value.charAt(value.length - 1) === '/' ? value.slice(0, value.length - 1) : value\r\n        if (trimmed !== '' && out.indexOf(trimmed) < 0) out.push(trimmed)\r\n      }\r\n      push(envOf('DSH_DESKTOP_PRIMARY_RUNTIME_DIR'))\r\n      if (typeof process !== 'undefined' && Array.isArray(process.argv)) {\r\n        for (const value of process.argv) {\r\n          if (typeof value === 'string' && /(^|[\\\\/])runtime[\\\\/]primary-runtime$/.test(value)) push(value)\r\n        }\r\n      }\r\n      if (typeof process !== 'undefined' && typeof process.execPath === 'string' && process.execPath !== '') {\r\n        const exeDir = parentOf(process.execPath.split(BACKSLASH).join('/')) || ''\r\n        if (exeDir !== '') push(exeDir + '/resources/runtime/primary-runtime')\r\n      }\r\n      const home = envOf('USERPROFILE') || envOf('HOME')\r\n      const dshHome = envOf('DSH_HOME') || (home === '' ? '' : home + '/.dsh')\r\n      if (dshHome !== '') {\r\n        push(dshHome + '/dsh-runtimes/dsh-primary-runtime')\r\n        push(dshHome + '/dsh-runtimes/dsh-primary-runtime/dependencies')\r\n      }\r\n      const dir = moduleDirOf()\r\n      if (dir !== '') {\r\n        const pkg = parentOf(dir) || ''\r\n        const profile = pkg === '' ? '' : (parentOf(pkg) || '')\r\n        const appDsh = profile === '' ? '' : (parentOf(profile) || '')\r\n        const resources = appDsh === '' ? '' : (parentOf(appDsh) || '')\r\n        if (resources !== '') {\r\n          push(resources + '/runtime/primary-runtime')\r\n          push(resources + '/runtime/primary-runtime/dependencies')\r\n        }\r\n      }\r\n      return out\r\n    }\r\n\r\n\r\n    function pythonCandidateList() {\r\n      const out = []\r\n      const seen = {}\r\n      const push = (bin, args, guess) => {\r\n        if (typeof bin !== 'string' || bin === '') return\r\n        const list = Array.isArray(args) ? args : []\r\n        const key = bin + ' ' + list.join(' ')\r\n        if (seen[key] === true) return\r\n        seen[key] = true\r\n        out.push({ bin: bin, args: list, guess: guess === true })\r\n      }\r\n      push(envOf('MC_ART_PYTHON'), [], false)\r\n      for (const candidate of PYTHON_CANDIDATES) push(candidate.bin, candidate.args, false)\r\n      for (const dir of bundledPythonDirs()) {\r\n        push(dir + '/python/python.exe', [], true)    // Windows: dependencies/python/python.exe\r\n        push(dir + '/python/bin/python3', [], true)   // POSIX:    dependencies/python/bin/python3\r\n        push(dir + '/python/bin/python', [], true)\r\n      }\r\n      return out\r\n    }\r\n\r\n\r\n    function pythonCandidates() {\r\n      return pythonCandidateList().map((candidate) =>\r\n        candidate.bin + (candidate.args.length === 0 ? '' : ' ' + candidate.args.join(' ')))\r\n    }\r\n\r\n\r\n    const pythonLabel = (candidate) =>\r\n      candidate.bin + (candidate.args.length === 0 ? '' : ' ' + candidate.args.join(' '))\r\n\r\n    async function resolvePython(workspaceRoot) {\r\n      if (pythonLauncher !== '') return pythonLauncher\r\n      const dialect = await currentShell(workspaceRoot)\r\n      const tried = []\r\n      for (const candidate of pythonCandidateList()) {\r\n        const pathLike = isPathLike(candidate.bin)\r\n        if (candidate.guess === true && pathLike) {\r\n          const info = await statOf(candidate.bin)\r\n          if (info === undefined || info.type !== 'file') continue\r\n        }\r\n        const probe = ['-c', 'print(1)']\r\n        if (pathLike || subprocessOf() !== undefined) {\r\n          const exe = pathLike ? candidate.bin : await resolveExecutable(candidate.bin)\r\n          if (exe !== null) {\r\n            const done = await runProcess([exe].concat(candidate.args, probe), { maxBytes: 4096 })\r\n            if (done !== null) {\r\n              if (done.exitCode === 0 && String(done.text).trim() === '1') {\r\n                pythonExe = exe\r\n                pythonArgs = candidate.args\r\n                pythonVia = 'subprocess'\r\n                pythonLauncher = pythonLabel(candidate)\r\n                return pythonLauncher\r\n              }\r\n              tried.push(pythonLabel(candidate) + '(subprocess exit=' + String(done.exitCode) +\r\n                (String(done.err).trim() === '' ? '' : ' ' + String(done.err).trim().slice(0, 60)) + ')')\r\n              continue\r\n            }\r\n          }\r\n        }\r\n        const head = pathLike ? dialect.word(candidate.bin) : candidate.bin\r\n        const words = [head].concat(candidate.args.map((arg) => dialect.word(arg)))\r\n        const probeShell = await runShell(words.join(' ') + ' -c \"print(1)\"', 20000,\r\n          policyFor(workspaceRoot), 4096)\r\n        if (probeShell.exitCode === 0 && String(probeShell.text).trim() === '1') {\r\n          pythonExe = candidate.bin\r\n          pythonArgs = candidate.args\r\n          pythonVia = 'shell'\r\n          pythonLauncher = pythonLabel(candidate)\r\n          return pythonLauncher\r\n        }\r\n        tried.push(pythonLabel(candidate) + '(shell exit=' + String(probeShell.exitCode) +\r\n          (String(probeShell.err).trim() === '' ? '' : ' ' + String(probeShell.err).trim().slice(0, 60)) + ')')\r\n      }\r\n      pythonWhy = tried.join('、')\r\n      return null\r\n    }\r\n\r\n\r\n    function pythonHint() {\r\n      return pythonLauncher === '' ? pythonLabel(PYTHON_CANDIDATES[0]) : pythonLauncher\r\n    }\r\n\r\n    async function runScanner(scanner, tokens, timeoutMs, workspaceRoot, maxBytes) {\r\n      const python = await resolvePython(workspaceRoot)\r\n      if (python === null) {\r\n        return { error: '找不到 Python（试过 ' + String(pythonWhy) +\r\n          '）。抽取器是 Python 写的；桌面版自带的那份在 <resources>/runtime/primary-runtime/' +\r\n          'dependencies/python/python.exe，也可以用 MC_ART_PYTHON 指定一个。' }\r\n      }\r\n      if (pythonVia === 'subprocess' && pythonExe !== '') {\r\n        const argv = [pythonExe].concat(pythonArgs, ['-B', '-X', 'utf8', scanner], tokens === undefined ? [] : tokens)\r\n        const done = await runProcess(argv, { cwd: workspaceRoot, maxBytes: maxBytes === undefined ? 8 * 1024 * 1024 : maxBytes })\r\n        if (done !== null) {\r\n          if (done.exitCode !== 0) {\r\n            const detail = beforeStderr(done.err === undefined || done.err === null ? '' : done.err)\r\n            return { error: '扫描脚本退出码 ' + done.exitCode + (detail === '' ? '，没有任何错误输出' : '：' + detail) }\r\n          }\r\n          try {\r\n            return JSON.parse(beforeStderr(done.text))\r\n          } catch (error) {\r\n            return { error: '扫描脚本的输出不是 JSON：' + String(done.text).slice(0, 200) }\r\n          }\r\n        }\r\n      }\r\n      const dialect = await currentShell(workspaceRoot)\r\n      const argument = (tokens === undefined ? [] : tokens).map((token) => dialect.word(token)).join(' ')\r\n      const result = await runShell(python + ' -B -X utf8 ' + dialect.word(scanner) +\r\n        (argument === '' ? '' : ' ' + argument), timeoutMs, policyFor(workspaceRoot), maxBytes)\r\n      if (result.exitCode !== 0) {\r\n        const detail = beforeStderr(result.err === undefined || result.err === null ? '' : result.err)\r\n        return { error: '扫描脚本退出码 ' + result.exitCode + (detail === '' ? '，没有任何错误输出' : '：' + detail) }\r\n      }\r\n      try {\r\n        return JSON.parse(beforeStderr(result.text))\r\n      } catch (error) {\r\n        return { error: '扫描脚本的输出不是 JSON：' + String(result.text).slice(0, 200) }\r\n      }\r\n    }\r\n\r\n    async function referenceSignature(dir) {\r\n      const pieces = [await dirSignature(dir), await dirSignature(dir + '/mods'), await dirSignature(dir + '/assets')]\r\n      for (const version of await listDir(dir + '/versions')) {\r\n        if (version.type !== 'directory') continue\r\n        pieces.push(version.name)\r\n        pieces.push(await dirSignature(dir + '/versions/' + version.name))\r\n        pieces.push(await dirSignature(dir + '/versions/' + version.name + '/mods'))\r\n      }\r\n      return pieces.join('|')\r\n    }\r\n\r\n    const scanCache = new Map()\r\n    async function scanReference(scanner, dir) {\r\n      const empty = { root: dir, shape: '', namespaces: [], sources: [], textures: 0, error: null }\r\n      if (dir === '') return empty\r\n      if (scanner === null || scanner === undefined) {\r\n        return Object.assign({}, empty, { error: '找不到扫描脚本 ' + SCAN_SCRIPT + '（从项目目录往上找了 5 层都没有）。' })\r\n      }\r\n      const signature = await referenceSignature(dir)\r\n      const cached = scanCache.get(dir)\r\n      if (cached !== undefined && cached.signature === signature) return cached.result\r\n      const parsed = await runScanner(scanner, [dir], 180000, dir)\r\n      if (parsed.error !== undefined) return Object.assign({}, empty, { error: String(parsed.error) })\r\n      const result = { root: parsed.root, shape: parsed.shape || '', namespaces: parsed.namespaces || [],\r\n        sources: parsed.sources || [], textures: parsed.textures || 0, error: null }\r\n      scanCache.set(dir, { signature: signature, result: result })\r\n      return result\r\n    }\r\n\r\n    const envOf = (name) => {\r\n      if (typeof process === 'undefined' || process.env === undefined) return ''\r\n      const value = process.env[name]\r\n      return typeof value === 'string' ? value : ''\r\n    }\r\n\r\n\r\n    function platformOf() {\r\n      if (typeof process === 'undefined' || process === null) return ''\r\n      return typeof process.platform === 'string' ? process.platform : ''\r\n    }\r\n\r\n\r\n    function moduleDirOf() {\r\n      if (typeof moduleDir !== 'undefined' && typeof moduleDir === 'string') return moduleDir\r\n      return ''\r\n    }\r\n\r\n\r\n    function gameRootCandidates(near) {\r\n      const home = envOf('USERPROFILE') || envOf('HOME')\r\n      const roaming = envOf('APPDATA') || (home === '' ? '' : home + '/AppData/Roaming')\r\n      const out = []\r\n      const push = (value) => {\r\n        if (typeof value !== 'string' || value === '') return\r\n        const trimmed = value.charAt(value.length - 1) === '/' ? value.slice(0, value.length - 1) : value\r\n        if (trimmed !== '' && out.indexOf(trimmed) < 0) out.push(trimmed)\r\n      }\r\n      push(roaming === '' ? '' : roaming + '/.minecraft')\r\n      push(home === '' ? '' : home + '/.minecraft')\r\n      push(home === '' ? '' : home + '/Library/Application Support/minecraft')\r\n      push(roaming === '' ? '' : roaming + '/com.mojang/minecraft')\r\n      push(home === '' ? '' : home + '/curseforge/minecraft/Instances')\r\n      push(roaming === '' ? '' : roaming + '/PrismLauncher/instances')\r\n      push(roaming === '' ? '' : roaming + '/MultiMC/instances')\r\n      const here = typeof near === 'string' ? near : ''\r\n      for (const base of [here, parentOf(here)]) {\r\n        if (typeof base !== 'string' || base === '') continue\r\n        push(base + '/.minecraft')\r\n        push(base + '/run')\r\n      }\r\n      push('/root/.minecraft')\r\n      return out\r\n    }\r\n\r\n    const INSTANCE_DIR = /(Instances|instances)$/\r\n    async function looksLikeGameRoot(path) {\r\n      for (const marker of ['versions', 'mods', 'assets', 'config']) {\r\n        const info = await statOf(path + '/' + marker)\r\n        if (info !== undefined && info.type === 'directory') return true\r\n      }\r\n      return false\r\n    }\r\n\r\n    async function detectGameRoots(near) {\r\n      const candidates = gameRootCandidates(near)\r\n      const out = []\r\n      const consider = async (path) => {\r\n        const info = await statOf(path)\r\n        if (info === undefined || info.type !== 'directory' || out.indexOf(path) >= 0) return false\r\n        out.push(path)\r\n        return true\r\n      }\r\n      if ((typeof process === 'undefined' ? '' : process.platform) !== 'win32') {\r\n        const skip = { Public: true, Default: true, 'Default User': true, 'All Users': true }\r\n        for (const user of (await listDir('/mnt/c/Users')).slice(0, 8)) {\r\n          if (user.type !== 'directory' || skip[user.name] === true) continue\r\n          candidates.push('/mnt/c/Users/' + user.name + '/AppData/Roaming/.minecraft')\r\n        }\r\n      }\r\n      for (const candidate of candidates.slice(0, 32)) {\r\n        if (out.length >= 5) break\r\n        if (!(await consider(candidate))) continue\r\n        if (out.length >= 5 || !INSTANCE_DIR.test(candidate)) continue\r\n        for (const child of (await listDir(candidate)).slice(0, 40)) {\r\n          if (out.length >= 5) break\r\n          if (child.type !== 'directory') continue\r\n          const childPath = candidate + '/' + child.name\r\n          if (await looksLikeGameRoot(childPath)) await consider(childPath)\r\n        }\r\n      }\r\n      return out\r\n    }\r\n\r\n    async function ensure(namespace) {\r\n      if (preloads.has(namespace)) return preloads.get(namespace)\r\n      for (const other of preloads.values()) if (other.namespace === namespace) return other\r\n      return undefined\r\n    }\r\n\r\n    function normalizeCells(input) {\r\n      const out = []\r\n      if (!Array.isArray(input)) return out\r\n      for (const cell of input) {\r\n        if (!cell || typeof cell.block !== 'string' || cell.block === '') continue\r\n        if (!Array.isArray(cell.at) || cell.at.length < 3) continue\r\n        const at = [0, 1, 2].map((i) => Math.trunc(Number(cell.at[i])))\r\n        if (!at.every((value) => isFinite(value))) continue\r\n        const cellVariant = typeof cell.variant === 'string' && cell.variant !== '' ? cell.variant : null\r\n        const kept = { block: cell.block, at: at }\r\n        if (cellVariant !== null) kept.variant = cellVariant\r\n        out.push(kept)\r\n      }\r\n      return out\r\n    }\r\n\r\n    const FACE_STEP = {\r\n      down: [0, -1, 0], up: [0, 1, 0], north: [0, 0, -1],\r\n      south: [0, 0, 1], west: [-1, 0, 0], east: [1, 0, 0],\r\n    }\r\n\r\n    async function referenceDirectory(project) {\r\n      const stored = (await readJson(project.dir + '/mc-art.settings.json')) || {}\r\n      const reference = stored.reference !== null && typeof stored.reference === 'object' ? stored.reference : {}\r\n      return typeof reference.directory === 'string' ? reference.directory : ''\r\n    }\r\n\r\n    async function refSignatureOf(dir) {\r\n      const cached = refSignatures.get(dir)\r\n      const now = Date.now()\r\n      if (cached !== undefined && now - cached.at < 5000) return cached.value\r\n      const value = await referenceSignature(dir)\r\n      refSignatures.set(dir, { at: now, value: value })\r\n      return value\r\n    }\r\n\r\n    function virtualLoad(namespace, parsed) {\r\n      const models = new Map()\r\n      for (const key of Object.keys(parsed.models || {})) {\r\n        const colon = key.indexOf(':')\r\n        const path = colon >= 0 ? key.slice(colon + 1) : key\r\n        if (!models.has(path)) models.set(path, parsed.models[key])\r\n      }\r\n      const textures = new Map()\r\n      const files = parsed.textureFiles || {}\r\n      for (const reference of Object.keys(parsed.textures || {})) {\r\n        const colon = reference.indexOf(':')\r\n        let textureNamespace = colon >= 0 ? reference.slice(0, colon) : namespace\r\n        let texturePath = colon >= 0 ? reference.slice(colon + 1) : reference\r\n        const file = files[reference]\r\n        if (typeof file === 'string') {\r\n          const parts = file.split('/')\r\n          if (parts.length > 3 && parts[0] === 'assets') {\r\n            textureNamespace = parts[1]\r\n            texturePath = parts.slice(3).join('/').replace(/\\.png$/, '')\r\n          }\r\n        }\r\n        const key = textureNamespace + ':' + texturePath\r\n        const refKey = 'ref:' + key\r\n        textures.set(key, refKey)\r\n        referenceTextures.set(refKey, 'data:image/png;base64,' + parsed.textures[reference])\r\n        const animation = (parsed.animations || {})[reference]\r\n        if (animation !== undefined && animation !== null) referenceAnimations.set(refKey, animation)\r\n        else referenceAnimations.delete(refKey)\r\n      }\r\n      return { dir: null, namespace: namespace, assets: null, models: models,\r\n        textures: textures, virtual: true }\r\n    }\r\n\r\n    function refEntry(namespace, block) {\r\n      return referenceBlocks.get(namespace + ':' + block)\r\n    }\r\n\r\n    function refNameOf(namespace, block) {\r\n      const entry = refEntry(namespace, block)\r\n      return entry === undefined ? undefined : entry.name\r\n    }\r\n\r\n\r\n    async function referenceLoadItem(root, project, namespace, item, source) {\r\n      const fromProject = source === 'project'\r\n      const key = 'item:' + (fromProject ? 'project:' : '') + namespace + ':' + item\r\n      const resolved = await itemRoots(project, source)\r\n      if (resolved.error !== undefined) return { error: resolved.error }\r\n      const signature = await rootsSignature(resolved.roots)\r\n      const cached = referenceBlocks.get(key)\r\n      if (cached !== undefined && cached.signature === signature) return cached\r\n      const extractor = await findTool(project.dir, EXTRACT_SCRIPT)\r\n      if (extractor === null || extractor === undefined) {\r\n        return { error: '找不到 ' + EXTRACT_SCRIPT + '（从项目目录往上找了 5 层都没有）。' }\r\n      }\r\n      const parsed = await runScanner(extractor,\r\n        rootArgs(resolved.roots).concat(['--item', namespace + ':' + item]),\r\n        120000, project.dir, REFERENCE_MAX_BYTES)\r\n      if (parsed === undefined || (parsed.error !== undefined && parsed.error !== null)) {\r\n        return { error: String(parsed === undefined ? '抽取脚本没有返回任何东西' : parsed.error) }\r\n      }\r\n      const entry = {\r\n        signature: signature, namespace: namespace, item: item, source: source,\r\n        name: parsed.name || item, version: parsed.version,\r\n        shape: parsed.shape, light: parsed.light, display: parsed.display || null,\r\n        form: parsed.form, family: parsed.family, formLabel: parsed.formLabel,\r\n        layers: parsed.layers || [], frames: parsed.frames || [],\r\n        framesTruncated: parsed.framesTruncated === true,\r\n        modelRefs: parsed.modelRefs || [], modelRotations: parsed.modelRotations || [],\r\n        rotation: parsed.variantRotation === undefined ? null : parsed.variantRotation,\r\n        parsed: parsed,\r\n      }\r\n      referenceBlocks.set(key, entry)\r\n      return entry\r\n    }\r\n\r\n    async function itemRoots(project, source) {\r\n      const reference = await referenceDirectory(project)\r\n      if (source === 'project') {\r\n        const roots = [project.dir + '/pack']\r\n        if (reference !== '') roots.push(reference)\r\n        return { roots: roots, reference: reference }\r\n      }\r\n      if (reference === '') {\r\n        return { error: '还没有设置参考目录，取不到原版或模组的物品。在设置里指定 .minecraft 或版本目录。' }\r\n      }\r\n      return { roots: [reference], reference: reference }\r\n    }\r\n\r\n\r\n    function rootArgs(roots) {\r\n      const out = []\r\n      for (const one of roots) out.push('--root', one)\r\n      return out\r\n    }\r\n\r\n    async function rootsSignature(roots) {\r\n      const parts = []\r\n      for (const one of roots) parts.push(await refSignatureOf(one))\r\n      return parts.join('|')\r\n    }\r\n\r\n    const editablePaths = new Map()\r\n\r\n    function itemHandle(namespace, reference) {\r\n      const text = String(reference === undefined || reference === null ? '' : reference)\r\n      return 'ref:' + (text.indexOf(':') >= 0 ? text : namespace + ':' + text)\r\n    }\r\n\r\n\r\n    function missingItemIcon(namespace, item, reason) {\r\n      const text = String(reason === undefined || reason === null ? '' : reason)\r\n      return {\r\n        namespace: namespace,\r\n        item: item,\r\n        name: item,\r\n        shape: 'none',\r\n        error: text,\r\n        missing: true,\r\n        reason: text,\r\n        light: null, display: null, form: null, family: null, formLabel: null,\r\n        named: false, layers: [], frames: [], framesTruncated: false,\r\n        quads: [], textureIds: [], textures: {}, animations: {},\r\n        missingModels: [], modelPath: '',\r\n      }\r\n    }\r\n\r\n\r\n    function itemEntryProblem(namespace, item, entry) {\r\n      if (entry === null || entry === undefined || typeof entry !== 'object' || Array.isArray(entry)) {\r\n        return '取不到这个物品的图标：抽取器没有返回它的数据（' + namespace + ':' + item + '）'\r\n      }\r\n      if (typeof entry.error === 'string' && entry.error !== '') return entry.error\r\n      if (typeof entry.item !== 'string' || entry.item === '') {\r\n        return '取不到这个物品的图标：抽取器没认出 ' + namespace + ':' + item\r\n      }\r\n      return null\r\n    }\r\n\r\n    async function itemIcon(namespace, parsed, have, project) {\r\n      const load = virtualLoad(namespace, parsed)\r\n      const text = (value, fallback) => (typeof value === 'string' && value !== '' ? value : fallback)\r\n      const safe = (value) => (value === undefined ? null : value)\r\n      const out = {\r\n        namespace: namespace, item: text(parsed.item, ''),\r\n        name: text(parsed.name, text(parsed.item, '')),\r\n        shape: text(parsed.shape, 'none'), light: safe(parsed.light), display: parsed.display || null,\r\n        form: safe(parsed.form), family: safe(parsed.family), formLabel: safe(parsed.formLabel),\r\n        named: parsed.named === true,\r\n        layers: [], frames: [], framesTruncated: parsed.framesTruncated === true,\r\n        quads: [], error: typeof parsed.error === 'string' && parsed.error !== '' ? parsed.error : null,\r\n        missingModels: Array.isArray(parsed.missingModels) ? parsed.missingModels : [],\r\n      }\r\n      const ids = []\r\n      const add = (id) => { if (ids.indexOf(id) < 0) ids.push(id) }\r\n      if (parsed.shape === 'iso') {\r\n        const entry = { modelRef: parsed.modelRef || (parsed.modelRefs || [])[0] || null,\r\n          modelRefs: parsed.modelRefs || [], modelRotations: parsed.modelRotations || [],\r\n          rotation: parsed.variantRotation === undefined ? null : parsed.variantRotation,\r\n          multipart: false, whenList: [] }\r\n        const quads = quadsOfEntry(load, entry, note)\r\n        out.quads = quads === undefined ? [] : quads\r\n        for (const quad of out.quads) add(quad.tex)\r\n      } else {\r\n        out.layers = (parsed.layers || []).map((reference) => itemHandle(namespace, reference))\r\n        for (const frame of parsed.frames || []) {\r\n          out.frames.push({ predicate: frame.predicate || {},\r\n            layers: (frame.layers || []).map((reference) => itemHandle(namespace, reference)) })\r\n        }\r\n        for (const id of out.layers) add(id)\r\n        for (const frame of out.frames) for (const id of frame.layers) add(id)\r\n      }\r\n      out.textureIds = ids\r\n      out.modelPath = ''\r\n      if (project !== undefined) {\r\n        const model = project.dir + '/pack/assets/' + namespace + '/models/item/' + parsed.item + '.json'\r\n        if ((await statOf(model)) !== undefined) out.modelPath = rel(project.root, model)\r\n      }\r\n      const layerRefs = (parsed.layers || []).concat(\r\n        (parsed.frames || []).reduce((all, frame) => all.concat(frame.layers || []), []))\r\n      for (const reference of layerRefs) {\r\n        const file = (parsed.textureFiles || {})[reference]\r\n        if (typeof file !== 'string' || file === '') continue\r\n        const full = project === undefined ? undefined : project.dir + '/pack/' + file\r\n        if (full === undefined || (await statOf(full)) === undefined) continue\r\n        editablePaths.set(itemHandle(namespace, reference), full)\r\n      }\r\n      const already = {}\r\n      if (Array.isArray(have)) for (const path of have) already[path] = true\r\n      const textures = {}\r\n      for (const id of ids) {\r\n        if (already[id] === true) continue\r\n        const url = await textureUrlFor(id, project)\r\n        if (url !== undefined) textures[id] = url\r\n      }\r\n      out.textures = textures\r\n      out.animations = animationsFor(ids)\r\n      out.animationNotes = animationNotesFor(ids)\r\n      return out\r\n    }\r\n\r\n    async function itemFactsList(project, namespace, source) {\r\n      const resolved = await itemRoots(project, source)\r\n      if (resolved.error !== undefined) return { error: resolved.error }\r\n      const extractor = await findTool(project.dir, EXTRACT_SCRIPT)\r\n      if (extractor === null || extractor === undefined) return { error: '找不到 ' + EXTRACT_SCRIPT }\r\n      const parsed = await runScanner(extractor,\r\n        rootArgs(resolved.roots).concat(['--list', '--namespace', namespace, '--kind', 'item']),\r\n        180000, project.dir, REFERENCE_MAX_BYTES)\r\n      if (parsed === undefined || parsed.error !== undefined) {\r\n        return { error: String(parsed === undefined ? '没有返回任何东西' : parsed.error) }\r\n      }\r\n      return { namespace: namespace, version: parsed.version, items: parsed.items || [] }\r\n    }\r\n\r\n    async function itemIconPage(project, namespace, items, source) {\r\n      const resolved = await itemRoots(project, source)\r\n      if (resolved.error !== undefined) return { error: resolved.error }\r\n      const extractor = await findTool(project.dir, EXTRACT_SCRIPT)\r\n      if (extractor === null || extractor === undefined) return { error: '找不到 ' + EXTRACT_SCRIPT }\r\n      const parsed = await runScanner(extractor,\r\n        rootArgs(resolved.roots).concat(['--items', items.join(','), '--namespace', namespace]),\r\n        180000, project.dir, REFERENCE_MAX_BYTES)\r\n      if (parsed === undefined || parsed.error !== undefined) {\r\n        return { error: String(parsed === undefined ? '没有返回任何东西' : parsed.error) }\r\n      }\r\n      const out = {}\r\n      for (const item of Object.keys(parsed.items || {})) {\r\n        const entry = parsed.items[item]\r\n        const reason = itemEntryProblem(namespace, item, entry)\r\n        if (reason !== null) {\r\n          out[item] = missingItemIcon(namespace, item, reason)\r\n          continue\r\n        }\r\n        try {\r\n          out[item] = await itemIcon(namespace, entry, [], project)\r\n        } catch (error) {\r\n          out[item] = missingItemIcon(namespace, item,\r\n            '画这个物品的图标时出错：' + String(error && error.message ? error.message : error))\r\n        }\r\n      }\r\n      return { namespace: namespace, version: parsed.version, items: out }\r\n    }\r\n\r\n    async function referenceLoad(root, project, namespace, block, variant) {\r\n      const wanted = typeof variant === 'string' && variant !== '' ? variant : null\r\n      const key = namespace + ':' + block + (wanted === null ? '' : '@' + wanted)\r\n      const directory = await referenceDirectory(project)\r\n      if (directory === '') {\r\n        return { error: '还没有设置参考目录，取不到原版或模组的方块。在设置里指定 .minecraft 或版本目录。' }\r\n      }\r\n      const signature = await refSignatureOf(directory)\r\n      const cached = referenceBlocks.get(key)\r\n      if (cached !== undefined && cached.signature === signature) return cached\r\n      const extractor = await findTool(project.dir, EXTRACT_SCRIPT)\r\n      if (extractor === null || extractor === undefined) {\r\n        return { error: '找不到 ' + EXTRACT_SCRIPT + '（从项目目录往上找了 5 层都没有）。' }\r\n      }\r\n      const blockArg = namespace + ':' + block\r\n      const tokens = ['--root', directory, '--block', blockArg]\r\n      if (wanted !== null) tokens.push('--variant', wanted)\r\n      const dialect = await currentShell(project.dir)\r\n      const command = pythonHint() + ' -B ' + dialect.word(extractor) + ' ' +\r\n        tokens.map((token) => dialect.word(token)).join(' ')\r\n      const parsed = await runScanner(extractor, tokens, 120000, project.dir, REFERENCE_MAX_BYTES)\r\n      if (parsed === undefined || parsed.error !== undefined) {\r\n        return { error: String(parsed === undefined ? '抽取脚本没有返回任何东西' : parsed.error) }\r\n      }\r\n      const refs = parsed.modelRefs || []\r\n      if (refs.length === 0) return { error: '抽出来的方块没有可用的模型：' + key }\r\n      const entry = {\r\n        signature: signature, namespace: namespace, block: block,\r\n        name: parsed.name || block, nameKey: parsed.nameKey, version: parsed.version,\r\n        variant: parsed.variant === undefined ? null : parsed.variant,\r\n        variantKeys: parsed.variantKeys || [],\r\n        variantAxes: parsed.variantAxes || [],\r\n        variantDefaults: parsed.variantDefaults || {},\r\n        rotation: parsed.variantRotation === undefined ? null : parsed.variantRotation,\r\n        modelRef: refs[0], modelRefs: refs,\r\n        modelRotations: parsed.modelRotations || [],\r\n        whenList: parsed.multipartWhens || [],\r\n        multipart: parsed.multipart === true,\r\n        load: virtualLoad(namespace, parsed), command: command,\r\n      }\r\n      referenceBlocks.set(key, entry)\r\n      return entry\r\n    }\r\n\r\n    function entryFamily(entry, id) {\r\n      if (entry === undefined || entry === null) return 'other'\r\n      const axes = Array.isArray(entry.variantAxes) ? entry.variantAxes : []\r\n      for (const axis of axes) {\r\n        if (axis !== null && typeof axis === 'object' && axis.name === 'in_wall') return 'gate'\r\n      }\r\n      if (entry.multipart !== true) return 'other'\r\n      const whens = Array.isArray(entry.whenList) ? entry.whenList : []\r\n      let sawUp = false\r\n      let sawFalse = false\r\n      let sawTrue = false\r\n      for (const when of whens) {\r\n        for (const key of Object.keys(when)) {\r\n          if (key === 'up') { sawUp = true; continue }\r\n          if (key !== 'north' && key !== 'east' && key !== 'south' && key !== 'west') continue\r\n          if (when[key] === 'false') sawFalse = true\r\n          else sawTrue = true\r\n        }\r\n      }\r\n      let shape = 'other'\r\n      if (sawUp) shape = 'wall'\r\n      else if (sawFalse) shape = 'pane'\r\n      else if (sawTrue) shape = 'fence'\r\n      if (shape === 'other') return 'other'\r\n      const text = String(id === undefined || id === null ? '' : id)\r\n      const name = text.slice(text.indexOf(':') + 1)\r\n      if (shape === 'wall') return /(^|_)wall$/.test(name) ? 'wall' : 'other'\r\n      if (shape === 'fence') return /(^|_)fence$/.test(name) ? 'fence' : 'other'\r\n      return (/(^|_)pane$/.test(name) || /(^|_)bars$/.test(name)) ? 'pane' : 'other'\r\n    }\r\n\r\n    function isFullCubeEntry(load, entry) {\r\n      const refs = Array.isArray(entry.modelRefs) && entry.modelRefs.length > 0\r\n        ? entry.modelRefs : [entry.modelRef]\r\n      const elements = elementsOf(load, refs[0])\r\n      if (!Array.isArray(elements) || elements.length !== 1) return false\r\n      const element = elements[0]\r\n      if (element === undefined || element.rotation !== undefined) return false\r\n      const from = element.from\r\n      const to = element.to\r\n      if (!Array.isArray(from) || !Array.isArray(to)) return false\r\n      return from[0] === 0 && from[1] === 0 && from[2] === 0\r\n        && to[0] === 16 && to[1] === 16 && to[2] === 16\r\n    }\r\n\r\n    const EXCEPT_18 = { barrier: 1, carved_pumpkin: 1, jack_o_lantern: 1, melon: 1, pumpkin: 1 }\r\n    function isException18(id) {\r\n      const text = String(id)\r\n      const name = text.slice(text.indexOf(':') + 1)\r\n      if (EXCEPT_18[name] === 1) return true\r\n      if (/_leaves$/.test(name)) return true                       // LeavesBlock\r\n      return name === 'shulker_box' || /_shulker_box$/.test(name)  // BlockTags.SHULKER_BOXES\r\n    }\r\n    const EXCEPT_12 = { beacon: 1, cauldron: 1, glass: 1, glowstone: 1, ice: 1, sea_lantern: 1,\r\n      stained_glass: 1, piston: 1, sticky_piston: 1, piston_head: 1, barrier: 1,\r\n      melon_block: 1, pumpkin: 1, lit_pumpkin: 1 }\r\n    function isException12(id) {\r\n      const text = String(id)\r\n      const name = text.slice(text.indexOf(':') + 1)\r\n      if (EXCEPT_12[name] === 1) return true\r\n      if (/_leaves$/.test(name)) return true                        // BlockLeaves\r\n      if (/_trapdoor$/.test(name)) return true                      // BlockTrapDoor\r\n      if (/_stained_glass$/.test(name)) return true                 // BlockStainedGlass\r\n      return name === 'shulker_box' || /_shulker_box$/.test(name)   // BlockShulkerBox\r\n    }\r\n\r\n    function isOldVersion(version) {\r\n      const text = String(version === undefined || version === null ? '' : version)\r\n      return text.indexOf('1.12') >= 0 || text.indexOf('1.11') >= 0 || text.indexOf('1.10') >= 0\r\n    }\r\n\r\n    function axisOfDirection(name) {\r\n      if (name === 'north' || name === 'south') return 'z'\r\n      if (name === 'east' || name === 'west') return 'x'\r\n      return 'y'\r\n    }\r\n\r\n    function variantValueOf(variant, name) {\r\n      if (typeof variant !== 'string' || variant === '') return null\r\n      const parts = variant.split(',')\r\n      for (const part of parts) {\r\n        const at = part.indexOf('=')\r\n        if (at > 0 && part.slice(0, at) === name) return part.slice(at + 1)\r\n      }\r\n      return null\r\n    }\r\n\r\n    function connectsTo(version, self, neighbour, dir) {\r\n      const absent = neighbour === null || neighbour === undefined\r\n      if (isOldVersion(version)) {\r\n        let face = 'undefined'\r\n        if (!absent) {\r\n          if (neighbour.family === 'wall') face = 'poleThick'\r\n          else if (neighbour.family === 'fence') face = 'pole'\r\n          else if (neighbour.family === 'pane') face = 'poleThin'\r\n          else if (neighbour.family !== 'gate') face = neighbour.cube === true ? 'solid' : 'undefined'\r\n          else if (!gateAlongAxis(neighbour, dir)) face = 'undefined'\r\n          else face = 'pole'\r\n        }\r\n        const exception = absent ? false : isException12(neighbour.id)\r\n        if (self.family === 'pane') return (!exception && face === 'solid') || face === 'poleThin'\r\n        const flag = face === (self.family === 'wall' ? 'poleThick' : 'pole')\r\n        return (!exception && face !== 'solid') || flag\r\n      }\r\n      if (absent) return false\r\n      const exception = isException18(neighbour.id)\r\n      const solid = neighbour.cube === true && !exception\r\n      if (neighbour.family === 'gate') {\r\n        return gateAlongAxis(neighbour, dir)\r\n      }\r\n      if (self.family === 'wall') {\r\n        return neighbour.family === 'wall' || solid || neighbour.family === 'pane'\r\n      }\r\n      if (self.family === 'fence') {\r\n        return solid || (neighbour.family === 'fence' && self.wooden === fenceWooden(neighbour.id))\r\n      }\r\n      if (self.family === 'pane') {\r\n        return solid || neighbour.family === 'pane' || neighbour.family === 'wall'\r\n      }\r\n      return false\r\n    }\r\n\r\n    function gateAlongAxis(neighbour, dir) {\r\n      const facing = variantValueOf(neighbour.variant, 'facing')\r\n      return facing === null || axisOfDirection(facing) === axisOfDirection(dir)\r\n    }\r\n\r\n    function multipartValues(version, self, at) {\r\n      const names = []\r\n      for (const when of self.whens) {\r\n        for (const key of Object.keys(when)) if (names.indexOf(key) < 0) names.push(key)\r\n      }\r\n      const back = { north: 'south', south: 'north', east: 'west', west: 'east' }\r\n      const steps = { north: [0, 0, -1], east: [1, 0, 0], south: [0, 0, 1], west: [-1, 0, 0] }\r\n      const sides = {}\r\n      for (const name of Object.keys(steps)) {\r\n        const step = steps[name]\r\n        sides[name] = connectsTo(version, self, at(step[0], 0, step[2]), back[name])\r\n      }\r\n      const v12 = isOldVersion(version)\r\n      const values = {}\r\n      for (const name of Object.keys(sides)) {\r\n        if (names.indexOf(name) < 0) continue\r\n        if (self.family === 'wall' && !v12) {\r\n          const over = at(0, 1, 0)\r\n          const covered = over !== null && over.cube === true\r\n          values[name] = sides[name] ? (covered ? 'tall' : 'low') : 'none'\r\n        } else {\r\n          values[name] = sides[name] ? 'true' : 'false'\r\n        }\r\n      }\r\n      if (names.indexOf('up') < 0) return values\r\n      const above = at(0, 1, 0)\r\n      if (self.family === 'wall' && v12) {\r\n        const flag = (sides.south && !sides.west && sides.north && sides.east)\r\n          || (!sides.south && sides.west && !sides.north && sides.east)\r\n        values.up = flag ? (above === null ? 'false' : 'true') : 'true'\r\n        return values\r\n      }\r\n      let raise = above !== null && above.family === 'wall'\r\n      if (!raise) {\r\n        const none = (name) => values[name] === undefined || values[name] === 'none'\r\n        const asym = (none('north') && none('south') && none('east') && none('west'))\r\n          || (none('north') !== none('south')) || (none('east') !== none('west'))\r\n        const tallPair = (values.north === 'tall' && values.south === 'tall')\r\n          || (values.east === 'tall' && values.west === 'tall')\r\n        if (asym) raise = true\r\n        else if (tallPair) raise = false\r\n        else raise = above !== null && above.cube === true\r\n      }\r\n      values.up = raise ? 'true' : 'false'\r\n      return values\r\n    }\r\n\r\n    function whenMatches(when, values) {\r\n      for (const key of Object.keys(when)) {\r\n        const have = values[key]\r\n        if (have === undefined) continue\r\n        if (String(have) !== String(when[key])) return false\r\n      }\r\n      return true\r\n    }\r\n\r\n    function fenceWooden(id) {\r\n      const text = String(id)\r\n      return !/nether_brick_fence$/.test(text.slice(text.indexOf(':') + 1))\r\n    }\r\n\r\n    function keepFlags(entry, values) {\r\n      const whens = Array.isArray(entry.whenList) ? entry.whenList : []\r\n      const refs = Array.isArray(entry.modelRefs) ? entry.modelRefs : []\r\n      if (entry.multipart !== true || whens.length !== refs.length || refs.length === 0) return undefined\r\n      for (const when of whens) {\r\n        for (const key of Object.keys(when)) {\r\n          if (values[key] === undefined) return undefined\r\n        }\r\n      }\r\n      return whens.map((when) => whenMatches(when, values))\r\n    }\r\n\r\n    async function entryFor(root, project, reference, variant) {\r\n      const colon = reference.indexOf(':')\r\n      const namespace = colon >= 0 ? reference.slice(0, colon) : project.namespace\r\n      const name = colon >= 0 ? reference.slice(colon + 1) : reference\r\n      if (name === '') return { error: '方块名是空的' }\r\n      const load = await ensure(namespace)\r\n      if (load !== undefined) {\r\n        return { load: load, id: namespace + ':' + name,\r\n          entry: { modelRef: 'block/' + name, rotation: null, multipart: false, version: null } }\r\n      }\r\n      const ref = await referenceLoad(root, project, namespace, name, variant)\r\n      if (ref.error !== undefined) return { error: ref.error }\r\n      return { load: ref.load, id: ref.namespace + ':' + ref.block, entry: ref }\r\n    }\r\n\r\n    function describeEntry(load, entry, id, variant) {\r\n      if (entry === null || entry === undefined) return null\r\n      if (entry.cubeMemo === undefined) entry.cubeMemo = isFullCubeEntry(load, entry)\r\n      return { id: id, family: entryFamily(entry, id), cube: entry.cubeMemo === true,\r\n        variant: variant === undefined ? null : variant,\r\n        version: entry.version === undefined ? null : entry.version }\r\n    }\r\n\r\n    function neatKey(at) {\r\n      return at[0] + ',' + at[1] + ',' + at[2]\r\n    }\r\n\r\n\r\n    function quadsOfEntry(load, entry, report, keep) {\r\n      const refs = Array.isArray(entry.modelRefs) && entry.modelRefs.length > 0\r\n        ? entry.modelRefs : [entry.modelRef]\r\n      const rotations = Array.isArray(entry.modelRotations) ? entry.modelRotations : []\r\n      let out = []\r\n      const missed = []\r\n      for (let index = 0; index < refs.length; index++) {\r\n        if (keep !== undefined && keep[index] !== true) continue\r\n        const elements = elementsOf(load, refs[index])\r\n        if (elements === undefined) { missed.push(refs[index]); continue }\r\n        const own = index < rotations.length ? rotations[index] : null\r\n        out = out.concat(rotateQuads(quadsFromElements(elements, report), own))\r\n      }\r\n      if (out.length === 0) return undefined\r\n      if (missed.length > 0 && report !== undefined) report('模型链里缺了：' + missed.join('、'))\r\n      return rotateQuads(out, entry.rotation)\r\n    }\r\n\r\n    async function blockQuadsAt(root, project, block, at, variant, around) {\r\n      const found = await entryFor(root, project, String(block), variant)\r\n      if (found.error !== undefined) {\r\n        return { error: found.error.indexOf('方块名是空的') >= 0\r\n          ? found.error : '找不到 ' + String(block) + ' 的模型（' + found.error + '）' }\r\n      }\r\n      const load = found.load\r\n      const entry = found.entry\r\n      let keep\r\n      if (entry.multipart === true) {\r\n        const whens = Array.isArray(entry.whenList) ? entry.whenList : []\r\n        const refs = Array.isArray(entry.modelRefs) ? entry.modelRefs : []\r\n        const family = entryFamily(entry, found.id)\r\n        if (whens.length > 0 && whens.length === refs.length && family !== 'other') {\r\n          const id = found.id\r\n          const known = new Map()\r\n          for (const item of Array.isArray(around) ? around : []) {\r\n            if (item === null || typeof item !== 'object') continue\r\n            if (!Array.isArray(item.d) || item.d.length < 3) continue\r\n            if (typeof item.block !== 'string' || item.block === '') continue\r\n            const offset = [Math.trunc(item.d[0]), Math.trunc(item.d[1]), Math.trunc(item.d[2])]\r\n            const other = await entryFor(root, project, item.block,\r\n              typeof item.variant === 'string' && item.variant !== '' ? item.variant : null)\r\n            if (other.error !== undefined) continue\r\n            const colon = item.block.indexOf(':')\r\n            const otherId = colon >= 0 ? item.block : project.namespace + ':' + item.block\r\n            known.set(neatKey(offset), describeEntry(other.load, other.entry, otherId,\r\n              typeof item.variant === 'string' && item.variant !== '' ? item.variant : null))\r\n          }\r\n          const self = { id: id, family: entryFamily(entry, id), whens: whens, wooden: fenceWooden(id) }\r\n          const values = multipartValues(entry.version, self,\r\n            (dx, dy, dz) => known.get(neatKey([dx, dy, dz])) || null)\r\n          keep = keepFlags(entry, values)\r\n        }\r\n      }\r\n      const quads = quadsOfEntry(load, entry, note, keep)\r\n      if (quads === undefined) return { error: '找不到 ' + String(block) + ' 的模型' }\r\n      if (quads.length === 0 && keep === undefined) {\r\n        return { error: '找不到 ' + String(block) + ' 的模型（整条模型链一个面都解不出来，'\r\n          + '通常是贴图在项目包里没有、参考目录也没取到）' }\r\n      }\r\n      const axes = Array.isArray(entry.variantAxes) ? entry.variantAxes : []\r\n      return { quads: translateQuads(quads, at),\r\n        variants: entry.variantKeys || [], axes: axes, defaults: entry.variantDefaults || {},\r\n        variant: entry.rotation === null || entry.rotation === undefined ? null : variant,\r\n        multipart: entry.multipart === true, derived: keep !== undefined && keep !== null }\r\n    }\r\n\r\n\r\n\r\n    function textureMissingOf(load, name, directory) {\r\n      const colon = name.indexOf(':')\r\n      const explicit = colon >= 0\r\n      const namespace = explicit ? name.slice(0, colon) : load.namespace\r\n      const path = explicit ? name.slice(colon + 1) : name\r\n      const kind = explicit && namespace !== load.namespace ? 'vanilla' : 'project'\r\n      const where = directory === ''\r\n        ? '把参考目录指到 .minecraft/versions/<版本>（面板设置里那一栏）'\r\n        : directory + ' 里的 <版本>.jar'\r\n      return {\r\n        kind: kind,\r\n        name: explicit ? name : load.namespace + ':' + name,\r\n        fixPath: kind === 'project'\r\n          ? 'pack/assets/' + load.namespace + '/textures/' + path + '.png'\r\n          : where + ' → assets/' + namespace + '/textures/' + path + '.png',\r\n      }\r\n    }\r\n\r\n    function blockDiagnostic(load, namespace, id, found, built, directory) {\r\n      const project = Array.isArray(built.project) ? built.project : []\r\n      const vanilla = Array.isArray(built.vanilla) ? built.vanilla : []\r\n      const textures = Array.isArray(built.unresolvedTextures) ? built.unresolvedTextures : []\r\n      const bareWords = Array.isArray(built.bareWords) ? built.bareWords : []\r\n      const dangling = Array.isArray(built.danglingVariables) ? built.danglingVariables : []\r\n      const missing = project.concat(vanilla).map((entry) => ({\r\n        kind: entry.kind === 'project' ? 'project' : 'vanilla',\r\n        name: String(entry.name),\r\n        fixPath: fixPathOf(load, entry, directory),\r\n      })).concat(textures.map((name) => textureMissingOf(load, name, directory)))\r\n      let reason = 'unknown'\r\n      if (built.cycle === true) reason = 'parent-cycle'\r\n      else if (project.length > 0) reason = 'project-model-missing'\r\n      else if (typeof built.fetchReason === 'string' && built.fetchReason !== '') reason = built.fetchReason\r\n      else if (vanilla.length > 0) reason = directory === '' ? 'no-reference-directory' : 'vanilla-parent-missing'\r\n      else if (bareWords.length > 0) reason = 'texture-missing-hash'\r\n      else if (dangling.length > 0) reason = 'texture-variable-unresolved'\r\n      else if (textures.length > 0) {\r\n        const onlyProject = textures.every((name) => textureMissingOf(load, name, directory).kind === 'project')\r\n        reason = directory === '' && !onlyProject ? 'no-reference-directory' : 'textures-unresolved'\r\n      }\r\n      else if (built.noQuads === true) reason = 'no-quads'\r\n      else if (built.noElements === true) reason = 'no-geometry'\r\n      const allowed = { 'project-model-missing': 1, 'vanilla-parent-missing': 1,\r\n        'no-reference-directory': 1, 'reference-jar-missing': 1, 'extractor-failed': 1,\r\n        'parent-cycle': 1, 'textures-unresolved': 1, 'no-quads': 1, 'no-geometry': 1,\r\n        'texture-missing-hash': 1, 'texture-variable-unresolved': 1, 'unknown': 1 }\r\n      if (allowed[reason] !== 1) reason = 'unknown'\r\n\r\n      const bareModel = String(found.model).replace(/^[^:]*:/, '')\r\n      const trace = Array.isArray(built.trace) ? built.trace : []\r\n      const builtinHits = trace.filter((step) => step.from === 'builtin').map((step) => step.key)\r\n      const builtinConsulted = trace.some((step) => step.from === 'builtin' || step.from === 'none')\r\n      const shells = trace.filter((step) => step.shell === true).map((step) => step.parent)\r\n      const builtinLine = builtinHits.length > 0\r\n        ? '面板内置的原版母模型表：' + builtinHits.join('、') + '（这一条是它兜住的）'\r\n        : (builtinConsulted\r\n          ? '面板内置的原版母模型表：查过，没有 ' + trace.filter((step) => step.from === 'none')\r\n            .map((step) => step.parent).join('、')\r\n          : '面板内置的原版母模型表：这次不需要它')\r\n      const tried = [\r\n        '项目包：' + load.assets + '/models/'\r\n          + (bareModel.indexOf('block/') === 0 ? bareModel : 'block/' + bareModel) + '.json',\r\n        builtinLine,\r\n        directory === '' ? '参考目录：没设，从 jar 现取这条路没走'\r\n          : '参考目录的 jar 现取：' + directory,\r\n      ]\r\n      if (shells.length > 0) {\r\n        tried.push('取回来但是**空壳**（既没有 elements 也没有 parent，等于没取到）：'\r\n          + shells.slice(0, 3).join('、'))\r\n      }\r\n      if (textures.length > 0) {\r\n        tried.push('贴图现取（--textures）：' + (directory === '' ? '没设参考目录，没走' : directory))\r\n      }\r\n\r\n      const lines = ['[MC 资产面板] 画不出 ' + namespace + ':' + id]\r\n      if (found.guessed === true) {\r\n        lines.push('· blockstate 里一个模型名都没有，按惯例找 ' + String(found.model) + '（这一条是猜的）')\r\n      } else {\r\n        lines.push('· blockstate 引用的模型（' + found.models.length + ' 个）：'\r\n          + found.models.slice(0, 6).join('、') + (found.models.length > 6 ? ' …' : ''))\r\n      }\r\n      lines.push('· 选用的模型：' + String(found.model))\r\n      if (project.length > 0) {\r\n        lines.push('· 项目自己的模型文件缺失（' + project.length + ' 个）：')\r\n        for (const entry of project) lines.push('  - ' + entry.name + ' → 补 ' + fixPathOf(load, entry, directory))\r\n      }\r\n      if (vanilla.length > 0) {\r\n        lines.push('· 原版母模型缺失（' + vanilla.length + ' 个）：')\r\n        for (const entry of vanilla) lines.push('  - ' + entry.name + ' → ' + fixPathOf(load, entry, directory))\r\n      }\r\n      if (bareWords.length > 0) {\r\n        lines.push('· 有 ' + bareWords.length + ' 个面把**裸词**当贴图写（模型格式里裸词是路径，不是变量）：')\r\n        for (const one of bareWords.slice(0, 4)) {\r\n          lines.push('  - 面 ' + one.face + ' 引用的是裸词 `' + one.raw + '`。模型格式里它被当成**路径**（'\r\n            + load.namespace + ':textures/' + one.raw + '.png），而不是你 `textures` 映射里的那个键。'\r\n            + '**你大概想写 `#' + one.raw + '`。**')\r\n          if (Array.isArray(one.keys) && one.keys.length > 0) {\r\n            lines.push('    这张模型 textures 里的键：' + one.keys.join('、'))\r\n          }\r\n        }\r\n        if (bareWords.length > 4) lines.push('  - …（还有 ' + (bareWords.length - 4) + ' 个，见结构化诊断）')\r\n      }\r\n      if (dangling.length > 0) {\r\n        lines.push('· 有 ' + dangling.length + ' 个面引用 `#变量`，但模型的 textures 映射里没有这个键：')\r\n        for (const one of dangling.slice(0, 4)) {\r\n          lines.push('  - 面 ' + one.face + ' 引用 `' + one.name + '` → 补上这个键，或改成映射里已有的键')\r\n        }\r\n      }\r\n      const otherTextures = textures.filter((name) =>\r\n        !bareWords.some((one) => one.raw === name) && !dangling.some((one) => one.name === name))\r\n      if (otherTextures.length > 0) {\r\n        lines.push('· 面引用的贴图解不出来（' + otherTextures.length + ' 个，这些面被丢掉了）：')\r\n        for (const name of otherTextures.slice(0, 4)) {\r\n          const entry = textureMissingOf(load, name, directory)\r\n          lines.push('  - ' + entry.name + ' → ' + entry.fixPath)\r\n        }\r\n        if (otherTextures.length > 4) lines.push('  - …（还有 ' + (otherTextures.length - 4) + ' 个，见结构化诊断）')\r\n      }\r\n      if (project.length === 0 && vanilla.length === 0 && textures.length === 0) {\r\n        lines.push(built.noElements === true\r\n          ? '· 整条模型链里**没有任何 elements**（不是\"画出来是空的\"）：通常是链上某个母模型'\r\n            + '没取到（空壳/版本不对/参考目录没设），而不是这个方块真的靠方块实体渲染'\r\n          : '· 模型链是完整的，但整条链里一个面都没画出来（这个方块可能靠方块实体渲染）')\r\n      }\r\n      lines.push('· 原因：' + reason)\r\n      if (typeof built.why === 'string' && built.why !== '') lines.push('· 现取失败的原因：' + built.why)\r\n      if (typeof built.textureWhy === 'string' && built.textureWhy !== '') {\r\n        lines.push('· 贴图现取失败的原因：' + built.textureWhy)\r\n      }\r\n      lines.push('· 参考目录：' + (directory === '' ? '（没设）' : directory))\r\n      lines.push('· 已试过的路：' + tried.join(' → '))\r\n      lines.push('· 修法：' + fixTextOf(reason))\r\n      lines.push('· 这份报告只在屏幕上，不写进会话 / inbox / 日志；可以整段复制走')\r\n      if (lines.length > 20) {\r\n        lines.splice(20, lines.length - 20)\r\n        lines[19] = '· …（还省略了一些行；结构化诊断里有全部内容）'\r\n      }\r\n      return { reason: reason, missing: missing, tried: tried, lines: lines }\r\n    }\r\n\r\n\r\n    function fixTextOf(reason) {\r\n      if (reason === 'project-model-missing') {\r\n        return '把上面列出的项目自己的模型文件补上（路径已经给出）；blockstate 里写什么名字，'\r\n          + '文件名就必须是什么（multipart 方块要补的是 _post / _side 那几件，不是 <方块名>.json）'\r\n      }\r\n      if (reason === 'no-reference-directory') {\r\n        return '面板设置里把参考目录指到 .minecraft/versions/<版本>（或写进 mc-art.settings.json 的 '\r\n          + 'reference.directory）；原版母模型都在那个版本的 jar 里'\r\n      }\r\n      if (reason === 'vanilla-parent-missing') {\r\n        return '参考目录指的那个版本里没有这些原版母模型：核对版本号（1.16 之后墙是 template_wall_post / '\r\n          + 'template_wall_side / template_wall_side_tall），或把 parent 改成该版本真实存在的名字'\r\n      }\r\n      if (reason === 'reference-jar-missing') {\r\n        return '参考目录里没找到能读的 jar：指到 .minecraft/versions/<版本>（里面应有 <版本>.jar），'\r\n          + '不要指到 .minecraft 本身'\r\n      }\r\n      if (reason === 'extractor-failed') {\r\n        return '抽取脚本自己失败了：看上面\"现取失败的原因\"那一行，先确认 Python 与脚本路径'\r\n      }\r\n      if (reason === 'textures-unresolved') {\r\n        return '这些面引用的贴图在项目包里没有、参考目录里也没取到：把参考目录指对版本，'\r\n          + '或者在项目包里补上同名的 PNG（路径已经给出）'\r\n      }\r\n      if (reason === 'texture-missing-hash') {\r\n        return '把这些面里的裸词前面补上 `#`：贴图**变量**必须带 `#`，不带 `#` 的裸词会被当成路径，'\r\n          + '于是去找 <命名空间>:textures/<词>.png（那里通常没有）—— 例如 `\"texture\": \"stone\"` 要写 `\"texture\": \"#stone\"`。'\r\n          + '这两个方块在游戏里同样是坏的（会渲染成缺失贴图）'\r\n      }\r\n      if (reason === 'texture-variable-unresolved') {\r\n        return '`#变量` 在模型的 textures 映射里找不到：把映射里缺的键补上，或者把面改成映射里已有的那个键'\r\n      }\r\n      if (reason === 'no-quads') {\r\n        return '模型链是完整的但一个面都没画出来：这个方块很可能靠方块实体在代码里渲染，'\r\n          + '面板画不出它的实体模型；要 3D 预览就得在项目包里补一个带 elements 的模型'\r\n      }\r\n      if (reason === 'no-geometry') {\r\n        return '整条模型链里没有任何 elements：先看\"已试过的路\"那一行 —— 链上哪个母模型是空壳/没取到，'\r\n          + '就补哪个（项目包里的补文件；原版的把参考目录指到 .minecraft/versions/<版本>）。'\r\n          + '这不等于\"这个方块靠方块实体渲染\"'\r\n      }\r\n      if (reason === 'parent-cycle') {\r\n        return '模型 parent 成环了：把链上重复出现的那个 parent 去掉'\r\n      }\r\n      return '模型链完整却没有 elements：这个方块可能靠方块实体渲染（没有几何模型），'\r\n        + '或者在项目包里补一个带 elements 的模型'\r\n    }\r\n\r\n    async function payload(root, project, kind, id, have, cellsOverride, neighbours) {\r\n      const dir = project.dir\r\n      const namespace = project.namespace\r\n      const neighbourAware = neighbours !== false\r\n      const load = preloads.get(namespace)\r\n      if (load === undefined) return { error: 'project not loaded: ' + namespace }\r\n      let quads = []\r\n      let refs = []\r\n      let palette = []\r\n      let cells = null\r\n      let blockModel = null\r\n      let blockModels = []\r\n\r\n      if (kind === 'block') {\r\n        const found = (await blockIds(load)).filter((block) => block.id === id)[0]\r\n        if (found === undefined) return { error: 'block not found: ' + id }\r\n        blockModel = found.model\r\n        blockModels = found.models\r\n        const built = await projectElements(project, load, found.model)\r\n        const elements = built.elements\r\n        quads = elements === undefined ? undefined : quadsFromElements(elements, note)\r\n        if (elements === undefined || quads.length === 0) {\r\n          if (elements !== undefined) built.noQuads = true\r\n          else built.noElements = true\r\n          const directory = await referenceDirectory(project)\r\n          const failed = blockDiagnostic(load, namespace, id, found, built, directory)\r\n          return { error: failed.lines.join('\\n'), notified: false, notifyVia: null,\r\n            diagnostic: { reason: failed.reason, block: namespace + ':' + id, missing: failed.missing,\r\n              tried: failed.tried, referenceDirectory: directory } }\r\n        }\r\n        refs = [rel(root, load.assets + '/textures/block/' + id + '.png'),\r\n          rel(root, load.assets + '/models/block/' + id + '.json'),\r\n          rel(root, load.assets + '/blockstates/' + id + '.json')]\r\n      } else if (kind === 'entity') {\r\n        const source = (project.entities || []).filter((item) => item.id === id)[0]\r\n        if (source === undefined) return { error: 'entity not found: ' + id }\r\n        const full = (await readJson(dir + '/mc-art.atlas.json')) || {}\r\n        const spec = (full.entities || []).filter((item) => item.id === id)[0]\r\n        if (spec === undefined) return { error: 'entity spec missing: ' + id }\r\n        for (const layer of spec.layers || []) {\r\n          const path = load.assets + '/textures/' + layer.texture\r\n          quads = quads.concat(entityQuads(layer.model, path, layer.mode || 'opaque'))\r\n          refs.push(rel(root, path))\r\n        }\r\n        refs.push(rel(root, dir + '/mc-art.atlas.json'))\r\n        refs = refs.concat((spec.refs || []).map((r) => rel(root, dir + '/' + r)))\r\n      } else {\r\n        const full = (await readJson(dir + '/mc-art.atlas.json')) || {}\r\n        const list = kind === 'biome' ? (full.biomes || []) : (full.structures || [])\r\n        const item = list.filter((entry) => entry.id === id)[0]\r\n        if (item === undefined) return { error: kind + ' not found: ' + id }\r\n        const source = cellsOverride === undefined || cellsOverride === null\r\n          ? (item.cells || []) : normalizeCells(cellsOverride)\r\n        const byCell = new Map()\r\n        for (const cell of source) {\r\n          if (!cell || !Array.isArray(cell.at) || typeof cell.block !== 'string') continue\r\n          const key = cell.at[0] + ',' + cell.at[1] + ',' + cell.at[2]\r\n          const previous = byCell.get(key)\r\n          if (previous !== undefined && previous.block !== cell.block) {\r\n            note('格子重叠 ' + key + '：' + previous.block + ' 与 ' + cell.block + '，以后者为准')\r\n          }\r\n          const kept = { block: cell.block, at: cell.at }\r\n          if (typeof cell.variant === 'string' && cell.variant !== '') kept.variant = cell.variant\r\n          byCell.set(key, kept)\r\n        }\r\n        cells = Array.from(byCell.values())\r\n        const cache = new Map()\r\n        const counts = new Map()\r\n        const slots = []\r\n        const atCell = new Map()\r\n        for (let index = 0; index < cells.length; index++) {\r\n          const cell = cells[index]\r\n          const reference = String(cell.block)\r\n          const colon = reference.indexOf(':')\r\n          const cellNamespace = colon >= 0 ? reference.slice(0, colon) : namespace\r\n          const cellBlock = colon >= 0 ? reference.slice(colon + 1) : reference\r\n          const fullName = cellNamespace + ':' + cellBlock\r\n          counts.set(fullName, (counts.get(fullName) || 0) + 1)\r\n          const cellKey = fullName + (cell.variant === null || cell.variant === undefined ? '' : '@' + cell.variant)\r\n          let slot = cache.get(cellKey)\r\n          if (slot === undefined) {\r\n            slot = { load: undefined, entry: null, union: undefined,\r\n              id: fullName, variant: cell.variant === undefined ? null : cell.variant }\r\n            const found = await entryFor(root, project, reference, cell.variant)\r\n            if (found.error !== undefined) note('取不到 ' + fullName + '：' + found.error)\r\n            else { slot.load = found.load; slot.entry = found.entry; slot.id = found.id }\r\n            cache.set(cellKey, slot)\r\n          }\r\n          slots.push(slot)\r\n          atCell.set(neatKey(cell.at), slot)\r\n        }\r\n        const offsetAt = (index, dx, dy, dz) => {\r\n          const cell = cells[index]\r\n          const slot = atCell.get(neatKey([cell.at[0] + dx, cell.at[1] + dy, cell.at[2] + dz]))\r\n          if (slot === undefined || slot.entry === null || slot.load === undefined) return null\r\n          return describeEntry(slot.load, slot.entry, slot.id, slot.variant)\r\n        }\r\n        const unionOf = (slot) => {\r\n          if (slot.union === undefined) {\r\n            const built = quadsOfEntry(slot.load, slot.entry, note)\r\n            slot.union = built === undefined ? [] : built\r\n            if (slot.union.length === 0) note('no model for cell block ' + slot.id)\r\n          }\r\n          return slot.union\r\n        }\r\n        for (let index = 0; index < cells.length; index++) {\r\n          const cell = cells[index]\r\n          const slot = slots[index]\r\n          let cellQuads = []\r\n          if (slot.load !== undefined && slot.entry !== null) {\r\n            let keep\r\n            if (neighbourAware && slot.entry.multipart === true) {\r\n              const whens = Array.isArray(slot.entry.whenList) ? slot.entry.whenList : []\r\n              const family = entryFamily(slot.entry, slot.id)\r\n              if (whens.length > 0 && family !== 'other') {\r\n                const self = { id: slot.id, family: family, whens: whens,\r\n                  wooden: fenceWooden(slot.id) }\r\n                const values = multipartValues(slot.entry.version, self,\r\n                  (dx, dy, dz) => offsetAt(index, dx, dy, dz))\r\n                keep = keepFlags(slot.entry, values)\r\n              }\r\n            }\r\n            const built = keep === undefined\r\n              ? unionOf(slot) : quadsOfEntry(slot.load, slot.entry, note, keep)\r\n            cellQuads = built === undefined ? [] : built\r\n          }\r\n          const tagged = translateQuads(cellQuads, cell.at).map((quad) => ({\r\n            p: quad.p, uv: quad.uv, tex: quad.tex, shade: quad.shade, mode: quad.mode,\r\n            shaded: quad.shaded, pick: { cell: index, face: quad.face || '' },\r\n          }))\r\n          quads = quads.concat(tagged)\r\n        }\r\n        palette = Array.from(counts.keys()).map((key) => {\r\n          const at = key.indexOf(':')\r\n          const cellNamespace = at >= 0 ? key.slice(0, at) : namespace\r\n          const cellBlock = at >= 0 ? key.slice(at + 1) : key\r\n          const fromReference = refNameOf(cellNamespace, cellBlock)\r\n          return { block: key, label: fromReference || labelFor(cellNamespace, 'block', cellBlock), count: counts.get(key) }\r\n        })\r\n        palette.sort((a, b) => b.count - a.count)\r\n        refs = [rel(root, dir + '/mc-art.atlas.json')].concat((item.refs || []).map((r) => rel(root, dir + '/' + r)))\r\n      }\r\n\r\n      const textureIds = []\r\n      const seenTex = {}\r\n      for (const quad of quads) if (seenTex[quad.tex] !== true) { seenTex[quad.tex] = true; textureIds.push(quad.tex) }\r\n      const already = {}\r\n      if (Array.isArray(have)) for (const path of have) already[path] = true\r\n      const textures = {}\r\n      for (const path of textureIds) {\r\n        if (already[path] === true) continue\r\n        const url = await textureUrlFor(path, project)\r\n        if (url !== undefined) textures[path] = url\r\n      }\r\n      return { kind: kind, id: id, title: labelFor(namespace, kind, id),\r\n        project: project.title || project.id,\r\n        quads: quads, textureIds: textureIds, textures: textures,\r\n        animations: animationsFor(textureIds), animationNotes: animationNotesFor(textureIds),\r\n        cells: cells, faceStep: FACE_STEP,\r\n        model: blockModel, models: blockModels,\r\n        refs: refs, ref: refs[0], palette: palette, box: boxOfQuads(quads), errors: errors.slice(0, 8) }\r\n    }\r\n\r\n    async function shellExec(spec) {\r\n      const service = shellOf()\r\n      if (service === undefined) return { exitCode: null, text: '', err: 'no shell service' }\r\n      if (typeof service.run === 'function') return await service.run(spec)\r\n      if (typeof service.execute === 'function') return await service.execute(spec)\r\n      return { exitCode: null, text: '', err: '这个 shell 服务既没有 run() 也没有 execute()：' +\r\n        Object.keys(service).join(',') }\r\n    }\r\n\r\n\r\n    function shellText(value) {\r\n      if (value === undefined || value === null) return ''\r\n      if (typeof value === 'string') return value\r\n      return value.text === undefined ? String(value) : String(value.text)\r\n    }\r\n\r\n    async function runShell(command, timeoutMs, sandboxPolicy, maxBytes) {\r\n      if (shellOf() === undefined) return { exitCode: null, text: '', err: 'no shell service' }\r\n      const request = { command: command, timeoutMs: timeoutMs === undefined ? 20000 : timeoutMs,\r\n        stdoutMaxBytes: maxBytes === undefined ? 64 * 1024 : maxBytes }\r\n      if (sandboxPolicy !== undefined) request.sandboxPolicy = sandboxPolicy\r\n      const spec = shellOf().resolve(request)\r\n      const result = await shellExec(spec)\r\n      return { exitCode: result.exitCode === undefined ? null : result.exitCode,\r\n        text: shellText(result.stdout), err: shellText(result.stderr) }\r\n    }\r\n\r\n    async function available(tool) {\r\n      const dialect = await currentShell('')\r\n      const result = await runShell(dialect.available(tool), 10000)\r\n      return result.exitCode === 0 && String(result.text).trim().length > 0\r\n    }\r\n\r\n    const PS_QUOTE = (value) => \"'\" + String(value).split(\"'\").join(\"''\") + \"'\"\r\n    const SHELLS = {\r\n      posix: {\r\n        name: 'posix',\r\n        word: (value) => shellDecoded(value),\r\n        available: (tool) => 'command -v ' + tool,\r\n        remove: (path) => 'rm -f ' + shellDecoded(path),\r\n        makeDir: (path) => 'mkdir -p ' + shellDecoded(path),\r\n        move: (from, to) => 'mv -f ' + shellDecoded(from) + ' ' + shellDecoded(to),\r\n        decodeFile: (source, target) =>\r\n          'base64 -d < ' + shellDecoded(source) + ' > ' + shellDecoded(target),\r\n        writeInline: (target, base64) =>\r\n          'printf %s ' + quoteRaw(base64) + ' | base64 -d > ' + shellDecoded(target),\r\n      },\r\n      pwsh: {\r\n        name: 'pwsh',\r\n        word: (value) => PS_QUOTE(value),\r\n        available: (tool) => '(Get-Command ' + PS_QUOTE(tool) + ' -ErrorAction SilentlyContinue) -ne $null',\r\n        remove: (path) => 'Remove-Item -LiteralPath ' + PS_QUOTE(path) + ' -Force -ErrorAction SilentlyContinue',\r\n        makeDir: (path) => '[IO.Directory]::CreateDirectory(' + PS_QUOTE(path) + ') | Out-Null',\r\n        move: (from, to) => 'Move-Item -LiteralPath ' + PS_QUOTE(from) +\r\n          ' -Destination ' + PS_QUOTE(to) + ' -Force',\r\n        decodeFile: (source, target) => '[IO.File]::WriteAllBytes(' + PS_QUOTE(target) +\r\n          ', [Convert]::FromBase64String([IO.File]::ReadAllText(' + PS_QUOTE(source) + ')))',\r\n        writeInline: (target, base64) => '[IO.File]::WriteAllBytes(' + PS_QUOTE(target) +\r\n          ', [Convert]::FromBase64String(' + PS_QUOTE(base64) + '))',\r\n      },\r\n    }\r\n    let shellDialect = null\r\n\r\n    let shellProbeInfo = null\r\n    async function currentShell(workspaceRoot) {\r\n      if (shellDialect !== null) return SHELLS[shellDialect]\r\n      const platform = platformOf()\r\n      if (platform === 'win32') {\r\n        shellProbeInfo = { platform: platform, dialect: 'pwsh', why: '按平台定的（没跑探针）' }\r\n        shellDialect = 'pwsh'\r\n        return SHELLS.pwsh\r\n      }\r\n      if (platform === 'linux' || platform === 'darwin' || platform === 'freebsd' || platform === 'openbsd' || platform === 'sunos' || platform === 'aix') {\r\n        shellProbeInfo = { platform: platform, dialect: 'posix', why: '按平台定的（没跑探针）' }\r\n        shellDialect = 'posix'\r\n        return SHELLS.posix\r\n      }\r\n      const probe = await runShell('echo \"mcart-shell:$($PSVersionTable.PSVersion.Major)\"', 20000,\r\n        policyFor(workspaceRoot), 4096)\r\n      shellProbeInfo = { platform: platform, exitCode: probe.exitCode,\r\n        text: String(probe.text).slice(0, 80), err: String(probe.err).slice(0, 80) }\r\n      if (probe.exitCode !== 0) return SHELLS.posix\r\n      shellDialect = /^mcart-shell:\\d+/.test(String(probe.text).trim()) ? 'pwsh' : 'posix'\r\n      return SHELLS[shellDialect]\r\n    }\r\n\r\n\r\n    async function windowsPowerShell() {\r\n      const root = (envOf('SystemRoot') || 'C:/Windows').split(BACKSLASH).join('/')\r\n      const absolute = [\r\n        root + '/System32/WindowsPowerShell/v1.0/powershell.exe',\r\n        'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe',\r\n      ]\r\n      for (const candidate of absolute) {\r\n        const info = await statOf(candidate)\r\n        if (info !== undefined && info.type === 'file') return candidate\r\n      }\r\n      for (const name of ['powershell.exe', 'pwsh']) {\r\n        if (shellOf() !== undefined && await available(name)) return name\r\n      }\r\n      return null\r\n    }\r\n\r\n\r\n    async function writeDecodedFile(target, base64, workspaceRoot, timeoutMs) {\r\n      if (shellOf() !== undefined) {\r\n        const dialect = await currentShell(workspaceRoot)\r\n        const policy = policyFor(workspaceRoot)\r\n        const staging = target + '.mcart-b64'\r\n        const staged = await writeTextFile(staging, base64, workspaceRoot)\r\n        if (staged.ok !== true) {\r\n          return { ok: false, exitCode: null, err: String(staged.detail), step: 1, steps: 2 }\r\n        }\r\n        const done = await runShell(dialect.decodeFile(staging, target), timeoutMs, policy)\r\n        const cleanup = await runShell(dialect.remove(staging), 15000, policy)\r\n        if (done.exitCode === 0) {\r\n          return { ok: true, steps: 2, dialect: dialect.name, stagingRemoved: cleanup.exitCode === 0 }\r\n        }\r\n        const local = localOf()\r\n        if (local === null) {\r\n          return { ok: false, exitCode: done.exitCode, err: done.err, step: 2, steps: 2 }\r\n        }\r\n        try {\r\n          await local.writeBase64(target, base64)\r\n          return { ok: true, steps: 1, dialect: dialect.name, via: 'node:fs',\r\n            shellSaid: 'exit=' + String(done.exitCode) }\r\n        } catch (error) {\r\n          return { ok: false, exitCode: done.exitCode,\r\n            err: beforeStderr(String(done.err)) + ' | node:fs: ' + messageOf(error), step: 2, steps: 2 }\r\n        }\r\n      }\r\n      const local = localOf()\r\n      if (local === null) {\r\n        return { ok: false, exitCode: null, step: 0, steps: 1,\r\n          err: '宿主既没有 shell 服务，也没有本地文件系统垫片' }\r\n      }\r\n      try {\r\n        await local.writeBase64(target, base64)\r\n        return { ok: true, steps: 1, via: 'node:fs' }\r\n      } catch (error) {\r\n        return { ok: false, exitCode: null, step: 0, steps: 1, err: messageOf(error) }\r\n      }\r\n    }\r\n\r\n\r\n    async function ensureDir(path, workspaceRoot, depth) {\r\n      if (await isDirectoryOf(path)) return { ok: true, via: 'existing' }\r\n      const tried = []\r\n      const level = depth === undefined ? 0 : depth\r\n      const picker = ctx.get('directoryPickerController')\r\n      if (picker !== undefined && typeof picker.createDirectory === 'function') {\r\n        const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\\\'))\r\n        if (cut > 0) {\r\n          const parent = path.slice(0, cut)\r\n          const name = path.slice(cut + 1)\r\n          try {\r\n            await picker.createDirectory(parent, name)\r\n            return { ok: true, via: 'directoryPickerController' }\r\n          } catch (error) {\r\n            if (level < 8) {\r\n              const up = await ensureDir(parent, workspaceRoot, level + 1)\r\n              if (up.ok === true) {\r\n                try {\r\n                  await picker.createDirectory(parent, name)\r\n                  return { ok: true, via: 'directoryPickerController' }\r\n                } catch (again) { tried.push('directoryPickerController: ' + messageOf(again)) }\r\n              } else {\r\n                tried.push('directoryPickerController: ' + messageOf(error) +\r\n                  '；父目录也建不出来：' + String(up.detail))\r\n              }\r\n            } else tried.push('directoryPickerController: ' + messageOf(error))\r\n          }\r\n        } else tried.push('directoryPickerController: 路径里没有父目录')\r\n      } else tried.push('directoryPickerController: 宿主没有这个服务')\r\n      if (shellOf() !== undefined) {\r\n        const done = await shellFileOp(workspaceRoot, (dialect) => dialect.makeDir(path), 20000)\r\n        if (done.ok === true) return { ok: true, via: 'shell' }\r\n        const detail = beforeStderr(done.err === undefined || done.err === null ? '' : done.err)\r\n        tried.push('shell: 退出码 ' + String(done.exitCode) + (detail === '' ? '，没有错误输出' : '，' + detail))\r\n      } else tried.push('shell: 宿主没有这个服务')\r\n      if (fsOf() !== undefined) {\r\n        try {\r\n          const target = await fsOf().resolve(path + '/.gitkeep')\r\n          await fsOf().writeText(target, '', undefined, undefined, policyFor(workspaceRoot))\r\n          return { ok: true, via: 'fs', placeholder: true }\r\n        } catch (error) { tried.push('fs: ' + messageOf(error)) }\r\n      } else tried.push('fs: 宿主没有这个服务')\r\n      const local = localOf()\r\n      if (local !== null) {\r\n        try {\r\n          await local.mkdirp(path)\r\n          return { ok: true, via: 'node:fs' }\r\n        } catch (error) { tried.push('node:fs: ' + messageOf(error)) }\r\n      } else tried.push('node:fs: 这个运行时里没有文件系统垫片')\r\n      return { ok: false, detail: tried.join('；') }\r\n    }\r\n\r\n\r\n    async function shellFileOp(workspaceRoot, build, timeoutMs) {\r\n      if (shellOf() === undefined) return { ok: false, exitCode: null, err: 'no shell service' }\r\n      const dialect = await currentShell(workspaceRoot)\r\n      const done = await runShell(build(dialect), timeoutMs, policyFor(workspaceRoot))\r\n      return { ok: done.exitCode === 0, exitCode: done.exitCode, err: done.err }\r\n    }\r\n\r\n    async function removeFile(path, workspaceRoot) {\r\n      const done = await shellFileOp(workspaceRoot, (dialect) => dialect.remove(path), 15000)\r\n      if (done.ok === true) return { ok: true, via: 'shell' }\r\n      const local = localOf()\r\n      if (local === null) return { ok: false, detail: String(done.err) }\r\n      try {\r\n        await local.remove(path)\r\n        return { ok: true, via: 'node:fs' }\r\n      } catch (error) { return { ok: false, detail: messageOf(error) } }\r\n    }\r\n\r\n    async function moveFile(from, to, workspaceRoot) {\r\n      const done = await shellFileOp(workspaceRoot, (dialect) => dialect.move(from, to), 20000)\r\n      if (done.ok === true) return { ok: true, via: 'shell' }\r\n      const local = localOf()\r\n      if (local === null) return { ok: false, exitCode: done.exitCode, detail: String(done.err) }\r\n      try {\r\n        await local.move(from, to)\r\n        return { ok: true, via: 'node:fs' }\r\n      } catch (error) {\r\n        return { ok: false, exitCode: done.exitCode, detail: messageOf(error) }\r\n      }\r\n    }\r\n\r\n    async function runDialog(command, sandboxPolicy, workspaceRoot) {\r\n      if (shellOf() === undefined) return ''\r\n      const request = { command: command, stdoutMaxBytes: 64 * 1024 }\r\n      if (sandboxPolicy !== undefined) request.sandboxPolicy = sandboxPolicy\r\n      const spec = shellOf().resolve(request)\r\n      if (typeof shellOf().start === 'function') {\r\n        const process = await shellOf().start(spec)\r\n        await process.done\r\n        return String(process.readOutput().delta)\r\n      }\r\n      const done = await shellExec(spec)\r\n      return shellText(done.stdout)\r\n    }\r\n\r\n    async function convertPath(flag, value) {\r\n      const trimmed = String(value === undefined || value === null ? '' : value).trim()\r\n      if (trimmed === '') return null\r\n      if (hasWslpath === null) hasWslpath = await available('wslpath')\r\n      if (hasWslpath !== true) return null\r\n      const result = await runShell('wslpath ' + flag + ' ' + shellDecoded(trimmed), 15000)\r\n      if (result.exitCode !== 0) return null\r\n      const converted = beforeStderr(result.text)\r\n      return converted === '' ? null : converted\r\n    }\r\n\r\n    async function writeTextFile(path, text, workspaceRoot) {\r\n      const policy = policyFor(workspaceRoot)\r\n      let fsDetail = null\r\n      if (fsOf() !== undefined) {\r\n        try {\r\n          const target = await fsOf().resolve(path)\r\n          await fsOf().writeText(target, text, undefined, undefined, policy)\r\n          return { ok: true, via: 'fs' }\r\n        } catch (error) {\r\n          fsDetail = messageOf(error)\r\n        }\r\n      } else {\r\n        fsDetail = 'no fs service'\r\n      }\r\n      let shellDetail = 'no shell service'\r\n      if (shellOf() !== undefined) {\r\n        const dialect = await currentShell(workspaceRoot)\r\n        const result = await runShell(dialect.writeInline(path, base64OfString(text)), 20000, policy)\r\n        if (result.exitCode === 0) return { ok: true, via: 'shell' }\r\n        const detail = beforeStderr(result.err === undefined || result.err === null ? '' : result.err)\r\n        shellDetail = 'exit=' + result.exitCode + (detail === '' ? '' : ' err=' + detail)\r\n      }\r\n      const local = localOf()\r\n      if (local !== null) {\r\n        try {\r\n          await local.writeText(path, text)\r\n          return { ok: true, via: 'node:fs' }\r\n        } catch (error) {\r\n          return { ok: false, detail: 'fs: ' + fsDetail + ' | shell: ' + shellDetail +\r\n            ' | node:fs: ' + messageOf(error) }\r\n        }\r\n      }\r\n      return { ok: false, detail: 'fs: ' + fsDetail + ' | shell: ' + shellDetail +\r\n        ' | node:fs: 这个运行时里没有文件系统垫片' }\r\n    }\r\n\r\n    ctx.effect(() => harness.handle('atlas.pickDirectory', async (args) => {\r\n      const request = args || {}\r\n      const start = typeof request.start === 'string' ? request.start : ''\r\n      if (shellOf() === undefined && subprocessOf() === undefined) {\r\n        return { supported: false, detail: '宿主既没有 shell 服务也没有 subprocess，起不了目录对话框。' }\r\n      }\r\n      try {\r\n        const powerShell = await windowsPowerShell()\r\n        if (powerShell !== null) {\r\n          const winStart = await convertPath('-w', start)\r\n          const lines = [\r\n            '$ProgressPreference = \"SilentlyContinue\"',\r\n            'Add-Type -AssemblyName System.Windows.Forms | Out-Null',\r\n            '$d = New-Object System.Windows.Forms.FolderBrowserDialog',\r\n            \"$d.Description = '选择目录'\",\r\n            '$d.ShowNewFolderButton = $false',\r\n          ]\r\n          if (winStart !== null) lines.push(\"$d.SelectedPath = '\" + winStart.split(\"'\").join(\"''\") + \"'\")\r\n          lines.push('if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write(\"' + PICK_BEGIN + '\" + $d.SelectedPath + \"' + PICK_END + '\") }')\r\n          const encoded = utf16leBase64(lines.join('\\n'))\r\n          const dialog = await withDeadline(async () => {\r\n            let text = ''\r\n            const argvRun = await runProcess([powerShell, '-NoProfile', '-STA', '-EncodedCommand', encoded],\r\n              { cwd: start, maxBytes: 64 * 1024, graceMs: 3000 })\r\n            if (argvRun !== null) text = String(argvRun.text)\r\n            if (text === '' && shellOf() !== undefined) {\r\n              const quoting = await currentShell(start)\r\n              text = await runDialog(quoting.word(powerShell) + ' -NoProfile -STA -EncodedCommand ' + encoded,\r\n                policyFor(start))\r\n            }\r\n            return text\r\n          }, 120000)\r\n          if (dialog !== null && typeof dialog === 'object' && dialog.deadlineExpired === true) {\r\n            return { supported: false, platform: platformOf() || null,\r\n              detail: '目录对话框 120 秒没有返回 —— 这条路在你的环境里可能用不了（对话框既不显示也不结束）。' }\r\n          }\r\n          const output = String(dialog)\r\n          const picked = betweenMarkers(output)\r\n          if (picked === '') return { supported: true, cancelled: true, via: 'windows', exe: powerShell }\r\n          const converted = await convertPath('-u', picked)\r\n          const usable = converted !== null ? converted : picked\r\n          const info = await statOf(usable)\r\n          if (info !== undefined && info.type === 'directory') return { path: usable, raw: picked, via: 'windows', exe: powerShell }\r\n          return { supported: true, error: '你选的是 ' + picked + '，但宿主打不开它（转换后：' + usable + '）。' }\r\n        }\r\n        const linuxPickers = [\r\n          { tool: 'zenity', command: 'zenity --file-selection --directory --title=\"选择目录\"' },\r\n          { tool: 'yad', command: 'yad --file --directory --title=\"选择目录\"' },\r\n          { tool: 'kdialog', command: 'kdialog --getexistingdirectory \"$HOME\" \"选择目录\"' },\r\n        ]\r\n        for (const picker of linuxPickers) {\r\n          if (!(await available(picker.tool))) continue\r\n          const picked = beforeStderr(await runDialog(picker.command))\r\n          if (picked === '') return { supported: true, cancelled: true, via: picker.tool }\r\n          const info = await statOf(picked)\r\n          if (info !== undefined && info.type === 'directory') return { path: picked, raw: picked, via: picker.tool }\r\n          return { supported: true, error: '选择器返回了 ' + picked + '，但打不开这个目录。' }\r\n        }\r\n        return { supported: false, platform: platformOf() || null, shellDialect: shellDialect,\r\n          detail: '这个宿主里没找到能用的目录对话框（平台 ' + (platformOf() || '问不到') +\r\n            '；试过 powershell.exe 的绝对路径与 PATH、以及 zenity/yad/kdialog）。' }\r\n      } catch (error) {\r\n        return { error: '目录选择器出错：' + String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.settings', async (args) => {\r\n      const request = args || {}\r\n      const root = typeof request.root === 'string' ? request.root : ''\r\n      const projectId = typeof request.project === 'string' ? request.project : ''\r\n      try {\r\n        const project = await projectFor(root, projectId)\r\n        if (project === undefined) return { error: '找不到项目：' + projectId }\r\n        const file = project.dir + '/mc-art.settings.json'\r\n        const stored = (await readJson(file)) || {}\r\n        const reference = stored.reference !== null && typeof stored.reference === 'object' ? stored.reference : {}\r\n        const chosen = reference.mods !== null && typeof reference.mods === 'object' ? reference.mods : {}\r\n        const directory = typeof reference.directory === 'string' ? reference.directory : ''\r\n        const scanner = await findScanner(project.dir)\r\n        const scanned = await scanReference(scanner, directory)\r\n        const detected = directory === '' ? await detectGameRoots(project.dir) : []\r\n        return {\r\n          path: rel(root, file),\r\n          project: project.id, title: project.title, file: file,\r\n          directory: directory,\r\n          shape: scanned.shape, textures: scanned.textures,\r\n          sources: (scanned.sources || []).slice(0, 80),\r\n          scanError: scanned.error,\r\n          scanner: scanner,\r\n          detected: detected,\r\n          includeGenerated: reference.includeGenerated !== false,\r\n          includeMods: reference.includeMods !== false,\r\n          mods: (scanned.namespaces || []).map((item) => ({ name: item.name, count: item.count,\r\n            from: item.from || [], on: chosen[item.name] !== false })),\r\n        }\r\n      } catch (error) {\r\n        return { error: String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.gameRoots', async (args) => {\r\n      const request = args || {}\r\n      const root = typeof request.root === 'string' ? request.root : ''\r\n      const projectId = typeof request.project === 'string' ? request.project : ''\r\n      try {\r\n        const project = projectId === '' ? undefined : await projectFor(root, projectId)\r\n        const near = project === undefined ? root : project.dir\r\n        return { near: near, candidates: gameRootCandidates(near), detected: await detectGameRoots(near),\r\n          platform: typeof process === 'undefined' ? null : process.platform }\r\n      } catch (error) {\r\n        return { error: String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.saveSettings', async (args) => {\r\n      const request = args || {}\r\n      const root = typeof request.root === 'string' ? request.root : ''\r\n      const projectId = typeof request.project === 'string' ? request.project : ''\r\n      try {\r\n        const project = await projectFor(root, projectId)\r\n        if (project === undefined) return { error: '找不到项目：' + projectId }\r\n        const mods = {}\r\n        if (request.mods !== null && typeof request.mods === 'object') {\r\n          for (const key of Object.keys(request.mods)) {\r\n            if (typeof request.mods[key] === 'boolean') mods[key] = request.mods[key]\r\n          }\r\n        }\r\n        const file = project.dir + '/mc-art.settings.json'\r\n        const stored = (await readJson(file)) || {}\r\n        const storedReference = stored.reference !== null && typeof stored.reference === 'object'\r\n          ? stored.reference : {}\r\n        const payload = Object.assign({}, stored, {\r\n          schema: 'mc-art.settings/1',\r\n          reference: Object.assign({}, storedReference, {\r\n            directory: typeof request.directory === 'string' ? request.directory : '',\r\n            includeGenerated: request.includeGenerated !== false,\r\n            includeMods: request.includeMods !== false,\r\n            mods: mods,\r\n          }),\r\n        })\r\n        const outcome = await writeTextFile(file, JSON.stringify(payload, null, 2) + '\\n', root)\r\n        if (outcome.ok !== true) return { error: String(outcome.detail) }\r\n        return { saved: true, file: file, path: rel(root, file), via: outcome.via }\r\n      } catch (error) {\r\n        return { error: String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    const PNG_MAGIC = [137, 80, 78, 71, 13, 10, 26, 10]\r\n\r\n    ctx.effect(() => harness.handle('atlas.saveTexture', async (args) => {\r\n      const request = args || {}\r\n      const root = typeof request.root === 'string' ? request.root : ''\r\n      const projectId = typeof request.project === 'string' ? request.project : ''\r\n      const path = typeof request.path === 'string' ? request.path : ''\r\n      const base64 = typeof request.base64 === 'string' ? request.base64 : ''\r\n      if (path === '') return { error: '贴图句柄是空的，拒绝写' }\r\n      if (base64 === '') return { error: '缺少图像数据' }\r\n      try {\r\n        const project = await projectFor(root, projectId)\r\n        if (project === undefined) return { error: '找不到项目：' + projectId }\r\n        let target = path\r\n        if (path.slice(0, 4) === 'ref:') {\r\n          const resolved = editablePaths.get(path)\r\n          if (resolved === undefined) {\r\n            return { error: '这张贴图不在这个项目的资源包里（它在参考的 jar 里），改不了：' + path }\r\n          }\r\n          target = resolved\r\n        }\r\n        const placed = packPathOf(project, target)\r\n        if (placed.ok !== true) {\r\n          return { error: placed.reason + '：' + String(target) }\r\n        }\r\n        target = placed.path\r\n        const temp = target + '.mcart-tmp'\r\n        async function discard(reason) {\r\n          const cleanup = await removeFile(temp, root)\r\n          return { error: reason + (cleanup.ok === true ? '（原文件没有被改动）' : '（临时文件也没清掉：' + temp + '）') }\r\n        }\r\n        const written = await writeDecodedFile(temp, base64, root, 30000)\r\n        if (written.ok !== true) {\r\n          const detail = beforeStderr(written.err === undefined || written.err === null ? '' : written.err)\r\n          return await discard('写入失败（退出码 ' + written.exitCode + '，第 ' + written.step + '/' + written.steps + ' 步）' +\r\n            (detail === '' ? '，没有错误输出' : '：' + detail))\r\n        }\r\n        const staged = await statOf(temp)\r\n        if (staged === undefined || staged.type !== 'file') return await discard('写完之后读不到临时文件')\r\n        if (staged.size === undefined || staged.size === 0) return await discard('写出来的是个空文件')\r\n        const bytes = await readBytesOf(temp, 8 * 1024 * 1024)\r\n        if (bytes === undefined) return await discard('写完之后读不出它的字节')\r\n        for (let i = 0; i < PNG_MAGIC.length; i++) {\r\n          if (bytes[i] !== PNG_MAGIC[i]) {\r\n            return await discard('写出来的不是 PNG（开头 ' + Array.prototype.slice.call(bytes, 0, 8).join(',') + '）')\r\n          }\r\n        }\r\n        const moved = await moveFile(temp, target, root)\r\n        if (moved.ok !== true) {\r\n          return await discard('换上新图失败（退出码 ' + String(moved.exitCode) + '）：' + String(moved.detail))\r\n        }\r\n        const info = await statOf(target)\r\n        if (info === undefined || info.type !== 'file') return { error: '换上新图之后读不到它：' + target }\r\n        return { saved: true, path: target, bytes: info.size }\r\n      } catch (error) {\r\n        return { error: String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    const PROJECT_ID = /^[a-z0-9_]{2,32}$/\r\n    ctx.effect(() => harness.handle('atlas.createProject', async (args) => {\r\n      const request = args || {}\r\n      const root = typeof request.root === 'string' ? request.root : ''\r\n      const id = typeof request.id === 'string' ? request.id.trim() : ''\r\n      const asked = typeof request.namespace === 'string' ? request.namespace.trim() : ''\r\n      const namespace = asked === '' ? id : asked\r\n      if (root === '') return { error: '没有给定根目录' }\r\n      if (!PROJECT_ID.test(id)) return { error: '项目 id 只能用小写字母、数字、下划线，2-32 个字符：' + JSON.stringify(id) }\r\n      if (!PROJECT_ID.test(namespace)) return { error: '命名空间只能用小写字母、数字、下划线，2-32 个字符：' + JSON.stringify(namespace) }\r\n      try {\r\n        const dir = root + '/' + id\r\n        if ((await statOf(dir + '/mc-art.atlas.json')) !== undefined) {\r\n          return { error: '这个目录里已经有项目了：' + id }\r\n        }\r\n        const existing = (await listDir(dir + '/pack/assets')).filter((entry) => entry.type === 'directory')\r\n        const others = existing.map((entry) => entry.name)\r\n        if (others.length > 0 && others.indexOf(namespace) < 0) {\r\n          return { error: '这个项目的资源包里已经有命名空间 ' + others.join('、') +\r\n            '。一个模组只用一个命名空间：用已有的那个，或者换一个目录。' }\r\n        }\r\n        const folders = ['pack', 'pack/assets', 'pack/assets/' + namespace,\r\n          'pack/assets/' + namespace + '/textures/block', 'pack/assets/' + namespace + '/models/block',\r\n          'pack/assets/' + namespace + '/blockstates', 'pack/assets/' + namespace + '/lang']\r\n        const used = {}\r\n        let placeholder = false\r\n        const targets = [dir].concat(folders.map((folder) => dir + '/' + folder))\r\n        for (const target of targets) {\r\n          const made = await ensureDir(target, root)\r\n          if (made.ok !== true) {\r\n            return { error: '建目录失败：' + rel(root, target) + ' → ' + String(made.detail),\r\n              dir: dir, folders: folders.length }\r\n          }\r\n          used[made.via] = (used[made.via] === undefined ? 0 : used[made.via]) + 1\r\n          if (made.placeholder === true) placeholder = true\r\n        }\r\n        const atlas = { schema: 'mc-art.atlas/1', namespace: namespace,\r\n          biomes: [], structures: [], entities: [], blocks: [] }\r\n        const wrote = await writeTextFile(dir + '/mc-art.atlas.json', JSON.stringify(atlas, null, 2) + '\\n', root)\r\n        if (wrote.ok !== true) return { error: '写 atlas 失败：' + String(wrote.detail) }\r\n        return { created: true, id: id, namespace: namespace, dir: dir,\r\n          atlas: rel(root, dir + '/mc-art.atlas.json'), folders: folders.length,\r\n          via: Object.keys(used).sort().map((key) => key + '×' + used[key]).join(' + '),\r\n          placeholder: placeholder, atlasVia: wrote.via }\r\n      } catch (error) {\r\n        return { error: String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.saveVoxel', async (args) => {\r\n      const request = args || {}\r\n      const root = typeof request.root === 'string' ? request.root : ''\r\n      const projectId = typeof request.project === 'string' ? request.project : ''\r\n      const kind = request.kind === 'biome' ? 'biome' : (request.kind === 'structure' ? 'structure' : '')\r\n      const id = typeof request.id === 'string' ? request.id : ''\r\n      if (kind === '' || id === '') return { error: '只有群系和多方块结构能这样改' }\r\n      const cells = normalizeCells(request.cells)\r\n      if (cells.length === 0) return { error: '一格都没有，拒绝把结构写空' }\r\n      try {\r\n        const project = await projectFor(root, projectId)\r\n        if (project === undefined) return { error: '找不到项目：' + projectId }\r\n        const taken = {}\r\n        for (const cell of cells) {\r\n          const at = cell.at.join(',')\r\n          if (taken[at] === true) return { error: '同一个格子放了两个方块：' + at }\r\n          taken[at] = true\r\n        }\r\n        const file = project.dir + '/mc-art.atlas.json'\r\n        const atlas = await readJson(file)\r\n        if (atlas === undefined) return { error: '读不了图谱：' + file }\r\n        const key = kind === 'biome' ? 'biomes' : 'structures'\r\n        const list = Array.isArray(atlas[key]) ? atlas[key] : []\r\n        const item = list.filter((entry) => entry.id === id)[0]\r\n        if (item === undefined) return { error: '图谱里没有这个 ' + kind + '：' + id }\r\n        item.cells = cells\r\n        const outcome = await writeTextFile(file, JSON.stringify(atlas, null, 2) + '\\n', root)\r\n        if (outcome.ok !== true) return { error: String(outcome.detail) }\r\n        return { saved: true, file: file, kind: kind, id: id, cells: cells.length, via: outcome.via }\r\n      } catch (error) {\r\n        return { error: String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.preview', async (args) => {\r\n      const request = args || {}\r\n      const root = typeof request.root === 'string' ? request.root : ''\r\n      const projectId = typeof request.project === 'string' ? request.project : ''\r\n      const block = typeof request.block === 'string' ? request.block : ''\r\n      const at = Array.isArray(request.at) && request.at.length >= 3\r\n        ? [Math.trunc(request.at[0]), Math.trunc(request.at[1]), Math.trunc(request.at[2])] : [0, 0, 0]\r\n      const variant = typeof request.variant === 'string' && request.variant !== '' ? request.variant : null\r\n      const around = Array.isArray(request.around) ? request.around.slice(0, 32) : []\r\n      if (block === '') return { error: '预览需要方块名' }\r\n      try {\r\n        const project = await projectFor(root, projectId)\r\n        if (project === undefined) return { error: '找不到项目：' + projectId }\r\n        const built = await blockQuadsAt(root, project, block, at, variant, around)\r\n        if (built.error !== undefined) return { error: built.error }\r\n        const textureIds = []\r\n        const seen = {}\r\n        for (const quad of built.quads) if (seen[quad.tex] !== true) { seen[quad.tex] = true; textureIds.push(quad.tex) }\r\n        const already = {}\r\n        if (Array.isArray(request.have)) for (const path of request.have) already[path] = true\r\n        const textures = {}\r\n        for (const path of textureIds) {\r\n          if (already[path] === true) continue\r\n          const url = await textureUrlFor(path, project)\r\n          if (url !== undefined) textures[path] = url\r\n        }\r\n        return { block: block, at: at, quads: built.quads, textureIds: textureIds, textures: textures,\r\n          animations: animationsFor(textureIds), animationNotes: animationNotesFor(textureIds),\r\n          variants: built.variants || [], axes: built.axes || [], defaults: built.defaults || {},\r\n          multipart: built.multipart === true, derived: built.derived === true,\r\n          variant: built.variant === undefined ? null : built.variant }\r\n      } catch (error) {\r\n        return { error: String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.icons', async (args) => {\r\n      const request = args || {}\r\n      const root = typeof request.root === 'string' ? request.root : ''\r\n      const projectId = typeof request.project === 'string' ? request.project : ''\r\n      const wanted = Array.isArray(request.blocks) ? request.blocks.slice(0, 120) : []\r\n      try {\r\n        const project = await projectFor(root, projectId)\r\n        if (project === undefined) return { error: '找不到项目：' + projectId }\r\n        const icons = {}\r\n        const failed = []\r\n        for (const block of wanted) {\r\n          if (typeof block !== 'string' || block === '' || icons[block] !== undefined) continue\r\n          const reference = block\r\n          const colon = reference.indexOf(':')\r\n          const namespace = colon >= 0 ? reference.slice(0, colon) : project.namespace\r\n          const name = colon >= 0 ? reference.slice(colon + 1) : reference\r\n          const load = await ensure(namespace)\r\n          if (load === undefined) { failed.push(reference + '（资源包 ' + namespace + ' 没载入）'); continue }\r\n          const elements = elementsOf(load, 'block/' + name)\r\n          if (elements === undefined) { failed.push(reference + '（没有模型）'); continue }\r\n          const first = elements.length > 0 && elements[0].faces !== undefined\r\n            ? Object.keys(elements[0].faces)[0] : undefined\r\n          const tex = first === undefined ? undefined : elements[0].faces[first].tex\r\n          const url = tex === undefined ? undefined : await textureUrlFor(tex, project)\r\n          if (url === undefined) { failed.push(reference + '（没有贴图）'); continue }\r\n          icons[block] = url\r\n        }\r\n        return { icons: icons, failed: failed.slice(0, 6) }\r\n      } catch (error) {\r\n        return { error: String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.scan', async (args) => {\r\n      const request = args || {}\r\n      const root = typeof request.root === 'string' ? request.root : ''\r\n      if (root === '') return { rootSpecified: false, projects: [], errors: [] }\r\n      errors.length = 0\r\n      const index = await indexOf(root)\r\n      const projects = index.projects.map((project) => ({\r\n        id: project.id, title: project.title, namespace: project.namespace, root: project.root,\r\n        items: {\r\n          biome: project.biomes.map((item) => ({ id: item.id, title: item.title })),\r\n          structure: project.structures.map((item) => ({ id: item.id, title: item.title })),\r\n          entity: project.entities.map((item) => ({ id: item.id, title: item.title })),\r\n          block: project.blocks.map((item) => ({ id: item.id, title: item.title })),\r\n        },\r\n      }))\r\n      return { rootSpecified: true, root: root, projects: projects, errors: errors.slice(0, 8), cached: index.cached }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.projects', async (args) => {\r\n      const request = args || {}\r\n      const base = typeof request.path === 'string' ? request.path : ''\r\n      if (base === '') return { error: '没有给定目录' }\r\n      try {\r\n        const parents = []\r\n        const addParent = (value) => { if (value !== null && value !== undefined && parents.indexOf(value) < 0) parents.push(value) }\r\n        if (await looksLikeProject(base)) addParent(parentOf(base))\r\n        const entries = await listDir(base)\r\n        for (const entry of entries) {\r\n          if (entry.type !== 'directory') continue\r\n          const child = entry.target !== undefined && typeof entry.target.displayPath === 'string' && entry.target.displayPath.length > 0\r\n            ? entry.target.displayPath : base + '/' + entry.name\r\n          if (await looksLikeProject(child)) addParent(base)\r\n        }\r\n        const results = []\r\n        for (const parent of parents) {\r\n          const index = await indexOf(parent)\r\n          for (const project of index.projects) {\r\n            results.push({ root: parent, id: project.id, title: project.title, namespace: project.namespace, dir: project.dir })\r\n          }\r\n        }\r\n        return { base: base, projects: results }\r\n      } catch (error) {\r\n        return { error: String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.env', async (args) => {\r\n      const request = args || {}\r\n      const root = typeof request.root === 'string' && request.root !== '' ? request.root : '.'\r\n      const picker = ctx.get('directoryPickerController')\r\n      const services = {\r\n        fs: fsOf() !== undefined,\r\n        shell: shellOf() !== undefined,\r\n        sessions: sessionsOf() !== undefined,\r\n        webServer: ctx.get('webServer') !== undefined,\r\n        directoryPickerController: picker !== undefined && typeof picker.createDirectory === 'function',\r\n        localFs: localOf() !== null,\r\n        subprocess: ctx.get('subprocess') !== undefined,\r\n      }\r\n      let dialect = null\r\n      if (services.shell) {\r\n        try { dialect = (await currentShell('')).name } catch (error) { dialect = 'probe failed: ' + messageOf(error) }\r\n      }\r\n      const missing = Object.keys(services).filter((key) => services[key] !== true)\r\n      const scanner = await findScanner(root)\r\n      const extractor = await findTool(root, EXTRACT_SCRIPT)\r\n      let python = null\r\n      try { python = await resolvePython(root) } catch (error) { python = 'probe failed: ' + messageOf(error) }\r\n      return { services: services, shellDialect: dialect,\r\n        platform: platformOf() || null,\r\n        node: typeof process === 'undefined' ? null : process.version,\r\n        missing: missing,\r\n        scanner: scanner, extractor: extractor, python: python, pythonVia: pythonVia,\r\n        pythonCandidates: pythonCandidates().slice(0, 8),\r\n        bundledPythonDirs: bundledPythonDirs(),\r\n        shellProbe: shellProbeInfo,\r\n        powershell: platformOf() === 'win32' ? await windowsPowerShell() : null,\r\n        moduleDir: moduleDirOf() || null,\r\n        note: missing.length === 0 ? '每一条路都在。'\r\n          : '缺 ' + missing.join('、') + '；每一件写入都会自动走能用的那条路（建目录/写文件/写字节各有退路），结果里会写 via=…' }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.scene', async (args) => {\r\n      const request = args || {}\r\n      const root = typeof request.root === 'string' ? request.root : ''\r\n      if (root === '') return { error: 'no asset root specified' }\r\n      try {\r\n        const index = await indexOf(root)\r\n        const project = index.projects.filter((item) => item.id === request.project)[0]\r\n        if (project === undefined) return { error: 'project not found: ' + request.project }\r\n        return await payload(root, project, request.kind, request.id, request.have, request.cells,\r\n          request.neighbours)\r\n      } catch (error) {\r\n        return { error: String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.session', async (args) => {\r\n      const request = args || {}\r\n      try {\r\n        const id = typeof request.sessionId === 'string' ? request.sessionId : ''\r\n        const session = (sessionsOf() === undefined || id === '') ? undefined : sessionsOf().get(id)\r\n        if (session === undefined) return { cwd: null }\r\n        const cwd = session.header.cwd\r\n        return { cwd: typeof cwd === 'string' ? cwd : null }\r\n      } catch (error) {\r\n        return { cwd: null, error: String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.refNamespaces', async (args) => {\r\n      const request = args || {}\r\n      const root = typeof request.root === 'string' ? request.root : ''\r\n      const projectId = typeof request.project === 'string' ? request.project : ''\r\n      try {\r\n        const project = await projectFor(root, projectId)\r\n        if (project === undefined) return { error: '找不到项目：' + projectId }\r\n        const directory = await referenceDirectory(project)\r\n        if (directory === '') return { namespaces: [], directory: '', reason: '没有设置参考目录' }\r\n        const extractor = await findTool(project.dir, EXTRACT_SCRIPT)\r\n        if (extractor === null || extractor === undefined) return { error: '找不到 ' + EXTRACT_SCRIPT }\r\n        const parsed = await runScanner(extractor, ['--root', directory, '--namespaces'],\r\n          120000, project.dir, REFERENCE_MAX_BYTES)\r\n        if (parsed === undefined || parsed.error !== undefined) {\r\n          return { error: String(parsed === undefined ? '没有返回任何东西' : parsed.error) }\r\n        }\r\n        const out = (parsed.namespaces || []).filter((item) => item.blocks > 0)\r\n        return { directory: directory, version: parsed.version, versionWhy: parsed.versionWhy,\r\n          namespaces: out, extractor: extractor }\r\n      } catch (error) {\r\n        return { error: String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.refItems', async (args) => {\r\n      const request = args || {}\r\n      const root = typeof request.root === 'string' ? request.root : ''\r\n      const projectId = typeof request.project === 'string' ? request.project : ''\r\n      const namespace = typeof request.namespace === 'string' ? request.namespace : ''\r\n      const source = request.source === 'project' ? 'project' : 'reference'\r\n      if (namespace === '') return { error: '没有指定命名空间' }\r\n      try {\r\n        const project = await projectFor(root, projectId)\r\n        if (project === undefined) return { error: '找不到项目：' + projectId }\r\n        return await itemFactsList(project, namespace, source)\r\n      } catch (error) {\r\n        return { error: String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.itemIcons', async (args) => {\r\n      const request = args || {}\r\n      const root = typeof request.root === 'string' ? request.root : ''\r\n      const projectId = typeof request.project === 'string' ? request.project : ''\r\n      const namespace = typeof request.namespace === 'string' ? request.namespace : ''\r\n      const wanted = Array.isArray(request.items) ? request.items.slice(0, 60) : []\r\n      const source = request.source === 'project' ? 'project' : 'reference'\r\n      if (namespace === '' || wanted.length === 0) return { items: {} }\r\n      try {\r\n        const project = await projectFor(root, projectId)\r\n        if (project === undefined) return { error: '找不到项目：' + projectId }\r\n        return await itemIconPage(project, namespace, wanted.filter((id) => typeof id === 'string' && id !== ''), source)\r\n      } catch (error) {\r\n        return { error: String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.icon', async (args) => {\r\n      const request = args || {}\r\n      const root = typeof request.root === 'string' ? request.root : ''\r\n      const projectId = typeof request.project === 'string' ? request.project : ''\r\n      const namespace = typeof request.namespace === 'string' ? request.namespace : ''\r\n      const item = typeof request.item === 'string' ? request.item : ''\r\n      const source = request.source === 'project' ? 'project' : 'reference'\r\n      if (namespace === '' || item === '') return { error: '图标需要一个命名空间和一个物品名' }\r\n      try {\r\n        const project = await projectFor(root, projectId)\r\n        if (project === undefined) return { error: '找不到项目：' + projectId }\r\n        const entry = await referenceLoadItem(root, project, namespace, item, source)\r\n        if (entry.error !== undefined) return { error: entry.error }\r\n        return await itemIcon(namespace, entry.parsed, request.have, project)\r\n      } catch (error) {\r\n        return { error: String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.refBlocks', async (args) => {\r\n      const request = args || {}\r\n      const root = typeof request.root === 'string' ? request.root : ''\r\n      const projectId = typeof request.project === 'string' ? request.project : ''\r\n      const namespace = typeof request.namespace === 'string' ? request.namespace : ''\r\n      if (namespace === '') return { error: '没有指定命名空间' }\r\n      try {\r\n        const project = await projectFor(root, projectId)\r\n        if (project === undefined) return { error: '找不到项目：' + projectId }\r\n        const directory = await referenceDirectory(project)\r\n        if (directory === '') return { error: '还没有设置参考目录' }\r\n        const extractor = await findTool(project.dir, EXTRACT_SCRIPT)\r\n        if (extractor === null || extractor === undefined) return { error: '找不到 ' + EXTRACT_SCRIPT }\r\n        const signature = await refSignatureOf(directory)\r\n        const cacheKey = 'list:' + namespace\r\n        const cached = referenceBlocks.get(cacheKey)\r\n        if (cached !== undefined && cached.signature === signature) return cached.value\r\n        const parsed = await runScanner(extractor, ['--root', directory, '--list', '--namespace', namespace],\r\n          120000, project.dir, REFERENCE_MAX_BYTES)\r\n        if (parsed === undefined || parsed.error !== undefined) {\r\n          return { error: String(parsed === undefined ? '没有返回任何东西' : parsed.error) }\r\n        }\r\n        const value = { namespace: namespace, version: parsed.version, blocks: parsed.blocks || [] }\r\n        referenceBlocks.set(cacheKey, { signature: signature, value: value })\r\n        return value\r\n      } catch (error) {\r\n        return { error: String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.refIcons', async (args) => {\r\n      const request = args || {}\r\n      const root = typeof request.root === 'string' ? request.root : ''\r\n      const projectId = typeof request.project === 'string' ? request.project : ''\r\n      const namespace = typeof request.namespace === 'string' ? request.namespace : ''\r\n      const wanted = Array.isArray(request.blocks) ? request.blocks.slice(0, 120) : []\r\n      if (namespace === '' || wanted.length === 0) return { icons: {}, names: {} }\r\n      try {\r\n        const project = await projectFor(root, projectId)\r\n        if (project === undefined) return { error: '找不到项目：' + projectId }\r\n        const directory = await referenceDirectory(project)\r\n        if (directory === '') return { error: '还没有设置参考目录' }\r\n        const extractor = await findTool(project.dir, EXTRACT_SCRIPT)\r\n        if (extractor === null || extractor === undefined) return { error: '找不到 ' + EXTRACT_SCRIPT }\r\n        const parsed = await runScanner(extractor,\r\n          ['--root', directory, '--namespace', namespace, '--icons', wanted.join(',')],\r\n          180000, project.dir, REFERENCE_MAX_BYTES)\r\n        if (parsed === undefined || parsed.error !== undefined) {\r\n          return { error: String(parsed === undefined ? '没有返回任何东西' : parsed.error) }\r\n        }\r\n        const icons = {}\r\n        const names = {}\r\n        const failed = Array.isArray(parsed.failed) ? parsed.failed : []\r\n        for (const id of Object.keys(parsed.icons || {})) {\r\n          const item = parsed.icons[id]\r\n          const key = namespace + ':' + id\r\n          if (item === null || item === undefined || typeof item !== 'object' ||\r\n              typeof item.png !== 'string' || item.png === '') {\r\n            failed.push(id + '（没有图标数据）')\r\n            continue\r\n          }\r\n          icons[key] = 'data:image/png;base64,' + item.png\r\n          names[key] = typeof item.name === 'string' && item.name !== '' ? item.name : id\r\n        }\r\n        return { icons: icons, names: names, failed: failed, version: parsed.version }\r\n      } catch (error) {\r\n        return { error: String(error && error.message ? error.message : error) }\r\n      }\r\n    }))\r\n\r\n    ctx.effect(() => harness.handle('atlas.releaseRefs', async (args) => {\r\n      const request = args || {}\r\n      const keep = {}\r\n      if (Array.isArray(request.keep)) for (const key of request.keep) keep[String(key)] = true\r\n      return releaseUnused(referenceBlocks, keep, referenceTextures, referenceAnimations)\r\n    }))\r\n\r\n    console.log('mc-art atlas host ready (unqualified cell blocks resolve to their project; vanilla and mod blocks are extracted on demand)')\r\n  },\r\n}\r\n"
-const VERSION = "0.2.9"
+const VERSION = "0.3.0"
 // 本模块所在目录（<包>/lib）。宿主源码用它推出**随包的那份引擎**在哪里 ——
 // 参考目录要靠 Python 脚本读 jar，而"项目不在 mc-art 仓库里"的机器上，
 // 只从项目目录往上找是找不到的（实测：设置存得下、什么也读不出来）。
@@ -101,8 +100,3519 @@ export function apply(ctx) {
       return () => { delete handlers[method] }
     },
   }
-  const plugin = new Function('harness', 'console', 'TextEncoder', 'btoa', 'atob', 'nodeFs', 'moduleDir', 'process', SOURCE)(
-    harness, console, TextEncoder, btoa, atob, nodeFs, MODULE_DIR, process)
+  // 宿主源码**内联成一个真正的函数表达式**，不再在运行时构造/求值函数。
+  //
+  // 为什么改：0.2.1 的浏览器沙箱禁掉了求值型加载 —— 客户端那一半就是因此在工厂里
+  // 抛错、整个 UI 不注册（宿主在 Node 里求值一直可用，所以它看起来"活着"，
+  // 症状是"插件 active 但面板不在槽里"）。宿主这边同样改成静态函数，两条路
+  // 都不再依赖求值，同一个原因不会再咬第二口。
+  //
+  // 注意：内联进 ESM 模块意味着这份源码跑在**严格模式**下（原来是宽松模式）。
+  // 它本来就是按严格模式写的；门禁加载这份产物时会把任意宽松模式的写法当场
+  // 暴露出来，而不是等用户机器上才炸。
+  const plugin = (function (harness, console, TextEncoder, btoa, atob, nodeFs, moduleDir, process) {
+  // >>> mcart:embedded-source
+const FACE_SHADE = { up: 1.0, down: 0.5, north: 0.8, south: 0.8, east: 0.6, west: 0.6 }
+const FACE_ORDER = ['down', 'up', 'north', 'south', 'west', 'east']
+
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+const mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k]
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+const vlen = (a) => Math.sqrt(dot(a, a))
+function unit(a) { const n = vlen(a); return n < 1e-12 ? [0, 0, 0] : mul(a, 1 / n) }
+
+function faceCorners(x1, y1, z1, x2, y2, z2, face) {
+  if (face === 'down') return [[x1, y1, z2], [x1, y1, z1], [x2, y1, z1], [x2, y1, z2]]
+  if (face === 'up') return [[x1, y2, z1], [x1, y2, z2], [x2, y2, z2], [x2, y2, z1]]
+  if (face === 'north') return [[x2, y2, z1], [x2, y1, z1], [x1, y1, z1], [x1, y2, z1]]
+  if (face === 'south') return [[x1, y2, z2], [x1, y1, z2], [x2, y1, z2], [x2, y2, z2]]
+  if (face === 'west') return [[x1, y2, z1], [x1, y1, z1], [x1, y1, z2], [x1, y2, z2]]
+  return [[x2, y2, z2], [x2, y1, z2], [x2, y1, z1], [x2, y2, z1]]
+}
+
+function rotateAbout(point, origin, axis, degrees) {
+  if (!degrees) return point
+  const angle = (degrees * Math.PI) / 180
+  const p = sub(point, origin)
+  const c = Math.cos(angle)
+  const s = Math.sin(angle)
+  let r
+  if (axis === 'x') r = [p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c]
+  else if (axis === 'y') r = [p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c]
+  else r = [p[0] * c - p[1] * s, p[0] * s + p[1] * c, p[2]]
+  return add(r, origin)
+}
+
+const FACE_VECTORS = {
+  down: [0, -1, 0], up: [0, 1, 0], north: [0, 0, -1],
+  south: [0, 0, 1], west: [-1, 0, 0], east: [1, 0, 0],
+}
+
+function faceAfter(face, x, y) {
+  const vector = FACE_VECTORS[face]
+  if (vector === undefined) return face
+  let p = vector
+  if (x) p = rotateAbout(p, [0, 0, 0], 'x', x)
+  if (y) p = rotateAbout(p, [0, 0, 0], 'y', -y)
+  for (const name of FACE_ORDER) {
+    const want = FACE_VECTORS[name]
+    if (Math.abs(p[0] - want[0]) < 1e-6 && Math.abs(p[1] - want[1]) < 1e-6 && Math.abs(p[2] - want[2]) < 1e-6) return name
+  }
+  return face
+}
+
+function rotateQuads(quads, rotation) {
+  if (rotation === undefined || rotation === null) return quads
+  const x = rotation.x || 0
+  const y = rotation.y || 0
+  if (x === 0 && y === 0) return quads
+  return quads.map((quad) => {
+    let p = x ? quad.p.map((point) => rotateAbout(point, [0.5, 0.5, 0.5], 'x', x)) : quad.p
+    p = y ? p.map((point) => rotateAbout(point, [0.5, 0.5, 0.5], 'y', -y)) : p
+    const face = faceAfter(quad.face, x, y)
+    const shade = quad.shaded === false ? 1.0 : (FACE_SHADE[face] === undefined ? quad.shade : FACE_SHADE[face])
+    const turned = { p: p, uv: quad.uv, tex: quad.tex, shade: shade, mode: quad.mode,
+      face: face, shaded: quad.shaded }
+    if (quad.pick !== undefined) turned.pick = quad.pick
+    return turned
+  })
+}
+
+function degenerate(corners) {
+  for (let i = 0; i < 4; i++) {
+    for (let j = i + 1; j < 4; j++) {
+      const a = corners[i], b = corners[j]
+      if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) return true
+    }
+  }
+  return false
+}
+
+function quadsFromElements(elements, report) {
+  const quads = []
+  for (const element of elements) {
+    const x1 = element.from[0], y1 = element.from[1], z1 = element.from[2]
+    const x2 = element.to[0], y2 = element.to[1], z2 = element.to[2]
+    const rotation = element.rotation
+    const emitted = {}
+    for (const face of Object.keys(element.faces || {})) {
+      const data = element.faces[face]
+      if (data === undefined || data.tex === undefined) continue
+      let corners = faceCorners(x1, y1, z1, x2, y2, z2, face)
+      if (rotation) {
+        corners = corners.map((p) => rotateAbout(p, rotation.origin || [0, 0, 0], rotation.axis || 'y', rotation.angle || 0))
+      }
+      corners = corners.map((p) => [p[0] / 16, p[1] / 16, p[2] / 16])
+      if (degenerate(corners)) {
+        if (report !== undefined) report('退化面 ' + face + '：四角有重合，已跳过（几何代码写错了）')
+        continue
+      }
+      const uv = data.uv || [0, 0, 16, 16]
+      const base = [[uv[0], uv[1]], [uv[0], uv[3]], [uv[2], uv[3]], [uv[2], uv[1]]]
+      const steps = Math.trunc(data.rotation || 0) / 90
+      const uvs = [0, 1, 2, 3].map((i) => {
+        const pick = base[((i - steps) % 4 + 4) % 4]
+        return [pick[0] / 16, pick[1] / 16]
+      })
+      const fingerprint = corners.map((p) => p[0].toFixed(6) + ',' + p[1].toFixed(6) + ',' + p[2].toFixed(6)).sort().join('|')
+        + '#' + uvs.map((pair) => pair[0] + ',' + pair[1]).join('|') + '#' + data.tex
+      if (emitted[fingerprint] === true) continue
+      emitted[fingerprint] = true
+      quads.push({ p: corners, uv: uvs, tex: data.tex, shade: element.shade === false ? 1.0 : FACE_SHADE[face],
+        mode: 'opaque', face: face, shaded: element.shade !== false })
+    }
+  }
+  return quads
+}
+
+function translateQuads(quads, offset) {
+  if (!offset || (offset[0] === 0 && offset[1] === 0 && offset[2] === 0)) return quads
+  return quads.map((quad) => ({
+    p: quad.p.map((p) => [p[0] + offset[0], p[1] + offset[1], p[2] + offset[2]]),
+    uv: quad.uv, tex: quad.tex, shade: quad.shade, mode: quad.mode, face: quad.face,
+    shaded: quad.shaded,
+  }))
+}
+
+function cubeElements(pick) {
+  const faces = {}
+  for (const face of FACE_ORDER) faces[face] = { texture: pick[face], uv: [0, 0, 16, 16] }
+  return [{ from: [0, 0, 0], to: [16, 16, 16], faces: faces }]
+}
+
+const CROSS_ELEMENTS = [
+  { from: [0.8, 0, 8], to: [15.2, 16, 8], rotation: { origin: [8, 8, 8], axis: 'y', angle: 45, rescale: true }, shade: false,
+    faces: { north: { uv: [0, 0, 16, 16], texture: '#cross' }, south: { uv: [0, 0, 16, 16], texture: '#cross' } } },
+  { from: [8, 0, 0.8], to: [8, 16, 15.2], rotation: { origin: [8, 8, 8], axis: 'y', angle: 45, rescale: true }, shade: false,
+    faces: { west: { uv: [0, 0, 16, 16], texture: '#cross' }, east: { uv: [0, 0, 16, 16], texture: '#cross' } } },
+]
+
+const VANILLA_PARENTS = {
+  'block/block': { textures: {}, gui_light: 'side', display: { gui: {
+    rotation: [30, 225, 0], translation: [0, 0, 0], scale: [0.625, 0.625, 0.625] } } },
+  'block/cube': { parent: 'block/block', textures: { particle: '#north' },
+    elements: cubeElements({ down: '#down', up: '#up', north: '#north',
+      south: '#south', west: '#west', east: '#east' }) },
+  'block/cube_all': { parent: 'block/cube', textures: { particle: '#all', down: '#all', up: '#all',
+    north: '#all', south: '#all', west: '#all', east: '#all' } },
+  'block/cube_column': { parent: 'block/cube', textures: { particle: '#side', end: '#end', side: '#side',
+    down: '#end', up: '#end', north: '#side', south: '#side', west: '#side', east: '#side' } },
+  'block/cube_bottom_top': { parent: 'block/cube', textures: { particle: '#side', bottom: '#bottom',
+    top: '#top', side: '#side', down: '#bottom', up: '#top', north: '#side',
+    south: '#side', west: '#side', east: '#side' } },
+  'block/cross': { textures: { particle: '#cross' }, elements: CROSS_ELEMENTS },
+  'block/tinted_cross': { parent: 'block/cross', textures: {} },
+}
+
+
+function vanillaBare(parent) {
+  const prefix = 'minecraft:'
+  return parent.slice(0, prefix.length) === prefix ? parent.slice(prefix.length) : parent
+}
+
+
+function pngSizeOf(bytes) {
+  if (bytes === undefined || bytes === null || bytes.length === undefined || bytes.length < 24) return undefined
+  const magic = [137, 80, 78, 71, 13, 10, 26, 10]
+  for (let i = 0; i < magic.length; i++) if (bytes[i] !== magic[i]) return undefined
+  const width = ((bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19]) >>> 0
+  const height = ((bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23]) >>> 0
+  if (width === 0 || height === 0) return undefined
+  return { width: width, height: height }
+}
+
+
+function parentModelUsable(candidate) {
+  if (candidate === null || typeof candidate !== 'object') return false
+  if (Array.isArray(candidate.elements) && candidate.elements.length > 0) return true
+  if (typeof candidate.parent === 'string' && candidate.parent !== '') return true
+  return false
+}
+
+function resolveBlockModel(model, loadParent, resolveTexture, trace) {
+  const chain = []
+  let node = model
+  const seen = {}
+  for (let depth = 0; depth < 8 && node !== undefined; depth++) {
+    chain.push(node)
+    const parent = node.parent
+    if (typeof parent !== 'string' || seen[parent] === true) break
+    seen[parent] = true
+    const loaded = loadParent(parent)
+    let next
+    if (parentModelUsable(loaded)) {
+      next = loaded
+      if (Array.isArray(trace)) trace.push({ parent: parent, from: 'loaded' })
+    } else {
+      const key = VANILLA_PARENTS[parent] !== undefined ? parent
+        : (VANILLA_PARENTS[vanillaBare(parent)] !== undefined ? vanillaBare(parent) : '')
+      if (key !== '') {
+        next = VANILLA_PARENTS[key]
+        if (Array.isArray(trace)) {
+          trace.push({ parent: parent, from: 'builtin', key: key,
+            shell: loaded === undefined || loaded === null ? false : true })
+        }
+      } else {
+        if (Array.isArray(trace)) {
+          trace.push({ parent: parent, from: 'none',
+            shell: loaded === undefined || loaded === null ? false : true })
+        }
+        next = { textures: {} }
+      }
+    }
+    node = next
+  }
+  const textures = {}
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const table = chain[i].textures
+    if (table) for (const key of Object.keys(table)) textures[key] = table[key]
+  }
+  let elements
+  for (const candidate of chain) {
+    if (Array.isArray(candidate.elements) && candidate.elements.length > 0) { elements = candidate.elements; break }
+  }
+  if (elements === undefined) return undefined
+  const textureKeys = Object.keys(textures)
+  const dereference = (reference, context) => {
+    let name = String(reference === undefined ? '' : reference)
+    for (let i = 0; i < 8 && name.charAt(0) === '#'; i++) {
+      const next = textures[name.slice(1)]
+      if (next === undefined) break
+      name = String(next)
+    }
+    return resolveTexture(name, context)
+  }
+  return elements.map((element, elementIndex) => {
+    const faces = {}
+    for (const face of Object.keys(element.faces || {})) {
+      const data = element.faces[face]
+      const raw = String(data === undefined || data.texture === undefined ? '' : data.texture)
+      const tex = dereference(data.texture,
+        { face: face, element: elementIndex, raw: raw, keys: textureKeys })
+      if (tex === undefined) continue
+      faces[face] = { tex: tex, uv: data.uv || [0, 0, 16, 16], rotation: data.rotation || 0 }
+    }
+    return { from: element.from, to: element.to, rotation: element.rotation, shade: element.shade, faces: faces }
+  })
+}
+
+const FOOT_OFFSET = 1.5078125
+const LIGHT0 = unit([0.2, 1.0, -0.7])
+const LIGHT1 = unit([-0.2, 1.0, 0.7])
+function toWorld(point) { return [point[0] / 16, FOOT_OFFSET - point[1] / 16, -point[2] / 16] }
+function entityShade(normal) {
+  return 0.4 + 0.6 * (Math.max(0, dot(normal, LIGHT0)) + Math.max(0, dot(normal, LIGHT1)))
+}
+function place(point, pivot, rotation) {
+  let p = point
+  for (const axis of ['z', 'y', 'x']) {
+    const degrees = rotation === undefined ? 0 : (rotation[axis] || 0)
+    if (degrees) p = rotateAbout(p, [0, 0, 0], axis, degrees)
+  }
+  return add(p, pivot)
+}
+function modelCorners(x1, y1, z1, x2, y2, z2) {
+  return { A: [x1, y1, z1], B: [x2, y1, z1], C: [x2, y2, z1], D: [x1, y2, z1],
+    E: [x1, y1, z2], F: [x2, y1, z2], G: [x2, y2, z2], H: [x1, y2, z2] }
+}
+const ENTITY_QUADS = [
+  ['right', 'FBCG', (u, v, w, h, d) => [u + d + w, v + d, u + d + w + d, v + d + h]],
+  ['left', 'AEHD', (u, v, w, h, d) => [u, v + d, u + d, v + d + h]],
+  ['top', 'FEAB', (u, v, w, h, d) => [u + d, v, u + d + w, v + d]],
+  ['bottom', 'CDHG', (u, v, w, h, d) => [u + d + w, v + d, u + d + w + w, v]],
+  ['front', 'BADC', (u, v, w, h, d) => [u + d, v + d, u + d + w, v + d + h]],
+  ['back', 'EFGH', (u, v, w, h, d) => [u + 2 * d + w, v + d, u + 2 * d + w + w, v + d + h]],
+]
+
+function entityQuads(spec, texId, mode) {
+  const quads = []
+  const texW = (spec.tex && spec.tex[0]) || 64
+  const texH = (spec.tex && spec.tex[1]) || 32
+  for (const part of spec.parts) {
+    const pivot = part.pivot || [0, 0, 0]
+    const rotation = part.rot || {}
+    for (const box of part.boxes) {
+      const ox = box.at[0], oy = box.at[1], oz = box.at[2]
+      const w = box.w, h = box.h, d = box.d
+      const inflate = box.inflate || 0
+      const table = modelCorners(ox - inflate, oy - inflate, oz - inflate, ox + w + inflate, oy + h + inflate, oz + d + inflate)
+      for (const entry of ENTITY_QUADS) {
+        const keys = entry[1]
+        const rect = entry[2](box.u, box.v, w, h, d)
+        const modelPts = [0, 1, 2, 3].map((i) => place(table[keys.charAt(i)], pivot, rotation))
+        const normal = unit(toWorld(cross(sub(modelPts[2], modelPts[1]), sub(modelPts[0], modelPts[1]))))
+        const u1 = rect[0], v1 = rect[1], u2 = rect[2], v2 = rect[3]
+        const uvs = [[u2, v1], [u1, v1], [u1, v2], [u2, v2]].map((pair) => [pair[0] / texW, pair[1] / texH])
+        quads.push({ p: modelPts.map(toWorld), uv: uvs, tex: texId, shade: entityShade(normal), mode: mode })
+      }
+    }
+  }
+  return quads
+}
+
+function boxOfQuads(quads) {
+  const min = [Infinity, Infinity, Infinity]
+  const max = [-Infinity, -Infinity, -Infinity]
+  for (const quad of quads) for (const p of quad.p) for (let i = 0; i < 3; i++) {
+    if (p[i] < min[i]) min[i] = p[i]
+    if (p[i] > max[i]) max[i] = p[i]
+  }
+  if (!isFinite(min[0])) return { min: [-1, -1, -1], max: [1, 1, 1] }
+  return { min: min, max: max }
+}
+
+const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+function toBase64(bytes) {
+  let out = ''
+  let i = 0
+  for (; i + 2 < bytes.length; i += 3) {
+    const n = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2]
+    out += BASE64[(n >> 18) & 63] + BASE64[(n >> 12) & 63] + BASE64[(n >> 6) & 63] + BASE64[n & 63]
+  }
+  const rest = bytes.length - i
+  if (rest === 1) {
+    const n = bytes[i] << 16
+    out += BASE64[(n >> 18) & 63] + BASE64[(n >> 12) & 63] + '=='
+  } else if (rest === 2) {
+    const n = (bytes[i] << 16) | (bytes[i + 1] << 8)
+    out += BASE64[(n >> 18) & 63] + BASE64[(n >> 12) & 63] + BASE64[(n >> 6) & 63] + '='
+  }
+  return out
+}
+
+const SQUOTE = String.fromCharCode(39)
+const BACKSLASH = String.fromCharCode(92)
+const PICK_BEGIN = 'MCART_PICK_BEGIN'
+const PICK_END = 'MCART_PICK_END'
+
+function utf16leBase64(text) {
+  const bytes = []
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
+    bytes.push(code & 255, (code >> 8) & 255)
+  }
+  return toBase64(Uint8Array.from(bytes))
+}
+
+function base64OfString(text) {
+  return toBase64(new TextEncoder().encode(String(text)))
+}
+
+function quoteRaw(b64) {
+  return SQUOTE + b64 + SQUOTE
+}
+
+function shellDecoded(value) {
+  return '"$(printf %s ' + quoteRaw(base64OfString(value)) + ' | base64 -d)"'
+}
+
+function parentOf(path) {
+  const normalized = String(path).replace(/[\\/]+$/, '')
+  const cut = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf(BACKSLASH))
+  if (cut < 0) return null
+  if (cut === 0) return '/'
+  const head = normalized.slice(0, cut)
+  const isDrive = head.length === 2 && head.charAt(1) === ':'
+  return isDrive ? head + BACKSLASH : head
+}
+
+function betweenMarkers(text) {
+  const raw = String(text === undefined || text === null ? '' : text)
+  const begin = raw.indexOf(PICK_BEGIN)
+  const end = raw.lastIndexOf(PICK_END)
+  if (begin < 0 || end < 0 || end <= begin) return ''
+  return raw.slice(begin + PICK_BEGIN.length, end).trim()
+}
+
+function beforeStderr(text) {
+  const raw = String(text === undefined || text === null ? '' : text)
+  const cut = raw.indexOf('[stderr]')
+  return (cut >= 0 ? raw.slice(0, cut) : raw).trim()
+}
+
+function releaseUnused(referenceBlocks, keep, referenceTextures, referenceAnimations) {
+  const doomed = []
+  for (const key of Array.from(referenceBlocks.keys())) {
+    if (key.indexOf('list:') === 0) continue
+    if (keep[key] === true) continue
+    doomed.push(key)
+  }
+  const stillUsed = {}
+  for (const key of Array.from(referenceBlocks.keys())) {
+    if (key.indexOf('list:') === 0) continue
+    if (doomed.indexOf(key) >= 0) continue
+    const entry = referenceBlocks.get(key)
+    if (entry === undefined || entry.load === undefined || entry.load.textures === undefined) continue
+    for (const value of entry.load.textures.values()) stillUsed[value] = true
+  }
+  let dropped = 0
+  for (const key of doomed) {
+    const entry = referenceBlocks.get(key)
+    if (entry !== undefined && entry.load !== undefined && entry.load.textures !== undefined) {
+      for (const value of entry.load.textures.values()) {
+        if (stillUsed[value] === true) continue
+        referenceTextures.delete(value)
+        referenceAnimations.delete(value)
+      }
+    }
+    referenceBlocks.delete(key)
+    dropped += 1
+  }
+  let held = 0
+  for (const key of referenceBlocks.keys()) if (key.indexOf('list:') !== 0) held += 1
+  return { dropped: dropped, held: held }
+}
+
+return {
+  apply(ctx) {
+    const fsOf = () => ctx.get('fs')
+    const sessionsOf = () => ctx.get('sessions')
+
+
+
+
+    const shellOf = () => ctx.get('shell')
+    const errors = []
+    let preloads = new Map()
+    let langs = new Map()
+    const indexCache = new Map()
+    const textureCache = {}
+    const referenceTextures = new Map()
+    const referenceAnimations = new Map()
+    const referenceBlocks = new Map()
+    const refSignatures = new Map()
+    let hasWslpath = null
+
+    function note(message) {
+      if (errors.indexOf(message) < 0) errors.push(message)
+    }
+
+    const messageOf = (error) => String(error && error.message ? error.message : error)
+
+    function localOf() {
+      if (typeof nodeFs === 'undefined' || nodeFs === null || nodeFs.available !== true) return null
+      return nodeFs
+    }
+
+
+    const subprocessOf = () => ctx.get('subprocess')
+
+
+    async function withDeadline(run, ms) {
+      const timer = ctx.get('timer')
+      if (timer === undefined || typeof timer.timeout !== 'function') return await run()
+      let timeout = false
+      const deadline = new Promise((resolve) => {
+        timer.timeout(() => { timeout = true; resolve() }, ms)
+      })
+      const finished = Promise.resolve().then(run).then((value) => ({ value: value }), (error) => ({ error: error }))
+      const winner = await Promise.race([finished, deadline.then(() => ({ deadline: true }))])
+      if (winner.deadline === true) return { deadlineExpired: true }
+      if (winner.error !== undefined) throw winner.error
+      return winner.value
+    }
+
+
+    async function runProcess(argv, options) {
+      const settings = options || {}
+      const service = subprocessOf()
+      if (service === undefined || typeof service.spawn !== 'function') return null
+      const maxBytes = settings.maxBytes === undefined ? 1024 * 1024 : settings.maxBytes
+      const collect = { maxBytes: maxBytes }
+      let handle = null
+      try {
+        handle = service.spawn({
+          argv: argv,
+          cwd: settings.cwd === undefined || settings.cwd === '' ? '.' : settings.cwd,
+          stdio: { stdin: 'ignore', stdout: collect, stderr: collect },
+          graceMs: settings.graceMs === undefined ? 5000 : settings.graceMs,
+        })
+      } catch (error) {
+        return { exitCode: null, text: '', err: 'subprocess.spawn 失败：' + messageOf(error), via: 'subprocess' }
+      }
+      let exitCode = null
+      try {
+        const done = await handle.done
+        exitCode = done === undefined || done === null || done.exitCode === undefined ? null : done.exitCode
+      } catch (error) {
+        exitCode = null
+      }
+      const read = (reader) => {
+        try { return reader === undefined ? '' : String(reader.readFrom(0).text) } catch (error) { return '' }
+      }
+      const collected = handle.collected || {}
+      return { exitCode: exitCode, text: read(collected.stdout), err: read(collected.stderr), via: 'subprocess' }
+    }
+
+
+    async function resolveExecutable(name) {
+      const service = subprocessOf()
+      if (service === undefined || typeof service.resolveExecutable !== 'function') return null
+      try {
+        const found = await service.resolveExecutable(name)
+        return typeof found === 'string' && found !== '' ? found : null
+      } catch (error) { return null }
+    }
+
+    const isPathLike = (value) => String(value).indexOf('/') >= 0 || String(value).indexOf(BACKSLASH) >= 0
+
+    function policyFor(workspaceRoot) {
+      if (typeof workspaceRoot !== 'string' || workspaceRoot === '') return undefined
+      return { mode: 'workspace-write', workspaceRoot: workspaceRoot }
+    }
+
+    function labelFor(namespace, kind, id) {
+      const table = langs.get(namespace)
+      if (table === undefined) return id
+      const tries = []
+      if (kind === 'project') tries.push('mc-art.project.' + namespace)
+      else if (kind === 'structure') tries.push('mc-art.structure.' + namespace + '.' + id, 'structure.' + namespace + '.' + id)
+      else tries.push(kind + '.' + namespace + '.' + id)
+      for (const key of tries) {
+        const found = table[key]
+        if (typeof found === 'string' && found.length > 0) return found
+      }
+      return id
+    }
+
+    function rel(root, absolute) {
+      const prefix = root.charAt(root.length - 1) === '/' ? root : root + '/'
+      return absolute.indexOf(prefix) === 0 ? absolute.slice(prefix.length) : absolute
+    }
+
+
+    async function isDirectoryOf(path) {
+      const info = await statOf(path)
+      return info !== undefined && info.type === 'directory'
+    }
+
+    async function listDir(path) {
+      const fs = fsOf()
+      if (fs !== undefined) {
+        try {
+          const target = await fs.resolve(path)
+          const info = await fs.stat(target)
+          if (info === undefined || info.type !== 'directory') return []
+          return await fs.listDir(target)
+        } catch (error) { return [] }
+      }
+      const local = localOf()
+      return local === null ? [] : await local.listDir(path)
+    }
+
+    async function readJson(path) {
+      const fs = fsOf()
+      if (fs !== undefined) {
+        try {
+          const target = await fs.resolve(path)
+          const info = await fs.stat(target)
+          if (info === undefined || info.type !== 'file') return undefined
+          return JSON.parse(await fs.readText(target))
+        } catch (error) { return undefined }
+      }
+      const local = localOf()
+      if (local === null) return undefined
+      const text = await local.readText(path)
+      if (typeof text !== 'string') return undefined
+      try { return JSON.parse(text) } catch (error) { return undefined }
+    }
+
+
+    async function readTextOf(path) {
+      const fs = fsOf()
+      if (fs !== undefined) {
+        try {
+          const target = await fs.resolve(path)
+          return await fs.readText(target)
+        } catch (error) { return undefined }
+      }
+      const local = localOf()
+      if (local === null) return undefined
+      const text = await local.readText(path)
+      return typeof text === 'string' ? text : undefined
+    }
+
+    async function statOf(path) {
+      const fs = fsOf()
+      if (fs !== undefined) {
+        try {
+          const target = await fs.resolve(path)
+          return await fs.stat(target)
+        } catch (error) { return undefined }
+      }
+      const local = localOf()
+      return local === null ? undefined : await local.stat(path)
+    }
+
+
+    async function readBytesOf(path, maxBytes) {
+      const fs = fsOf()
+      if (fs !== undefined) {
+        try {
+          const target = await fs.resolve(path)
+          return await fs.readBytes(target, undefined, maxBytes)
+        } catch (error) { /* 落到本地垫片 */ }
+      }
+      const local = localOf()
+      return local === null ? undefined : await local.readBytes(path, maxBytes)
+    }
+
+    async function dirSignature(path) {
+      const entries = await listDir(path)
+      const parts = []
+      for (const entry of entries) {
+        parts.push(entry.name + ':' + (entry.version === undefined ? '-' : String(entry.version)) + ':' + (entry.size === undefined ? '-' : String(entry.size)))
+      }
+      parts.sort()
+      return parts.join(',')
+    }
+
+    async function signatureOf(root) {
+      const pieces = []
+      const top = await listDir(root)
+      for (const entry of top) {
+        if (entry.type !== 'directory' || entry.name.charAt(0) === '.') continue
+        const dir = root + '/' + entry.name
+        const atlasInfo = await statOf(dir + '/mc-art.atlas.json')
+        pieces.push('A' + entry.name + ':' + (atlasInfo === undefined ? 'none' : String(atlasInfo.version) + ':' + String(atlasInfo.size)))
+        const assets = await listDir(dir + '/pack/assets')
+        for (const ns of assets) {
+          if (ns.type !== 'directory') continue
+          const base = dir + '/pack/assets/' + ns.name
+          pieces.push(await dirSignature(base + '/blockstates'))
+          pieces.push(await dirSignature(base + '/models/block'))
+          pieces.push(await dirSignature(base + '/lang'))
+          for (const kind of ['block', 'blocks', 'entity', 'item']) pieces.push(await dirSignature(base + '/textures/' + kind))
+        }
+      }
+      return pieces.join('|')
+    }
+
+    async function textureUrl(path) {
+      const info = await statOf(path)
+      if (info === undefined || info.type !== 'file') return undefined
+      const key = path + '@' + String(info.version) + ':' + String(info.size)
+      if (textureCache[key] !== undefined) return textureCache[key]
+      try {
+        const bytes = await readBytesOf(path, 8 * 1024 * 1024)
+        if (bytes === undefined) return undefined
+        const url = 'data:image/png;base64,' + toBase64(bytes)
+        textureCache[key] = url
+        return url
+      } catch (error) { return undefined }
+    }
+
+
+    function normalizePath(value) {
+      let text = String(value === undefined || value === null ? '' : value).split(BACKSLASH).join('/')
+      const drive = /^[A-Za-z]:\//.test(text) ? text.slice(0, 2) : ''
+      if (drive !== '') text = text.slice(2)
+      const lead = text.charAt(0) === '/' ? '/' : ''
+      const parts = []
+      for (const piece of text.split('/')) {
+        if (piece === '' || piece === '.') continue
+        if (piece === '..') {
+          if (parts.length > 0 && parts[parts.length - 1] !== '..') parts.pop()
+          else parts.push('..')
+          continue
+        }
+        parts.push(piece)
+      }
+      return drive + lead + parts.join('/')
+    }
+
+
+    const samePath = (left, right) =>
+      platformOf() === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
+
+
+    function packPathOf(project, value) {
+      const raw = String(value === undefined || value === null ? '' : value)
+      if (raw === '') return { ok: false, reason: '贴图句柄是空的，拒绝写' }
+      if (raw.indexOf('\u0000') >= 0) return { ok: false, reason: '贴图句柄里有 NUL 字符，拒绝写' }
+      const projectDir = normalizePath(String(project.dir))
+      const pack = normalizePath(projectDir + '/pack')
+      const driveAbsolute = /^[A-Za-z]:[\\/]/.test(raw)
+      const absolute = driveAbsolute || raw.charAt(0) === '/' || raw.charAt(0) === BACKSLASH
+      const at = normalizePath(absolute ? raw : projectDir + '/' + raw.split(BACKSLASH).join('/'))
+      const inside = samePath(at, pack) || samePath(at.slice(0, pack.length + 1), pack + '/')
+      if (inside) return { ok: true, path: at }
+      const shape = driveAbsolute ? '盘符绝对路径'
+        : (absolute ? '前导斜杠的绝对路径'
+          : (raw.split(/[\\/]/).indexOf('..') >= 0 ? '相对路径里带 ..' : '包内相对路径'))
+      return { ok: false, reason: '这条贴图解析之后落在项目包外面（句柄形态：' + shape
+        + '；解析后 = ' + at + '；项目包 = ' + pack + '），拒绝写' }
+    }
+
+
+    function textureFileOf(project, value) {
+      const text = String(value === undefined || value === null ? '' : value).split(BACKSLASH).join('/')
+      if (text === '' || text.slice(0, 4) === 'ref:') return text
+      if (/^[A-Za-z]:\//.test(text) || text.charAt(0) === '/') return text
+      const dir = project !== undefined && project !== null && typeof project.dir === 'string'
+        ? String(project.dir).split(BACKSLASH).join('/').replace(/\/+$/, '') : ''
+      return dir === '' ? text : dir + '/' + text.replace(/^\.\//, '')
+    }
+
+    async function textureUrlFor(entry, project) {
+      if (typeof entry !== 'string' || entry === '') return undefined
+      if (entry.slice(0, 4) === 'ref:') return referenceTextures.get(entry)
+      return await textureUrl(textureFileOf(project, entry))
+    }
+
+    function animationsFor(ids) {
+      const out = {}
+      for (const id of ids) {
+        const animation = referenceAnimations.get(id)
+        if (animation !== undefined) { out[id] = animation; continue }
+        for (const load of preloads.values()) {
+          const own = load.animations === undefined ? undefined : load.animations.get(id)
+          if (own !== undefined) { out[id] = own; break }
+        }
+      }
+      return out
+    }
+
+
+    function animationNotesFor(ids) {
+      const out = {}
+      for (const id of ids) {
+        for (const load of preloads.values()) {
+          const note = load.animationNotes === undefined ? undefined : load.animationNotes.get(id)
+          if (note !== undefined) { out[id] = note; break }
+        }
+      }
+      return out
+    }
+
+
+    async function projectAnimationOf(pngPath) {
+      let text
+      try { text = await readTextOf(pngPath + '.mcmeta') } catch (error) { text = undefined }
+      if (text === undefined || text === null) return { why: '.mcmeta 读不出来（权限、编码或文件损坏）' }
+      let parsed
+      try { parsed = JSON.parse(String(text)) } catch (error) {
+        return { why: '.mcmeta 不是合法 JSON：' + messageOf(error) }
+      }
+      const declared = parsed !== null && typeof parsed === 'object' ? parsed.animation : undefined
+      if (declared === null || declared === undefined || typeof declared !== 'object') {
+        return { why: '.mcmeta 里没有 animation 段' }
+      }
+      let bytes
+      try { bytes = await readBytesOf(pngPath, 16 * 1024 * 1024) } catch (error) { bytes = undefined }
+      const size = pngSizeOf(bytes)
+      if (size === undefined) return { why: 'PNG 的尺寸读不出来（文件可能坏了）' }
+      if (size.height <= size.width || size.height % size.width !== 0) {
+        return { why: '图不是竖条（' + size.width + '×' + size.height + '；高必须是宽的整数倍）' }
+      }
+      const strip = Math.trunc(size.height / size.width)
+      const order = []
+      const listed = declared.frames
+      if (Array.isArray(listed)) {
+        for (const item of listed) {
+          const index = item !== null && typeof item === 'object' ? item.index : item
+          const number = Math.trunc(Number(index))
+          if (isFinite(number) && number >= 0 && number < strip) order.push(number)
+        }
+      }
+      if (order.length === 0) for (let index = 0; index < strip; index++) order.push(index)
+      const declaredTime = Math.trunc(Number(declared.frametime === undefined ? 1 : declared.frametime))
+      return { animation: {
+        frames: order.length,
+        strip: strip,
+        order: order,
+        frametime: !isFinite(declaredTime) || declaredTime < 1 ? 1 : declaredTime,
+        interpolate: declared.interpolate === true,
+      } }
+    }
+
+    async function preload(dir, namespace) {
+      const assets = dir + '/pack/assets/' + namespace
+      const models = new Map()
+      for (const entry of await listDir(assets + '/models/block')) {
+        if (entry.type !== 'file' || !/\.json$/.test(entry.name)) continue
+        const parsed = await readJson(assets + '/models/block/' + entry.name)
+        if (parsed !== undefined) models.set('block/' + entry.name.replace(/\.json$/, ''), parsed)
+      }
+      const textures = new Map()
+      const animations = new Map()
+      const animationNotes = new Map()
+      for (const kind of ['block', 'blocks', 'entity', 'item']) {
+        for (const entry of await listDir(assets + '/textures/' + kind)) {
+          if (entry.type !== 'file' || !/\.png$/.test(entry.name)) continue
+          const relative = 'pack/assets/' + namespace + '/textures/' + kind + '/' + entry.name
+          textures.set(namespace + ':' + kind + '/' + entry.name.replace(/\.png$/, ''), relative)
+          const absolute = assets + '/textures/' + kind + '/' + entry.name
+          const meta = await statOf(absolute + '.mcmeta')
+          if (meta === undefined || meta.type !== 'file') continue
+          const info = await projectAnimationOf(absolute)
+          if (info.animation !== undefined) {
+            animations.set(relative, info.animation)
+          } else {
+            animationNotes.set(relative, {
+              state: 'unreadable',
+              why: info.why,
+              text: '这张贴图**有**动画描述文件，但我读不了它：' + relative + '.mcmeta —— ' + info.why,
+            })
+          }
+        }
+      }
+      return { dir: dir, namespace: namespace, assets: assets, models: models, textures: textures,
+        animations: animations, animationNotes: animationNotes }
+    }
+
+    async function readLang(assets) {
+      const merged = {}
+      for (const locale of ['en_us', 'zh_cn']) {
+        const parsed = await readJson(assets + '/lang/' + locale + '.json')
+        if (parsed === undefined || parsed === null || typeof parsed !== 'object') continue
+        for (const key of Object.keys(parsed)) {
+          const value = parsed[key]
+          if (typeof value === 'string' && value.length > 0) merged[key] = value
+        }
+      }
+      return merged
+    }
+
+    let vanillaTextureHandles = new Map()
+    let vanillaTextureSignature = null
+
+    function texturePath(load, reference) {
+      let name = String(reference === undefined ? '' : reference)
+      let namespace = load.namespace
+      const colon = name.indexOf(':')
+      if (colon >= 0) { namespace = name.slice(0, colon); name = name.slice(colon + 1) }
+      const key = namespace + ':' + name
+      const own = load.textures.get(key)
+      if (own !== undefined) return own
+      const other = preloads.get(namespace)
+      if (other !== undefined) {
+        const hit = other.textures.get(key)
+        if (hit !== undefined) return hit
+      }
+      const fetched = vanillaTextureHandles.get(key)
+      return fetched === undefined ? undefined : fetched
+    }
+
+    function elementsOf(load, modelName, extra, unresolved, trace) {
+      let key = modelName
+      const colon = key.indexOf(':')
+      if (colon >= 0) key = key.slice(colon + 1)
+      const model = load.models.get(key) || (extra === undefined ? undefined : extra.get(key))
+      if (model === undefined) return undefined
+      return resolveBlockModel(model, (id) => {
+        let parentKey = id
+        const c = parentKey.indexOf(':')
+        if (c >= 0) parentKey = parentKey.slice(c + 1)
+        const own = load.models.get(parentKey)
+        if (own !== undefined) return own
+        if (extra === undefined) return undefined
+        return extra.get(id) || extra.get(parentKey) || extra.get('minecraft:' + parentKey)
+      }, (reference, context) => {
+        const tex = texturePath(load, reference)
+        if (tex === undefined && typeof unresolved === 'function') unresolved(String(reference), context)
+        return tex
+      }, trace)
+    }
+
+    const vanillaModels = new Map()
+
+
+    function chainGaps(load, modelName, extra) {
+      const project = []
+      const vanilla = []
+      const seen = {}
+      let cycle = false
+      let key = String(modelName === undefined ? '' : modelName)
+      let nameNamespace = load.namespace
+      const colon = key.indexOf(':')
+      if (colon >= 0) { nameNamespace = key.slice(0, colon); key = key.slice(colon + 1) }
+      const own = (namespace) => namespace === '' || namespace === load.namespace
+      for (let depth = 0; depth < 24; depth++) {
+        const fromExtra = extra === undefined ? undefined
+          : (extra.get(key) !== undefined ? extra.get(key) : extra.get('minecraft:' + key))
+        const model = load.models.get(key) || fromExtra
+        if (model === undefined) {
+          if (key === '') break
+          const isOwn = own(nameNamespace)
+          const entry = { name: isOwn ? key : nameNamespace + ':' + key, bare: key,
+            namespace: isOwn ? load.namespace : nameNamespace, kind: isOwn ? 'project' : 'vanilla' }
+          if (isOwn) project.push(entry); else vanilla.push(entry)
+          break
+        }
+        const parent = model.parent
+        if (typeof parent !== 'string' || parent === '') break
+        if (seen[parent] === true) { cycle = true; break }
+        seen[parent] = true
+        let parentNamespace = 'minecraft'
+        let bare = parent
+        const at = parent.indexOf(':')
+        if (at >= 0) { parentNamespace = parent.slice(0, at); bare = parent.slice(at + 1) }
+        if (load.models.get(bare) !== undefined) { key = bare; nameNamespace = parentNamespace; continue }
+        if (extra !== undefined && (extra.get(parent) !== undefined || extra.get(bare) !== undefined)) {
+          key = bare; nameNamespace = parentNamespace; continue
+        }
+        if (VANILLA_PARENTS[parent] !== undefined || VANILLA_PARENTS[bare] !== undefined) break
+        const isOwn = own(parentNamespace)
+        const entry = { name: parent, bare: bare, namespace: parentNamespace,
+          kind: isOwn ? 'project' : 'vanilla' }
+        if (isOwn) project.push(entry); else vanilla.push(entry)
+        break
+      }
+      return { project: project, vanilla: vanilla, cycle: cycle }
+    }
+
+
+    function fixPathOf(load, entry, directory) {
+      if (entry.kind === 'project') {
+        const rest = entry.bare.replace(/^block\//, '')
+        return 'pack/assets/' + load.namespace + '/models/block/' + rest + '.json'
+      }
+      const where = directory === ''
+        ? '把参考目录指到 .minecraft/versions/<版本>（面板设置里那一栏）'
+        : directory + ' 里的 <版本>.jar'
+      return where + ' → assets/' + (entry.namespace || 'minecraft') + '/models/' + entry.bare + '.json'
+    }
+
+
+    async function referenceLooksReadable(directory) {
+      const hasJar = async (dir) => {
+        for (const entry of await listDir(dir)) {
+          if (entry.type === 'file' && /\.jar$/i.test(entry.name)) return true
+        }
+        return false
+      }
+      const hasTree = async (dir) => {
+        for (const entry of await listDir(dir + '/assets')) {
+          if (entry.type !== 'directory') continue
+          if (entry.name === 'indexes' || entry.name === 'objects' || entry.name === 'skins') continue
+          return true
+        }
+        return false
+      }
+      if (await hasJar(directory)) return true
+      if (await hasJar(directory + '/mods')) return true
+      if (await hasTree(directory)) return true
+      for (const version of await listDir(directory + '/versions')) {
+        if (version.type !== 'directory') continue
+        if (await hasJar(directory + '/versions/' + version.name)) return true
+        if (await hasJar(directory + '/versions/' + version.name + '/mods')) return true
+        if (await hasTree(directory + '/versions/' + version.name)) return true
+      }
+      return false
+    }
+
+    async function fetchVanillaModels(project, names) {
+      const directory = await referenceDirectory(project)
+      if (directory === '') {
+        return { models: new Map(), reason: 'no-reference-directory',
+          why: '这台机器上还没有设置参考目录（面板设置里指到 .minecraft/versions/<版本>，'
+            + '或写进 mc-art.settings.json 的 reference.directory）' }
+      }
+      const signature = await refSignatureOf(directory)
+      const want = []
+      for (const name of names) {
+        const cached = vanillaModels.get(signature + '|' + name)
+        if (cached === undefined) want.push(name)
+        else if (cached !== null) want.push(name)      // 命中缓存，下面照旧装进 out
+      }
+      if (want.length > 0) {
+        const extractor = await findTool(project.dir, EXTRACT_SCRIPT)
+        if (extractor === null || extractor === undefined) {
+          return { models: new Map(), reason: 'extractor-failed', why: '找不到 ' + EXTRACT_SCRIPT }
+        }
+        const parsed = await runScanner(extractor, ['--root', directory, '--model', want.join(',')],
+          120000, project.dir, REFERENCE_MAX_BYTES)
+        if (parsed === undefined || parsed.error !== undefined) {
+          const why = String(parsed === undefined ? '抽取脚本没有返回任何东西' : parsed.error)
+          let reason = 'extractor-failed'
+          if (why.indexOf('路径不存在') >= 0) reason = 'reference-jar-missing'
+          else if (why.indexOf('一个模型都没取到') >= 0) {
+            reason = (await referenceLooksReadable(directory)) ? 'vanilla-parent-missing' : 'reference-jar-missing'
+          }
+          return { models: new Map(), reason: reason, why: why }
+        }
+        for (const key of Object.keys(parsed.models || {})) {
+          const bare = key.indexOf(':') >= 0 ? key.slice(key.indexOf(':') + 1) : key
+          vanillaModels.set(signature + '|' + key, parsed.models[key])
+          vanillaModels.set(signature + '|' + bare, parsed.models[key])
+        }
+        for (const name of want) {
+          if (vanillaModels.get(signature + '|' + name) === undefined) vanillaModels.set(signature + '|' + name, null)
+        }
+      }
+      const out = new Map()
+      for (const name of names) {
+        const hit = vanillaModels.get(signature + '|' + name)
+        if (hit !== undefined && hit !== null) out.set(name, hit)
+      }
+      return { models: out, reason: '', why: '' }
+    }
+
+
+    async function fetchVanillaTextures(project, names) {
+      if (names.length === 0) return { fetched: 0, reason: '', why: '' }
+      const directory = await referenceDirectory(project)
+      if (directory === '') {
+        return { fetched: 0, reason: 'no-reference-directory',
+          why: '这台机器上还没有设置参考目录（原版贴图在 .minecraft/versions/<版本> 的 jar 里）' }
+      }
+      const signature = await refSignatureOf(directory)
+      if (vanillaTextureSignature !== signature) {
+        vanillaTextureHandles = new Map()
+        vanillaTextureSignature = signature
+      }
+      const want = names.filter((name) => vanillaTextureHandles.get(name) === undefined)
+      if (want.length === 0) return { fetched: 0, reason: '', why: '' }
+      const extractor = await findTool(project.dir, EXTRACT_SCRIPT)
+      if (extractor === null || extractor === undefined) {
+        return { fetched: 0, reason: 'extractor-failed', why: '找不到 ' + EXTRACT_SCRIPT }
+      }
+      const parsed = await runScanner(extractor, ['--root', directory, '--textures', want.join(',')],
+        120000, project.dir, REFERENCE_MAX_BYTES)
+      if (parsed === undefined || parsed.error !== undefined) {
+        const why = String(parsed === undefined ? '抽取脚本没有返回任何东西' : parsed.error)
+        let reason = 'extractor-failed'
+        if (why.indexOf('路径不存在') >= 0) reason = 'reference-jar-missing'
+        else if (why.indexOf('一个贴图都没取到') >= 0) {
+          reason = (await referenceLooksReadable(directory)) ? 'textures-unresolved' : 'reference-jar-missing'
+        }
+        return { fetched: 0, reason: reason, why: why }
+      }
+      let fetched = 0
+      for (const key of Object.keys(parsed.textures || {})) {
+        const refKey = 'ref:' + key
+        referenceTextures.set(refKey, 'data:image/png;base64,' + parsed.textures[key])
+        const animation = (parsed.animations || {})[key]
+        if (animation !== undefined && animation !== null) referenceAnimations.set(refKey, animation)
+        vanillaTextureHandles.set(key, refKey)
+        const file = (parsed.textureFiles || {})[key]
+        if (typeof file === 'string') {
+          const parts = file.split('/')
+          if (parts.length > 3 && parts[0] === 'assets') {
+            vanillaTextureHandles.set(parts[1] + ':' + parts.slice(3).join('/').replace(/\.png$/, ''), refKey)
+          }
+        }
+        fetched += 1
+      }
+      return { fetched: fetched, reason: '', why: '' }
+    }
+
+
+    async function projectElements(project, load, modelName) {
+      const extra = new Map()
+      let scan = chainGaps(load, modelName, extra)
+      for (let round = 0; round < 4; round++) {
+        if (scan.cycle === true) {
+          return { elements: undefined, extra: extra, project: [], vanilla: [], cycle: true,
+            fetchReason: 'parent-cycle', why: '', unresolvedTextures: [], textureWhy: '' }
+        }
+        if (scan.project.length > 0) {
+          return { elements: undefined, extra: extra, project: scan.project, vanilla: [], cycle: false,
+            fetchReason: '', why: '', unresolvedTextures: [], textureWhy: '' }
+        }
+        if (scan.vanilla.length === 0) break
+        const fetched = await fetchVanillaModels(project, scan.vanilla.map((entry) => entry.name))
+        if (fetched.models.size === 0) {
+          return { elements: undefined, extra: extra, project: [], vanilla: scan.vanilla, cycle: false,
+            fetchReason: fetched.reason === undefined ? '' : fetched.reason, why: fetched.why,
+            unresolvedTextures: [], textureWhy: '' }
+        }
+        for (const pair of fetched.models.entries()) extra.set(pair[0], pair[1])
+        scan = chainGaps(load, modelName, extra)
+      }
+      let unresolvedTextures = []
+      let bareWords = []
+      let danglingVariables = []
+      const collect = (name, context) => {
+        if (unresolvedTextures.indexOf(name) < 0) unresolvedTextures.push(name)
+        const info = context === undefined || context === null ? {} : context
+        const raw = String(info.raw === undefined ? '' : info.raw)
+        const keys = Array.isArray(info.keys) ? info.keys : []
+        const face = String(info.face === undefined ? '' : info.face)
+        const bare = raw !== '' && raw.indexOf('#') < 0 && raw.indexOf(':') < 0 && raw.indexOf('/') < 0
+        if (bare && keys.indexOf(raw) >= 0) {
+          if (!bareWords.some((one) => one.raw === raw)) bareWords.push({ raw: raw, face: face, keys: keys.slice(0, 12) })
+          return
+        }
+        if (raw.charAt(0) === '#' && keys.indexOf(raw.slice(1)) < 0) {
+          if (!danglingVariables.some((one) => one.name === raw)) {
+            danglingVariables.push({ name: raw, face: face })
+          }
+        }
+      }
+      let trace = []
+      let elements = elementsOf(load, modelName, extra, collect, trace)
+      let textureWhy = ''
+      if (unresolvedTextures.length > 0) {
+        const wanted = unresolvedTextures.map((name) =>
+          name.indexOf(':') >= 0 ? name : load.namespace + ':' + name)
+        const fetched = await fetchVanillaTextures(project, wanted)
+        textureWhy = fetched.why
+        if (fetched.fetched > 0) {
+          unresolvedTextures = []
+          bareWords = []
+          danglingVariables = []
+          trace = []
+          elements = elementsOf(load, modelName, extra, collect, trace)
+        }
+      }
+      return { elements: elements, extra: extra, project: scan.project, vanilla: scan.vanilla,
+        cycle: scan.cycle === true, fetchReason: '', why: '',
+        unresolvedTextures: unresolvedTextures, bareWords: bareWords,
+        danglingVariables: danglingVariables, textureWhy: textureWhy, trace: trace }
+    }
+
+
+    function modelsInState(state) {
+      const out = []
+      const seen = {}
+      const push = (value) => {
+        if (value === undefined || value === null) return
+        if (Array.isArray(value)) { for (const item of value) push(item); return }
+        if (typeof value !== 'object') return
+        const model = value.model
+        if (typeof model === 'string' && model !== '' && seen[model] !== true) {
+          seen[model] = true
+          out.push(model)
+        }
+      }
+      if (state === undefined || state === null || typeof state !== 'object') return out
+      if (state.variants !== undefined && state.variants !== null && typeof state.variants === 'object') {
+        for (const key of Object.keys(state.variants)) push(state.variants[key])
+      }
+      if (Array.isArray(state.multipart)) {
+        for (const part of state.multipart) {
+          if (part === null || typeof part !== 'object') continue
+          push(part.apply)
+        }
+      }
+      return out
+    }
+
+
+    function modelRank(id, name) {
+      const base = String(name).replace(/^[^:]*:/, '').replace(/^block\//, '').replace(/\.json$/, '')
+      if (base === id) return 0
+      if (/_post$/.test(base)) return 1
+      if (/_bottom$/.test(base)) return 2
+      if (base.indexOf(id) === 0) return 3
+      return 4
+    }
+
+    function chooseModel(load, id, models) {
+      if (models.length === 0) return { model: 'block/' + id, guessed: true }
+      const inPack = (name) => load.models.get(String(name).replace(/^[^:]*:/, '')) !== undefined
+      let best = null
+      for (const name of models) {
+        if (!inPack(name)) continue
+        const rank = modelRank(id, name)
+        if (best === null || rank < best.rank) best = { model: name, rank: rank }
+      }
+      if (best !== null) return { model: best.model, guessed: false }
+      return { model: models[0], guessed: false }
+    }
+
+    async function blockIds(load) {
+      const out = []
+      for (const entry of await listDir(load.assets + '/blockstates')) {
+        if (entry.type !== 'file' || !/\.json$/.test(entry.name)) continue
+        const id = entry.name.replace(/\.json$/, '')
+        const state = await readJson(load.assets + '/blockstates/' + entry.name)
+        const models = modelsInState(state)
+        const chosen = chooseModel(load, id, models)
+        out.push({ id: id, model: chosen.model, models: models, guessed: chosen.guessed })
+      }
+      return out
+    }
+
+    async function build(root) {
+      const staged = []
+      const nextPreloads = new Map()
+      const nextLangs = new Map()
+      for (const entry of await listDir(root)) {
+        if (entry.type !== 'directory' || entry.name.charAt(0) === '.') continue
+        const dir = root + '/' + entry.name
+        const atlas = await readJson(dir + '/mc-art.atlas.json')
+        const assets = await listDir(dir + '/pack/assets')
+        const namespaces = []
+        for (const candidate of assets) if (candidate.type === 'directory') namespaces.push(candidate.name)
+        if (namespaces.length === 0 && atlas === undefined) continue
+        const namespace = (atlas && typeof atlas.namespace === 'string' && namespaces.indexOf(atlas.namespace) >= 0)
+          ? atlas.namespace : namespaces[0]
+        if (namespace === undefined) continue
+        const load = await preload(dir, namespace)
+        nextPreloads.set(namespace, load)
+        nextLangs.set(namespace, await readLang(load.assets))
+        staged.push({ entry: entry.name, dir: dir, atlas: atlas, namespace: namespace, load: load })
+      }
+      preloads = nextPreloads
+      langs = nextLangs
+
+      const projects = []
+      for (const item of staged) {
+        const namespace = item.namespace
+        const atlas = item.atlas
+        const blocks = []
+        for (const block of await blockIds(item.load)) {
+          blocks.push({ id: block.id, title: labelFor(namespace, 'block', block.id) })
+        }
+        projects.push({
+          id: item.entry, title: labelFor(namespace, 'project', item.entry),
+          namespace: namespace, root: root, dir: item.dir, blocks: blocks,
+          entities: (atlas && atlas.entities ? atlas.entities : []).map((e) => ({ id: e.id, title: labelFor(namespace, 'entity', e.id) })),
+          biomes: (atlas && atlas.biomes ? atlas.biomes : []).map((b) => ({ id: b.id, title: labelFor(namespace, 'biome', b.id) })),
+          structures: (atlas && atlas.structures ? atlas.structures : []).map((s) => ({ id: s.id, title: labelFor(namespace, 'structure', s.id) })),
+        })
+      }
+      return { projects: projects, preloads: nextPreloads, langs: nextLangs }
+    }
+
+    async function indexOf(root) {
+      const signature = await signatureOf(root)
+      const cached = indexCache.get(root)
+      if (cached !== undefined && cached.signature === signature) {
+        preloads = cached.preloads
+        langs = cached.langs
+        return { projects: cached.projects, cached: true }
+      }
+      const built = await build(root)
+      indexCache.set(root, { signature: signature, projects: built.projects, preloads: built.preloads, langs: built.langs })
+      return { projects: built.projects, cached: false }
+    }
+
+    async function projectFor(root, projectId) {
+      if (root === '' || projectId === '') return undefined
+      const index = await indexOf(root)
+      return index.projects.filter((item) => item.id === projectId)[0]
+    }
+
+    async function looksLikeProject(dir) {
+      if ((await statOf(dir + '/mc-art.atlas.json')) !== undefined) return true
+      const assets = await listDir(dir + '/pack/assets')
+      return assets.length > 0
+    }
+
+    const SCAN_SCRIPT = 'tools/mcart_scan_refs.py'
+    const EXTRACT_SCRIPT = 'tools/mcart_extract_block.py'
+    const REFERENCE_MAX_BYTES = 8 * 1024 * 1024
+    const toolPaths = new Map()
+
+
+    function trimTrailing(value) {
+      let at = String(value === undefined || value === null ? '' : value)
+      while (at.length > 1 && (at.charAt(at.length - 1) === '/' || at.charAt(at.length - 1) === BACKSLASH)) {
+        at = at.slice(0, at.length - 1)
+      }
+      return at
+    }
+
+
+    function absoluteOf(value) {
+      const raw = String(value === undefined || value === null ? '' : value)
+      if (raw === '') return ''
+      if (raw.charAt(0) === '/' || /^[A-Za-z]:[\\/]/.test(raw) || raw.slice(0, 2) === '\\\\') return raw
+      const cwd = (typeof process !== 'undefined' && process !== null && typeof process.cwd === 'function')
+        ? process.cwd() : ''
+      if (cwd === '') return raw
+      return trimTrailing(cwd.split(BACKSLASH).join('/')) + '/' + raw
+    }
+
+    async function findTool(start, relative) {
+      const base = absoluteOf(trimTrailing(start))
+      const cacheKey = relative + '|' + base
+      if (toolPaths.has(cacheKey)) return toolPaths.get(cacheKey)
+      let found = null
+      for (const candidate of skillToolCandidates(relative)) {
+        const full = absoluteOf(trimTrailing(candidate))
+        const info = await statOf(full)
+        if (info !== undefined && info.type === 'file') { found = full; break }
+      }
+      if (found === null) {
+        let at = base
+        for (let depth = 0; depth < 5 && at !== ''; depth++) {
+          const info = await statOf(at + '/' + relative)
+          if (info !== undefined && info.type === 'file') { found = at + '/' + relative; break }
+          at = parentOf(at) || ''
+        }
+      }
+      toolPaths.set(cacheKey, found)
+      return found
+    }
+
+    async function findScanner(start) { return await findTool(start, SCAN_SCRIPT) }
+
+
+    function skillToolCandidates(relative) {
+      const out = []
+      const push = (value) => {
+        if (typeof value !== 'string' || value === '') return
+        const trimmed = value.charAt(value.length - 1) === '/' ? value.slice(0, value.length - 1) : value
+        if (trimmed !== '' && out.indexOf(trimmed) < 0) out.push(trimmed)
+      }
+      const dir = moduleDirOf()
+      if (dir !== '') {
+        const pkg = parentOf(dir) || ''                       // <包>/lib → <包>
+        const above = pkg === '' ? '' : (parentOf(pkg) || '')  // <包> → profile / 仓库根
+        const base = relative.slice(relative.lastIndexOf('/') + 1)
+        push(pkg + '/python/' + base)
+        push(above + '/python/' + base)
+        push(above + '/' + relative)
+        push(pkg + '/preset/mc-studio/skills/mc-art/' + relative)
+        push(above + '/preset/mc-studio/skills/mc-art/' + relative)
+        push(above + '/skills/mc-art/' + relative)
+      }
+      const named = envOf('MC_ART_SKILL_DIR')
+      if (named !== '') push(named + '/' + relative)
+      const home = envOf('USERPROFILE') || envOf('HOME')
+      const dshHome = envOf('DSH_HOME') || (home === '' ? '' : home + '/.dsh')
+      if (dshHome !== '') push(dshHome + '/skills/mc-art/' + relative)
+      if (home !== '') push(home + '/.agents/skills/mc-art/' + relative)
+      return out
+    }
+
+    const PYTHON_CANDIDATES = [
+      { bin: 'python3', args: [] },
+      { bin: 'python', args: [] },
+      { bin: 'py', args: ['-3'] },
+      { bin: 'py', args: [] },
+    ]
+    let pythonLauncher = ''
+    let pythonExe = ''        // 原样的可执行（subprocess 用 argv，shell 用转义过的 launcher）
+    let pythonArgs = []       // 解释器自己的参数（`py -3` 的那个 -3）
+    let pythonVia = null      // 'subprocess' | 'shell' —— 出错时要说清走的哪条
+    let pythonWhy = null
+
+
+    function bundledPythonDirs() {
+      const out = []
+      const push = (value) => {
+        if (typeof value !== 'string' || value === '') return
+        const trimmed = value.charAt(value.length - 1) === '/' ? value.slice(0, value.length - 1) : value
+        if (trimmed !== '' && out.indexOf(trimmed) < 0) out.push(trimmed)
+      }
+      push(envOf('DSH_DESKTOP_PRIMARY_RUNTIME_DIR'))
+      if (typeof process !== 'undefined' && Array.isArray(process.argv)) {
+        for (const value of process.argv) {
+          if (typeof value === 'string' && /(^|[\\/])runtime[\\/]primary-runtime$/.test(value)) push(value)
+        }
+      }
+      if (typeof process !== 'undefined' && typeof process.execPath === 'string' && process.execPath !== '') {
+        const exeDir = parentOf(process.execPath.split(BACKSLASH).join('/')) || ''
+        if (exeDir !== '') push(exeDir + '/resources/runtime/primary-runtime')
+      }
+      const home = envOf('USERPROFILE') || envOf('HOME')
+      const dshHome = envOf('DSH_HOME') || (home === '' ? '' : home + '/.dsh')
+      if (dshHome !== '') {
+        push(dshHome + '/dsh-runtimes/dsh-primary-runtime')
+        push(dshHome + '/dsh-runtimes/dsh-primary-runtime/dependencies')
+      }
+      const dir = moduleDirOf()
+      if (dir !== '') {
+        const pkg = parentOf(dir) || ''
+        const profile = pkg === '' ? '' : (parentOf(pkg) || '')
+        const appDsh = profile === '' ? '' : (parentOf(profile) || '')
+        const resources = appDsh === '' ? '' : (parentOf(appDsh) || '')
+        if (resources !== '') {
+          push(resources + '/runtime/primary-runtime')
+          push(resources + '/runtime/primary-runtime/dependencies')
+        }
+      }
+      return out
+    }
+
+
+    function pythonCandidateList() {
+      const out = []
+      const seen = {}
+      const push = (bin, args, guess) => {
+        if (typeof bin !== 'string' || bin === '') return
+        const list = Array.isArray(args) ? args : []
+        const key = bin + ' ' + list.join(' ')
+        if (seen[key] === true) return
+        seen[key] = true
+        out.push({ bin: bin, args: list, guess: guess === true })
+      }
+      push(envOf('MC_ART_PYTHON'), [], false)
+      for (const candidate of PYTHON_CANDIDATES) push(candidate.bin, candidate.args, false)
+      for (const dir of bundledPythonDirs()) {
+        push(dir + '/python/python.exe', [], true)    // Windows: dependencies/python/python.exe
+        push(dir + '/python/bin/python3', [], true)   // POSIX:    dependencies/python/bin/python3
+        push(dir + '/python/bin/python', [], true)
+      }
+      return out
+    }
+
+
+    function pythonCandidates() {
+      return pythonCandidateList().map((candidate) =>
+        candidate.bin + (candidate.args.length === 0 ? '' : ' ' + candidate.args.join(' ')))
+    }
+
+
+    const pythonLabel = (candidate) =>
+      candidate.bin + (candidate.args.length === 0 ? '' : ' ' + candidate.args.join(' '))
+
+    async function resolvePython(workspaceRoot) {
+      if (pythonLauncher !== '') return pythonLauncher
+      const dialect = await currentShell(workspaceRoot)
+      const tried = []
+      for (const candidate of pythonCandidateList()) {
+        const pathLike = isPathLike(candidate.bin)
+        if (candidate.guess === true && pathLike) {
+          const info = await statOf(candidate.bin)
+          if (info === undefined || info.type !== 'file') continue
+        }
+        const probe = ['-c', 'print(1)']
+        if (pathLike || subprocessOf() !== undefined) {
+          const exe = pathLike ? candidate.bin : await resolveExecutable(candidate.bin)
+          if (exe !== null) {
+            const done = await runProcess([exe].concat(candidate.args, probe), { maxBytes: 4096 })
+            if (done !== null) {
+              if (done.exitCode === 0 && String(done.text).trim() === '1') {
+                pythonExe = exe
+                pythonArgs = candidate.args
+                pythonVia = 'subprocess'
+                pythonLauncher = pythonLabel(candidate)
+                return pythonLauncher
+              }
+              tried.push(pythonLabel(candidate) + '(subprocess exit=' + String(done.exitCode) +
+                (String(done.err).trim() === '' ? '' : ' ' + String(done.err).trim().slice(0, 60)) + ')')
+              continue
+            }
+          }
+        }
+        const head = pathLike ? dialect.word(candidate.bin) : candidate.bin
+        const words = [head].concat(candidate.args.map((arg) => dialect.word(arg)))
+        const probeShell = await runShell(words.join(' ') + ' -c "print(1)"', 20000,
+          policyFor(workspaceRoot), 4096)
+        if (probeShell.exitCode === 0 && String(probeShell.text).trim() === '1') {
+          pythonExe = candidate.bin
+          pythonArgs = candidate.args
+          pythonVia = 'shell'
+          pythonLauncher = pythonLabel(candidate)
+          return pythonLauncher
+        }
+        tried.push(pythonLabel(candidate) + '(shell exit=' + String(probeShell.exitCode) +
+          (String(probeShell.err).trim() === '' ? '' : ' ' + String(probeShell.err).trim().slice(0, 60)) + ')')
+      }
+      pythonWhy = tried.join('、')
+      return null
+    }
+
+
+    function pythonHint() {
+      return pythonLauncher === '' ? pythonLabel(PYTHON_CANDIDATES[0]) : pythonLauncher
+    }
+
+    async function runScanner(scanner, tokens, timeoutMs, workspaceRoot, maxBytes) {
+      const python = await resolvePython(workspaceRoot)
+      if (python === null) {
+        return { error: '找不到 Python（试过 ' + String(pythonWhy) +
+          '）。抽取器是 Python 写的；桌面版自带的那份在 <resources>/runtime/primary-runtime/' +
+          'dependencies/python/python.exe，也可以用 MC_ART_PYTHON 指定一个。' }
+      }
+      if (pythonVia === 'subprocess' && pythonExe !== '') {
+        const argv = [pythonExe].concat(pythonArgs, ['-B', '-X', 'utf8', scanner], tokens === undefined ? [] : tokens)
+        const done = await runProcess(argv, { cwd: workspaceRoot, maxBytes: maxBytes === undefined ? 8 * 1024 * 1024 : maxBytes })
+        if (done !== null) {
+          if (done.exitCode !== 0) {
+            const detail = beforeStderr(done.err === undefined || done.err === null ? '' : done.err)
+            return { error: '扫描脚本退出码 ' + done.exitCode + (detail === '' ? '，没有任何错误输出' : '：' + detail) }
+          }
+          try {
+            return JSON.parse(beforeStderr(done.text))
+          } catch (error) {
+            return { error: '扫描脚本的输出不是 JSON：' + String(done.text).slice(0, 200) }
+          }
+        }
+      }
+      const dialect = await currentShell(workspaceRoot)
+      const argument = (tokens === undefined ? [] : tokens).map((token) => dialect.word(token)).join(' ')
+      const result = await runShell(python + ' -B -X utf8 ' + dialect.word(scanner) +
+        (argument === '' ? '' : ' ' + argument), timeoutMs, policyFor(workspaceRoot), maxBytes)
+      if (result.exitCode !== 0) {
+        const detail = beforeStderr(result.err === undefined || result.err === null ? '' : result.err)
+        return { error: '扫描脚本退出码 ' + result.exitCode + (detail === '' ? '，没有任何错误输出' : '：' + detail) }
+      }
+      try {
+        return JSON.parse(beforeStderr(result.text))
+      } catch (error) {
+        return { error: '扫描脚本的输出不是 JSON：' + String(result.text).slice(0, 200) }
+      }
+    }
+
+    async function referenceSignature(dir) {
+      const pieces = [await dirSignature(dir), await dirSignature(dir + '/mods'), await dirSignature(dir + '/assets')]
+      for (const version of await listDir(dir + '/versions')) {
+        if (version.type !== 'directory') continue
+        pieces.push(version.name)
+        pieces.push(await dirSignature(dir + '/versions/' + version.name))
+        pieces.push(await dirSignature(dir + '/versions/' + version.name + '/mods'))
+      }
+      return pieces.join('|')
+    }
+
+    const scanCache = new Map()
+    async function scanReference(scanner, dir) {
+      const empty = { root: dir, shape: '', namespaces: [], sources: [], textures: 0, error: null }
+      if (dir === '') return empty
+      if (scanner === null || scanner === undefined) {
+        return Object.assign({}, empty, { error: '找不到扫描脚本 ' + SCAN_SCRIPT + '（从项目目录往上找了 5 层都没有）。' })
+      }
+      const signature = await referenceSignature(dir)
+      const cached = scanCache.get(dir)
+      if (cached !== undefined && cached.signature === signature) return cached.result
+      const parsed = await runScanner(scanner, [dir], 180000, dir)
+      if (parsed.error !== undefined) return Object.assign({}, empty, { error: String(parsed.error) })
+      const result = { root: parsed.root, shape: parsed.shape || '', namespaces: parsed.namespaces || [],
+        sources: parsed.sources || [], textures: parsed.textures || 0, error: null }
+      scanCache.set(dir, { signature: signature, result: result })
+      return result
+    }
+
+    const envOf = (name) => {
+      if (typeof process === 'undefined' || process.env === undefined) return ''
+      const value = process.env[name]
+      return typeof value === 'string' ? value : ''
+    }
+
+
+    function platformOf() {
+      if (typeof process === 'undefined' || process === null) return ''
+      return typeof process.platform === 'string' ? process.platform : ''
+    }
+
+
+    function moduleDirOf() {
+      if (typeof moduleDir !== 'undefined' && typeof moduleDir === 'string') return moduleDir
+      return ''
+    }
+
+
+    function gameRootCandidates(near) {
+      const home = envOf('USERPROFILE') || envOf('HOME')
+      const roaming = envOf('APPDATA') || (home === '' ? '' : home + '/AppData/Roaming')
+      const out = []
+      const push = (value) => {
+        if (typeof value !== 'string' || value === '') return
+        const trimmed = value.charAt(value.length - 1) === '/' ? value.slice(0, value.length - 1) : value
+        if (trimmed !== '' && out.indexOf(trimmed) < 0) out.push(trimmed)
+      }
+      push(roaming === '' ? '' : roaming + '/.minecraft')
+      push(home === '' ? '' : home + '/.minecraft')
+      push(home === '' ? '' : home + '/Library/Application Support/minecraft')
+      push(roaming === '' ? '' : roaming + '/com.mojang/minecraft')
+      push(home === '' ? '' : home + '/curseforge/minecraft/Instances')
+      push(roaming === '' ? '' : roaming + '/PrismLauncher/instances')
+      push(roaming === '' ? '' : roaming + '/MultiMC/instances')
+      const here = typeof near === 'string' ? near : ''
+      for (const base of [here, parentOf(here)]) {
+        if (typeof base !== 'string' || base === '') continue
+        push(base + '/.minecraft')
+        push(base + '/run')
+      }
+      push('/root/.minecraft')
+      return out
+    }
+
+    const INSTANCE_DIR = /(Instances|instances)$/
+    async function looksLikeGameRoot(path) {
+      for (const marker of ['versions', 'mods', 'assets', 'config']) {
+        const info = await statOf(path + '/' + marker)
+        if (info !== undefined && info.type === 'directory') return true
+      }
+      return false
+    }
+
+    async function detectGameRoots(near) {
+      const candidates = gameRootCandidates(near)
+      const out = []
+      const consider = async (path) => {
+        const info = await statOf(path)
+        if (info === undefined || info.type !== 'directory' || out.indexOf(path) >= 0) return false
+        out.push(path)
+        return true
+      }
+      if ((typeof process === 'undefined' ? '' : process.platform) !== 'win32') {
+        const skip = { Public: true, Default: true, 'Default User': true, 'All Users': true }
+        for (const user of (await listDir('/mnt/c/Users')).slice(0, 8)) {
+          if (user.type !== 'directory' || skip[user.name] === true) continue
+          candidates.push('/mnt/c/Users/' + user.name + '/AppData/Roaming/.minecraft')
+        }
+      }
+      for (const candidate of candidates.slice(0, 32)) {
+        if (out.length >= 5) break
+        if (!(await consider(candidate))) continue
+        if (out.length >= 5 || !INSTANCE_DIR.test(candidate)) continue
+        for (const child of (await listDir(candidate)).slice(0, 40)) {
+          if (out.length >= 5) break
+          if (child.type !== 'directory') continue
+          const childPath = candidate + '/' + child.name
+          if (await looksLikeGameRoot(childPath)) await consider(childPath)
+        }
+      }
+      return out
+    }
+
+    async function ensure(namespace) {
+      if (preloads.has(namespace)) return preloads.get(namespace)
+      for (const other of preloads.values()) if (other.namespace === namespace) return other
+      return undefined
+    }
+
+    function normalizeCells(input) {
+      const out = []
+      if (!Array.isArray(input)) return out
+      for (const cell of input) {
+        if (!cell || typeof cell.block !== 'string' || cell.block === '') continue
+        if (!Array.isArray(cell.at) || cell.at.length < 3) continue
+        const at = [0, 1, 2].map((i) => Math.trunc(Number(cell.at[i])))
+        if (!at.every((value) => isFinite(value))) continue
+        const cellVariant = typeof cell.variant === 'string' && cell.variant !== '' ? cell.variant : null
+        const kept = { block: cell.block, at: at }
+        if (cellVariant !== null) kept.variant = cellVariant
+        out.push(kept)
+      }
+      return out
+    }
+
+    const FACE_STEP = {
+      down: [0, -1, 0], up: [0, 1, 0], north: [0, 0, -1],
+      south: [0, 0, 1], west: [-1, 0, 0], east: [1, 0, 0],
+    }
+
+    async function referenceDirectory(project) {
+      const stored = (await readJson(project.dir + '/mc-art.settings.json')) || {}
+      const reference = stored.reference !== null && typeof stored.reference === 'object' ? stored.reference : {}
+      return typeof reference.directory === 'string' ? reference.directory : ''
+    }
+
+    async function refSignatureOf(dir) {
+      const cached = refSignatures.get(dir)
+      const now = Date.now()
+      if (cached !== undefined && now - cached.at < 5000) return cached.value
+      const value = await referenceSignature(dir)
+      refSignatures.set(dir, { at: now, value: value })
+      return value
+    }
+
+    function virtualLoad(namespace, parsed) {
+      const models = new Map()
+      for (const key of Object.keys(parsed.models || {})) {
+        const colon = key.indexOf(':')
+        const path = colon >= 0 ? key.slice(colon + 1) : key
+        if (!models.has(path)) models.set(path, parsed.models[key])
+      }
+      const textures = new Map()
+      const files = parsed.textureFiles || {}
+      for (const reference of Object.keys(parsed.textures || {})) {
+        const colon = reference.indexOf(':')
+        let textureNamespace = colon >= 0 ? reference.slice(0, colon) : namespace
+        let texturePath = colon >= 0 ? reference.slice(colon + 1) : reference
+        const file = files[reference]
+        if (typeof file === 'string') {
+          const parts = file.split('/')
+          if (parts.length > 3 && parts[0] === 'assets') {
+            textureNamespace = parts[1]
+            texturePath = parts.slice(3).join('/').replace(/\.png$/, '')
+          }
+        }
+        const key = textureNamespace + ':' + texturePath
+        const refKey = 'ref:' + key
+        textures.set(key, refKey)
+        referenceTextures.set(refKey, 'data:image/png;base64,' + parsed.textures[reference])
+        const animation = (parsed.animations || {})[reference]
+        if (animation !== undefined && animation !== null) referenceAnimations.set(refKey, animation)
+        else referenceAnimations.delete(refKey)
+      }
+      return { dir: null, namespace: namespace, assets: null, models: models,
+        textures: textures, virtual: true }
+    }
+
+    function refEntry(namespace, block) {
+      return referenceBlocks.get(namespace + ':' + block)
+    }
+
+    function refNameOf(namespace, block) {
+      const entry = refEntry(namespace, block)
+      return entry === undefined ? undefined : entry.name
+    }
+
+
+    async function referenceLoadItem(root, project, namespace, item, source) {
+      const fromProject = source === 'project'
+      const key = 'item:' + (fromProject ? 'project:' : '') + namespace + ':' + item
+      const resolved = await itemRoots(project, source)
+      if (resolved.error !== undefined) return { error: resolved.error }
+      const signature = await rootsSignature(resolved.roots)
+      const cached = referenceBlocks.get(key)
+      if (cached !== undefined && cached.signature === signature) return cached
+      const extractor = await findTool(project.dir, EXTRACT_SCRIPT)
+      if (extractor === null || extractor === undefined) {
+        return { error: '找不到 ' + EXTRACT_SCRIPT + '（从项目目录往上找了 5 层都没有）。' }
+      }
+      const parsed = await runScanner(extractor,
+        rootArgs(resolved.roots).concat(['--item', namespace + ':' + item]),
+        120000, project.dir, REFERENCE_MAX_BYTES)
+      if (parsed === undefined || (parsed.error !== undefined && parsed.error !== null)) {
+        return { error: String(parsed === undefined ? '抽取脚本没有返回任何东西' : parsed.error) }
+      }
+      const entry = {
+        signature: signature, namespace: namespace, item: item, source: source,
+        name: parsed.name || item, version: parsed.version,
+        shape: parsed.shape, light: parsed.light, display: parsed.display || null,
+        form: parsed.form, family: parsed.family, formLabel: parsed.formLabel,
+        layers: parsed.layers || [], frames: parsed.frames || [],
+        framesTruncated: parsed.framesTruncated === true,
+        modelRefs: parsed.modelRefs || [], modelRotations: parsed.modelRotations || [],
+        rotation: parsed.variantRotation === undefined ? null : parsed.variantRotation,
+        parsed: parsed,
+      }
+      referenceBlocks.set(key, entry)
+      return entry
+    }
+
+    async function itemRoots(project, source) {
+      const reference = await referenceDirectory(project)
+      if (source === 'project') {
+        const roots = [project.dir + '/pack']
+        if (reference !== '') roots.push(reference)
+        return { roots: roots, reference: reference }
+      }
+      if (reference === '') {
+        return { error: '还没有设置参考目录，取不到原版或模组的物品。在设置里指定 .minecraft 或版本目录。' }
+      }
+      return { roots: [reference], reference: reference }
+    }
+
+
+    function rootArgs(roots) {
+      const out = []
+      for (const one of roots) out.push('--root', one)
+      return out
+    }
+
+    async function rootsSignature(roots) {
+      const parts = []
+      for (const one of roots) parts.push(await refSignatureOf(one))
+      return parts.join('|')
+    }
+
+    const editablePaths = new Map()
+
+    function itemHandle(namespace, reference) {
+      const text = String(reference === undefined || reference === null ? '' : reference)
+      return 'ref:' + (text.indexOf(':') >= 0 ? text : namespace + ':' + text)
+    }
+
+
+    function missingItemIcon(namespace, item, reason) {
+      const text = String(reason === undefined || reason === null ? '' : reason)
+      return {
+        namespace: namespace,
+        item: item,
+        name: item,
+        shape: 'none',
+        error: text,
+        missing: true,
+        reason: text,
+        light: null, display: null, form: null, family: null, formLabel: null,
+        named: false, layers: [], frames: [], framesTruncated: false,
+        quads: [], textureIds: [], textures: {}, animations: {},
+        missingModels: [], modelPath: '',
+      }
+    }
+
+
+    function itemEntryProblem(namespace, item, entry) {
+      if (entry === null || entry === undefined || typeof entry !== 'object' || Array.isArray(entry)) {
+        return '取不到这个物品的图标：抽取器没有返回它的数据（' + namespace + ':' + item + '）'
+      }
+      if (typeof entry.error === 'string' && entry.error !== '') return entry.error
+      if (typeof entry.item !== 'string' || entry.item === '') {
+        return '取不到这个物品的图标：抽取器没认出 ' + namespace + ':' + item
+      }
+      return null
+    }
+
+    async function itemIcon(namespace, parsed, have, project) {
+      const load = virtualLoad(namespace, parsed)
+      const text = (value, fallback) => (typeof value === 'string' && value !== '' ? value : fallback)
+      const safe = (value) => (value === undefined ? null : value)
+      const out = {
+        namespace: namespace, item: text(parsed.item, ''),
+        name: text(parsed.name, text(parsed.item, '')),
+        shape: text(parsed.shape, 'none'), light: safe(parsed.light), display: parsed.display || null,
+        form: safe(parsed.form), family: safe(parsed.family), formLabel: safe(parsed.formLabel),
+        named: parsed.named === true,
+        layers: [], frames: [], framesTruncated: parsed.framesTruncated === true,
+        quads: [], error: typeof parsed.error === 'string' && parsed.error !== '' ? parsed.error : null,
+        missingModels: Array.isArray(parsed.missingModels) ? parsed.missingModels : [],
+      }
+      const ids = []
+      const add = (id) => { if (ids.indexOf(id) < 0) ids.push(id) }
+      if (parsed.shape === 'iso') {
+        const entry = { modelRef: parsed.modelRef || (parsed.modelRefs || [])[0] || null,
+          modelRefs: parsed.modelRefs || [], modelRotations: parsed.modelRotations || [],
+          rotation: parsed.variantRotation === undefined ? null : parsed.variantRotation,
+          multipart: false, whenList: [] }
+        const quads = quadsOfEntry(load, entry, note)
+        out.quads = quads === undefined ? [] : quads
+        for (const quad of out.quads) add(quad.tex)
+      } else {
+        out.layers = (parsed.layers || []).map((reference) => itemHandle(namespace, reference))
+        for (const frame of parsed.frames || []) {
+          out.frames.push({ predicate: frame.predicate || {},
+            layers: (frame.layers || []).map((reference) => itemHandle(namespace, reference)) })
+        }
+        for (const id of out.layers) add(id)
+        for (const frame of out.frames) for (const id of frame.layers) add(id)
+      }
+      out.textureIds = ids
+      out.modelPath = ''
+      if (project !== undefined) {
+        const model = project.dir + '/pack/assets/' + namespace + '/models/item/' + parsed.item + '.json'
+        if ((await statOf(model)) !== undefined) out.modelPath = rel(project.root, model)
+      }
+      const layerRefs = (parsed.layers || []).concat(
+        (parsed.frames || []).reduce((all, frame) => all.concat(frame.layers || []), []))
+      for (const reference of layerRefs) {
+        const file = (parsed.textureFiles || {})[reference]
+        if (typeof file !== 'string' || file === '') continue
+        const full = project === undefined ? undefined : project.dir + '/pack/' + file
+        if (full === undefined || (await statOf(full)) === undefined) continue
+        editablePaths.set(itemHandle(namespace, reference), full)
+      }
+      const already = {}
+      if (Array.isArray(have)) for (const path of have) already[path] = true
+      const textures = {}
+      for (const id of ids) {
+        if (already[id] === true) continue
+        const url = await textureUrlFor(id, project)
+        if (url !== undefined) textures[id] = url
+      }
+      out.textures = textures
+      out.animations = animationsFor(ids)
+      out.animationNotes = animationNotesFor(ids)
+      return out
+    }
+
+    async function itemFactsList(project, namespace, source) {
+      const resolved = await itemRoots(project, source)
+      if (resolved.error !== undefined) return { error: resolved.error }
+      const extractor = await findTool(project.dir, EXTRACT_SCRIPT)
+      if (extractor === null || extractor === undefined) return { error: '找不到 ' + EXTRACT_SCRIPT }
+      const parsed = await runScanner(extractor,
+        rootArgs(resolved.roots).concat(['--list', '--namespace', namespace, '--kind', 'item']),
+        180000, project.dir, REFERENCE_MAX_BYTES)
+      if (parsed === undefined || parsed.error !== undefined) {
+        return { error: String(parsed === undefined ? '没有返回任何东西' : parsed.error) }
+      }
+      return { namespace: namespace, version: parsed.version, items: parsed.items || [] }
+    }
+
+    async function itemIconPage(project, namespace, items, source) {
+      const resolved = await itemRoots(project, source)
+      if (resolved.error !== undefined) return { error: resolved.error }
+      const extractor = await findTool(project.dir, EXTRACT_SCRIPT)
+      if (extractor === null || extractor === undefined) return { error: '找不到 ' + EXTRACT_SCRIPT }
+      const parsed = await runScanner(extractor,
+        rootArgs(resolved.roots).concat(['--items', items.join(','), '--namespace', namespace]),
+        180000, project.dir, REFERENCE_MAX_BYTES)
+      if (parsed === undefined || parsed.error !== undefined) {
+        return { error: String(parsed === undefined ? '没有返回任何东西' : parsed.error) }
+      }
+      const out = {}
+      for (const item of Object.keys(parsed.items || {})) {
+        const entry = parsed.items[item]
+        const reason = itemEntryProblem(namespace, item, entry)
+        if (reason !== null) {
+          out[item] = missingItemIcon(namespace, item, reason)
+          continue
+        }
+        try {
+          out[item] = await itemIcon(namespace, entry, [], project)
+        } catch (error) {
+          out[item] = missingItemIcon(namespace, item,
+            '画这个物品的图标时出错：' + String(error && error.message ? error.message : error))
+        }
+      }
+      return { namespace: namespace, version: parsed.version, items: out }
+    }
+
+    async function referenceLoad(root, project, namespace, block, variant) {
+      const wanted = typeof variant === 'string' && variant !== '' ? variant : null
+      const key = namespace + ':' + block + (wanted === null ? '' : '@' + wanted)
+      const directory = await referenceDirectory(project)
+      if (directory === '') {
+        return { error: '还没有设置参考目录，取不到原版或模组的方块。在设置里指定 .minecraft 或版本目录。' }
+      }
+      const signature = await refSignatureOf(directory)
+      const cached = referenceBlocks.get(key)
+      if (cached !== undefined && cached.signature === signature) return cached
+      const extractor = await findTool(project.dir, EXTRACT_SCRIPT)
+      if (extractor === null || extractor === undefined) {
+        return { error: '找不到 ' + EXTRACT_SCRIPT + '（从项目目录往上找了 5 层都没有）。' }
+      }
+      const blockArg = namespace + ':' + block
+      const tokens = ['--root', directory, '--block', blockArg]
+      if (wanted !== null) tokens.push('--variant', wanted)
+      const dialect = await currentShell(project.dir)
+      const command = pythonHint() + ' -B ' + dialect.word(extractor) + ' ' +
+        tokens.map((token) => dialect.word(token)).join(' ')
+      const parsed = await runScanner(extractor, tokens, 120000, project.dir, REFERENCE_MAX_BYTES)
+      if (parsed === undefined || parsed.error !== undefined) {
+        return { error: String(parsed === undefined ? '抽取脚本没有返回任何东西' : parsed.error) }
+      }
+      const refs = parsed.modelRefs || []
+      if (refs.length === 0) return { error: '抽出来的方块没有可用的模型：' + key }
+      const entry = {
+        signature: signature, namespace: namespace, block: block,
+        name: parsed.name || block, nameKey: parsed.nameKey, version: parsed.version,
+        variant: parsed.variant === undefined ? null : parsed.variant,
+        variantKeys: parsed.variantKeys || [],
+        variantAxes: parsed.variantAxes || [],
+        variantDefaults: parsed.variantDefaults || {},
+        rotation: parsed.variantRotation === undefined ? null : parsed.variantRotation,
+        modelRef: refs[0], modelRefs: refs,
+        modelRotations: parsed.modelRotations || [],
+        whenList: parsed.multipartWhens || [],
+        multipart: parsed.multipart === true,
+        load: virtualLoad(namespace, parsed), command: command,
+      }
+      referenceBlocks.set(key, entry)
+      return entry
+    }
+
+    function entryFamily(entry, id) {
+      if (entry === undefined || entry === null) return 'other'
+      const axes = Array.isArray(entry.variantAxes) ? entry.variantAxes : []
+      for (const axis of axes) {
+        if (axis !== null && typeof axis === 'object' && axis.name === 'in_wall') return 'gate'
+      }
+      if (entry.multipart !== true) return 'other'
+      const whens = Array.isArray(entry.whenList) ? entry.whenList : []
+      let sawUp = false
+      let sawFalse = false
+      let sawTrue = false
+      for (const when of whens) {
+        for (const key of Object.keys(when)) {
+          if (key === 'up') { sawUp = true; continue }
+          if (key !== 'north' && key !== 'east' && key !== 'south' && key !== 'west') continue
+          if (when[key] === 'false') sawFalse = true
+          else sawTrue = true
+        }
+      }
+      let shape = 'other'
+      if (sawUp) shape = 'wall'
+      else if (sawFalse) shape = 'pane'
+      else if (sawTrue) shape = 'fence'
+      if (shape === 'other') return 'other'
+      const text = String(id === undefined || id === null ? '' : id)
+      const name = text.slice(text.indexOf(':') + 1)
+      if (shape === 'wall') return /(^|_)wall$/.test(name) ? 'wall' : 'other'
+      if (shape === 'fence') return /(^|_)fence$/.test(name) ? 'fence' : 'other'
+      return (/(^|_)pane$/.test(name) || /(^|_)bars$/.test(name)) ? 'pane' : 'other'
+    }
+
+    function isFullCubeEntry(load, entry) {
+      const refs = Array.isArray(entry.modelRefs) && entry.modelRefs.length > 0
+        ? entry.modelRefs : [entry.modelRef]
+      const elements = elementsOf(load, refs[0])
+      if (!Array.isArray(elements) || elements.length !== 1) return false
+      const element = elements[0]
+      if (element === undefined || element.rotation !== undefined) return false
+      const from = element.from
+      const to = element.to
+      if (!Array.isArray(from) || !Array.isArray(to)) return false
+      return from[0] === 0 && from[1] === 0 && from[2] === 0
+        && to[0] === 16 && to[1] === 16 && to[2] === 16
+    }
+
+    const EXCEPT_18 = { barrier: 1, carved_pumpkin: 1, jack_o_lantern: 1, melon: 1, pumpkin: 1 }
+    function isException18(id) {
+      const text = String(id)
+      const name = text.slice(text.indexOf(':') + 1)
+      if (EXCEPT_18[name] === 1) return true
+      if (/_leaves$/.test(name)) return true                       // LeavesBlock
+      return name === 'shulker_box' || /_shulker_box$/.test(name)  // BlockTags.SHULKER_BOXES
+    }
+    const EXCEPT_12 = { beacon: 1, cauldron: 1, glass: 1, glowstone: 1, ice: 1, sea_lantern: 1,
+      stained_glass: 1, piston: 1, sticky_piston: 1, piston_head: 1, barrier: 1,
+      melon_block: 1, pumpkin: 1, lit_pumpkin: 1 }
+    function isException12(id) {
+      const text = String(id)
+      const name = text.slice(text.indexOf(':') + 1)
+      if (EXCEPT_12[name] === 1) return true
+      if (/_leaves$/.test(name)) return true                        // BlockLeaves
+      if (/_trapdoor$/.test(name)) return true                      // BlockTrapDoor
+      if (/_stained_glass$/.test(name)) return true                 // BlockStainedGlass
+      return name === 'shulker_box' || /_shulker_box$/.test(name)   // BlockShulkerBox
+    }
+
+    function isOldVersion(version) {
+      const text = String(version === undefined || version === null ? '' : version)
+      return text.indexOf('1.12') >= 0 || text.indexOf('1.11') >= 0 || text.indexOf('1.10') >= 0
+    }
+
+    function axisOfDirection(name) {
+      if (name === 'north' || name === 'south') return 'z'
+      if (name === 'east' || name === 'west') return 'x'
+      return 'y'
+    }
+
+    function variantValueOf(variant, name) {
+      if (typeof variant !== 'string' || variant === '') return null
+      const parts = variant.split(',')
+      for (const part of parts) {
+        const at = part.indexOf('=')
+        if (at > 0 && part.slice(0, at) === name) return part.slice(at + 1)
+      }
+      return null
+    }
+
+    function connectsTo(version, self, neighbour, dir) {
+      const absent = neighbour === null || neighbour === undefined
+      if (isOldVersion(version)) {
+        let face = 'undefined'
+        if (!absent) {
+          if (neighbour.family === 'wall') face = 'poleThick'
+          else if (neighbour.family === 'fence') face = 'pole'
+          else if (neighbour.family === 'pane') face = 'poleThin'
+          else if (neighbour.family !== 'gate') face = neighbour.cube === true ? 'solid' : 'undefined'
+          else if (!gateAlongAxis(neighbour, dir)) face = 'undefined'
+          else face = 'pole'
+        }
+        const exception = absent ? false : isException12(neighbour.id)
+        if (self.family === 'pane') return (!exception && face === 'solid') || face === 'poleThin'
+        const flag = face === (self.family === 'wall' ? 'poleThick' : 'pole')
+        return (!exception && face !== 'solid') || flag
+      }
+      if (absent) return false
+      const exception = isException18(neighbour.id)
+      const solid = neighbour.cube === true && !exception
+      if (neighbour.family === 'gate') {
+        return gateAlongAxis(neighbour, dir)
+      }
+      if (self.family === 'wall') {
+        return neighbour.family === 'wall' || solid || neighbour.family === 'pane'
+      }
+      if (self.family === 'fence') {
+        return solid || (neighbour.family === 'fence' && self.wooden === fenceWooden(neighbour.id))
+      }
+      if (self.family === 'pane') {
+        return solid || neighbour.family === 'pane' || neighbour.family === 'wall'
+      }
+      return false
+    }
+
+    function gateAlongAxis(neighbour, dir) {
+      const facing = variantValueOf(neighbour.variant, 'facing')
+      return facing === null || axisOfDirection(facing) === axisOfDirection(dir)
+    }
+
+    function multipartValues(version, self, at) {
+      const names = []
+      for (const when of self.whens) {
+        for (const key of Object.keys(when)) if (names.indexOf(key) < 0) names.push(key)
+      }
+      const back = { north: 'south', south: 'north', east: 'west', west: 'east' }
+      const steps = { north: [0, 0, -1], east: [1, 0, 0], south: [0, 0, 1], west: [-1, 0, 0] }
+      const sides = {}
+      for (const name of Object.keys(steps)) {
+        const step = steps[name]
+        sides[name] = connectsTo(version, self, at(step[0], 0, step[2]), back[name])
+      }
+      const v12 = isOldVersion(version)
+      const values = {}
+      for (const name of Object.keys(sides)) {
+        if (names.indexOf(name) < 0) continue
+        if (self.family === 'wall' && !v12) {
+          const over = at(0, 1, 0)
+          const covered = over !== null && over.cube === true
+          values[name] = sides[name] ? (covered ? 'tall' : 'low') : 'none'
+        } else {
+          values[name] = sides[name] ? 'true' : 'false'
+        }
+      }
+      if (names.indexOf('up') < 0) return values
+      const above = at(0, 1, 0)
+      if (self.family === 'wall' && v12) {
+        const flag = (sides.south && !sides.west && sides.north && sides.east)
+          || (!sides.south && sides.west && !sides.north && sides.east)
+        values.up = flag ? (above === null ? 'false' : 'true') : 'true'
+        return values
+      }
+      let raise = above !== null && above.family === 'wall'
+      if (!raise) {
+        const none = (name) => values[name] === undefined || values[name] === 'none'
+        const asym = (none('north') && none('south') && none('east') && none('west'))
+          || (none('north') !== none('south')) || (none('east') !== none('west'))
+        const tallPair = (values.north === 'tall' && values.south === 'tall')
+          || (values.east === 'tall' && values.west === 'tall')
+        if (asym) raise = true
+        else if (tallPair) raise = false
+        else raise = above !== null && above.cube === true
+      }
+      values.up = raise ? 'true' : 'false'
+      return values
+    }
+
+    function whenMatches(when, values) {
+      for (const key of Object.keys(when)) {
+        const have = values[key]
+        if (have === undefined) continue
+        if (String(have) !== String(when[key])) return false
+      }
+      return true
+    }
+
+    function fenceWooden(id) {
+      const text = String(id)
+      return !/nether_brick_fence$/.test(text.slice(text.indexOf(':') + 1))
+    }
+
+    function keepFlags(entry, values) {
+      const whens = Array.isArray(entry.whenList) ? entry.whenList : []
+      const refs = Array.isArray(entry.modelRefs) ? entry.modelRefs : []
+      if (entry.multipart !== true || whens.length !== refs.length || refs.length === 0) return undefined
+      for (const when of whens) {
+        for (const key of Object.keys(when)) {
+          if (values[key] === undefined) return undefined
+        }
+      }
+      return whens.map((when) => whenMatches(when, values))
+    }
+
+    async function entryFor(root, project, reference, variant) {
+      const colon = reference.indexOf(':')
+      const namespace = colon >= 0 ? reference.slice(0, colon) : project.namespace
+      const name = colon >= 0 ? reference.slice(colon + 1) : reference
+      if (name === '') return { error: '方块名是空的' }
+      const load = await ensure(namespace)
+      if (load !== undefined) {
+        return { load: load, id: namespace + ':' + name,
+          entry: { modelRef: 'block/' + name, rotation: null, multipart: false, version: null } }
+      }
+      const ref = await referenceLoad(root, project, namespace, name, variant)
+      if (ref.error !== undefined) return { error: ref.error }
+      return { load: ref.load, id: ref.namespace + ':' + ref.block, entry: ref }
+    }
+
+    function describeEntry(load, entry, id, variant) {
+      if (entry === null || entry === undefined) return null
+      if (entry.cubeMemo === undefined) entry.cubeMemo = isFullCubeEntry(load, entry)
+      return { id: id, family: entryFamily(entry, id), cube: entry.cubeMemo === true,
+        variant: variant === undefined ? null : variant,
+        version: entry.version === undefined ? null : entry.version }
+    }
+
+    function neatKey(at) {
+      return at[0] + ',' + at[1] + ',' + at[2]
+    }
+
+
+    function quadsOfEntry(load, entry, report, keep) {
+      const refs = Array.isArray(entry.modelRefs) && entry.modelRefs.length > 0
+        ? entry.modelRefs : [entry.modelRef]
+      const rotations = Array.isArray(entry.modelRotations) ? entry.modelRotations : []
+      let out = []
+      const missed = []
+      for (let index = 0; index < refs.length; index++) {
+        if (keep !== undefined && keep[index] !== true) continue
+        const elements = elementsOf(load, refs[index])
+        if (elements === undefined) { missed.push(refs[index]); continue }
+        const own = index < rotations.length ? rotations[index] : null
+        out = out.concat(rotateQuads(quadsFromElements(elements, report), own))
+      }
+      if (out.length === 0) return undefined
+      if (missed.length > 0 && report !== undefined) report('模型链里缺了：' + missed.join('、'))
+      return rotateQuads(out, entry.rotation)
+    }
+
+    async function blockQuadsAt(root, project, block, at, variant, around) {
+      const found = await entryFor(root, project, String(block), variant)
+      if (found.error !== undefined) {
+        return { error: found.error.indexOf('方块名是空的') >= 0
+          ? found.error : '找不到 ' + String(block) + ' 的模型（' + found.error + '）' }
+      }
+      const load = found.load
+      const entry = found.entry
+      let keep
+      if (entry.multipart === true) {
+        const whens = Array.isArray(entry.whenList) ? entry.whenList : []
+        const refs = Array.isArray(entry.modelRefs) ? entry.modelRefs : []
+        const family = entryFamily(entry, found.id)
+        if (whens.length > 0 && whens.length === refs.length && family !== 'other') {
+          const id = found.id
+          const known = new Map()
+          for (const item of Array.isArray(around) ? around : []) {
+            if (item === null || typeof item !== 'object') continue
+            if (!Array.isArray(item.d) || item.d.length < 3) continue
+            if (typeof item.block !== 'string' || item.block === '') continue
+            const offset = [Math.trunc(item.d[0]), Math.trunc(item.d[1]), Math.trunc(item.d[2])]
+            const other = await entryFor(root, project, item.block,
+              typeof item.variant === 'string' && item.variant !== '' ? item.variant : null)
+            if (other.error !== undefined) continue
+            const colon = item.block.indexOf(':')
+            const otherId = colon >= 0 ? item.block : project.namespace + ':' + item.block
+            known.set(neatKey(offset), describeEntry(other.load, other.entry, otherId,
+              typeof item.variant === 'string' && item.variant !== '' ? item.variant : null))
+          }
+          const self = { id: id, family: entryFamily(entry, id), whens: whens, wooden: fenceWooden(id) }
+          const values = multipartValues(entry.version, self,
+            (dx, dy, dz) => known.get(neatKey([dx, dy, dz])) || null)
+          keep = keepFlags(entry, values)
+        }
+      }
+      const quads = quadsOfEntry(load, entry, note, keep)
+      if (quads === undefined) return { error: '找不到 ' + String(block) + ' 的模型' }
+      if (quads.length === 0 && keep === undefined) {
+        return { error: '找不到 ' + String(block) + ' 的模型（整条模型链一个面都解不出来，'
+          + '通常是贴图在项目包里没有、参考目录也没取到）' }
+      }
+      const axes = Array.isArray(entry.variantAxes) ? entry.variantAxes : []
+      return { quads: translateQuads(quads, at),
+        variants: entry.variantKeys || [], axes: axes, defaults: entry.variantDefaults || {},
+        variant: entry.rotation === null || entry.rotation === undefined ? null : variant,
+        multipart: entry.multipart === true, derived: keep !== undefined && keep !== null }
+    }
+
+
+
+    function textureMissingOf(load, name, directory) {
+      const colon = name.indexOf(':')
+      const explicit = colon >= 0
+      const namespace = explicit ? name.slice(0, colon) : load.namespace
+      const path = explicit ? name.slice(colon + 1) : name
+      const kind = explicit && namespace !== load.namespace ? 'vanilla' : 'project'
+      const where = directory === ''
+        ? '把参考目录指到 .minecraft/versions/<版本>（面板设置里那一栏）'
+        : directory + ' 里的 <版本>.jar'
+      return {
+        kind: kind,
+        name: explicit ? name : load.namespace + ':' + name,
+        fixPath: kind === 'project'
+          ? 'pack/assets/' + load.namespace + '/textures/' + path + '.png'
+          : where + ' → assets/' + namespace + '/textures/' + path + '.png',
+      }
+    }
+
+    function blockDiagnostic(load, namespace, id, found, built, directory) {
+      const project = Array.isArray(built.project) ? built.project : []
+      const vanilla = Array.isArray(built.vanilla) ? built.vanilla : []
+      const textures = Array.isArray(built.unresolvedTextures) ? built.unresolvedTextures : []
+      const bareWords = Array.isArray(built.bareWords) ? built.bareWords : []
+      const dangling = Array.isArray(built.danglingVariables) ? built.danglingVariables : []
+      const missing = project.concat(vanilla).map((entry) => ({
+        kind: entry.kind === 'project' ? 'project' : 'vanilla',
+        name: String(entry.name),
+        fixPath: fixPathOf(load, entry, directory),
+      })).concat(textures.map((name) => textureMissingOf(load, name, directory)))
+      let reason = 'unknown'
+      if (built.cycle === true) reason = 'parent-cycle'
+      else if (project.length > 0) reason = 'project-model-missing'
+      else if (typeof built.fetchReason === 'string' && built.fetchReason !== '') reason = built.fetchReason
+      else if (vanilla.length > 0) reason = directory === '' ? 'no-reference-directory' : 'vanilla-parent-missing'
+      else if (bareWords.length > 0) reason = 'texture-missing-hash'
+      else if (dangling.length > 0) reason = 'texture-variable-unresolved'
+      else if (textures.length > 0) {
+        const onlyProject = textures.every((name) => textureMissingOf(load, name, directory).kind === 'project')
+        reason = directory === '' && !onlyProject ? 'no-reference-directory' : 'textures-unresolved'
+      }
+      else if (built.noQuads === true) reason = 'no-quads'
+      else if (built.noElements === true) reason = 'no-geometry'
+      const allowed = { 'project-model-missing': 1, 'vanilla-parent-missing': 1,
+        'no-reference-directory': 1, 'reference-jar-missing': 1, 'extractor-failed': 1,
+        'parent-cycle': 1, 'textures-unresolved': 1, 'no-quads': 1, 'no-geometry': 1,
+        'texture-missing-hash': 1, 'texture-variable-unresolved': 1, 'unknown': 1 }
+      if (allowed[reason] !== 1) reason = 'unknown'
+
+      const bareModel = String(found.model).replace(/^[^:]*:/, '')
+      const trace = Array.isArray(built.trace) ? built.trace : []
+      const builtinHits = trace.filter((step) => step.from === 'builtin').map((step) => step.key)
+      const builtinConsulted = trace.some((step) => step.from === 'builtin' || step.from === 'none')
+      const shells = trace.filter((step) => step.shell === true).map((step) => step.parent)
+      const builtinLine = builtinHits.length > 0
+        ? '面板内置的原版母模型表：' + builtinHits.join('、') + '（这一条是它兜住的）'
+        : (builtinConsulted
+          ? '面板内置的原版母模型表：查过，没有 ' + trace.filter((step) => step.from === 'none')
+            .map((step) => step.parent).join('、')
+          : '面板内置的原版母模型表：这次不需要它')
+      const tried = [
+        '项目包：' + load.assets + '/models/'
+          + (bareModel.indexOf('block/') === 0 ? bareModel : 'block/' + bareModel) + '.json',
+        builtinLine,
+        directory === '' ? '参考目录：没设，从 jar 现取这条路没走'
+          : '参考目录的 jar 现取：' + directory,
+      ]
+      if (shells.length > 0) {
+        tried.push('取回来但是**空壳**（既没有 elements 也没有 parent，等于没取到）：'
+          + shells.slice(0, 3).join('、'))
+      }
+      if (textures.length > 0) {
+        tried.push('贴图现取（--textures）：' + (directory === '' ? '没设参考目录，没走' : directory))
+      }
+
+      const lines = ['[MC 资产面板] 画不出 ' + namespace + ':' + id]
+      if (found.guessed === true) {
+        lines.push('· blockstate 里一个模型名都没有，按惯例找 ' + String(found.model) + '（这一条是猜的）')
+      } else {
+        lines.push('· blockstate 引用的模型（' + found.models.length + ' 个）：'
+          + found.models.slice(0, 6).join('、') + (found.models.length > 6 ? ' …' : ''))
+      }
+      lines.push('· 选用的模型：' + String(found.model))
+      if (project.length > 0) {
+        lines.push('· 项目自己的模型文件缺失（' + project.length + ' 个）：')
+        for (const entry of project) lines.push('  - ' + entry.name + ' → 补 ' + fixPathOf(load, entry, directory))
+      }
+      if (vanilla.length > 0) {
+        lines.push('· 原版母模型缺失（' + vanilla.length + ' 个）：')
+        for (const entry of vanilla) lines.push('  - ' + entry.name + ' → ' + fixPathOf(load, entry, directory))
+      }
+      if (bareWords.length > 0) {
+        lines.push('· 有 ' + bareWords.length + ' 个面把**裸词**当贴图写（模型格式里裸词是路径，不是变量）：')
+        for (const one of bareWords.slice(0, 4)) {
+          lines.push('  - 面 ' + one.face + ' 引用的是裸词 `' + one.raw + '`。模型格式里它被当成**路径**（'
+            + load.namespace + ':textures/' + one.raw + '.png），而不是你 `textures` 映射里的那个键。'
+            + '**你大概想写 `#' + one.raw + '`。**')
+          if (Array.isArray(one.keys) && one.keys.length > 0) {
+            lines.push('    这张模型 textures 里的键：' + one.keys.join('、'))
+          }
+        }
+        if (bareWords.length > 4) lines.push('  - …（还有 ' + (bareWords.length - 4) + ' 个，见结构化诊断）')
+      }
+      if (dangling.length > 0) {
+        lines.push('· 有 ' + dangling.length + ' 个面引用 `#变量`，但模型的 textures 映射里没有这个键：')
+        for (const one of dangling.slice(0, 4)) {
+          lines.push('  - 面 ' + one.face + ' 引用 `' + one.name + '` → 补上这个键，或改成映射里已有的键')
+        }
+      }
+      const otherTextures = textures.filter((name) =>
+        !bareWords.some((one) => one.raw === name) && !dangling.some((one) => one.name === name))
+      if (otherTextures.length > 0) {
+        lines.push('· 面引用的贴图解不出来（' + otherTextures.length + ' 个，这些面被丢掉了）：')
+        for (const name of otherTextures.slice(0, 4)) {
+          const entry = textureMissingOf(load, name, directory)
+          lines.push('  - ' + entry.name + ' → ' + entry.fixPath)
+        }
+        if (otherTextures.length > 4) lines.push('  - …（还有 ' + (otherTextures.length - 4) + ' 个，见结构化诊断）')
+      }
+      if (project.length === 0 && vanilla.length === 0 && textures.length === 0) {
+        lines.push(built.noElements === true
+          ? '· 整条模型链里**没有任何 elements**（不是"画出来是空的"）：通常是链上某个母模型'
+            + '没取到（空壳/版本不对/参考目录没设），而不是这个方块真的靠方块实体渲染'
+          : '· 模型链是完整的，但整条链里一个面都没画出来（这个方块可能靠方块实体渲染）')
+      }
+      lines.push('· 原因：' + reason)
+      if (typeof built.why === 'string' && built.why !== '') lines.push('· 现取失败的原因：' + built.why)
+      if (typeof built.textureWhy === 'string' && built.textureWhy !== '') {
+        lines.push('· 贴图现取失败的原因：' + built.textureWhy)
+      }
+      lines.push('· 参考目录：' + (directory === '' ? '（没设）' : directory))
+      lines.push('· 已试过的路：' + tried.join(' → '))
+      lines.push('· 修法：' + fixTextOf(reason))
+      lines.push('· 这份报告只在屏幕上，不写进会话 / inbox / 日志；可以整段复制走')
+      if (lines.length > 20) {
+        lines.splice(20, lines.length - 20)
+        lines[19] = '· …（还省略了一些行；结构化诊断里有全部内容）'
+      }
+      return { reason: reason, missing: missing, tried: tried, lines: lines }
+    }
+
+
+    function fixTextOf(reason) {
+      if (reason === 'project-model-missing') {
+        return '把上面列出的项目自己的模型文件补上（路径已经给出）；blockstate 里写什么名字，'
+          + '文件名就必须是什么（multipart 方块要补的是 _post / _side 那几件，不是 <方块名>.json）'
+      }
+      if (reason === 'no-reference-directory') {
+        return '面板设置里把参考目录指到 .minecraft/versions/<版本>（或写进 mc-art.settings.json 的 '
+          + 'reference.directory）；原版母模型都在那个版本的 jar 里'
+      }
+      if (reason === 'vanilla-parent-missing') {
+        return '参考目录指的那个版本里没有这些原版母模型：核对版本号（1.16 之后墙是 template_wall_post / '
+          + 'template_wall_side / template_wall_side_tall），或把 parent 改成该版本真实存在的名字'
+      }
+      if (reason === 'reference-jar-missing') {
+        return '参考目录里没找到能读的 jar：指到 .minecraft/versions/<版本>（里面应有 <版本>.jar），'
+          + '不要指到 .minecraft 本身'
+      }
+      if (reason === 'extractor-failed') {
+        return '抽取脚本自己失败了：看上面"现取失败的原因"那一行，先确认 Python 与脚本路径'
+      }
+      if (reason === 'textures-unresolved') {
+        return '这些面引用的贴图在项目包里没有、参考目录里也没取到：把参考目录指对版本，'
+          + '或者在项目包里补上同名的 PNG（路径已经给出）'
+      }
+      if (reason === 'texture-missing-hash') {
+        return '把这些面里的裸词前面补上 `#`：贴图**变量**必须带 `#`，不带 `#` 的裸词会被当成路径，'
+          + '于是去找 <命名空间>:textures/<词>.png（那里通常没有）—— 例如 `"texture": "stone"` 要写 `"texture": "#stone"`。'
+          + '这两个方块在游戏里同样是坏的（会渲染成缺失贴图）'
+      }
+      if (reason === 'texture-variable-unresolved') {
+        return '`#变量` 在模型的 textures 映射里找不到：把映射里缺的键补上，或者把面改成映射里已有的那个键'
+      }
+      if (reason === 'no-quads') {
+        return '模型链是完整的但一个面都没画出来：这个方块很可能靠方块实体在代码里渲染，'
+          + '面板画不出它的实体模型；要 3D 预览就得在项目包里补一个带 elements 的模型'
+      }
+      if (reason === 'no-geometry') {
+        return '整条模型链里没有任何 elements：先看"已试过的路"那一行 —— 链上哪个母模型是空壳/没取到，'
+          + '就补哪个（项目包里的补文件；原版的把参考目录指到 .minecraft/versions/<版本>）。'
+          + '这不等于"这个方块靠方块实体渲染"'
+      }
+      if (reason === 'parent-cycle') {
+        return '模型 parent 成环了：把链上重复出现的那个 parent 去掉'
+      }
+      return '模型链完整却没有 elements：这个方块可能靠方块实体渲染（没有几何模型），'
+        + '或者在项目包里补一个带 elements 的模型'
+    }
+
+    async function payload(root, project, kind, id, have, cellsOverride, neighbours) {
+      const dir = project.dir
+      const namespace = project.namespace
+      const neighbourAware = neighbours !== false
+      const load = preloads.get(namespace)
+      if (load === undefined) return { error: 'project not loaded: ' + namespace }
+      let quads = []
+      let refs = []
+      let palette = []
+      let cells = null
+      let blockModel = null
+      let blockModels = []
+
+      if (kind === 'block') {
+        const found = (await blockIds(load)).filter((block) => block.id === id)[0]
+        if (found === undefined) return { error: 'block not found: ' + id }
+        blockModel = found.model
+        blockModels = found.models
+        const built = await projectElements(project, load, found.model)
+        const elements = built.elements
+        quads = elements === undefined ? undefined : quadsFromElements(elements, note)
+        if (elements === undefined || quads.length === 0) {
+          if (elements !== undefined) built.noQuads = true
+          else built.noElements = true
+          const directory = await referenceDirectory(project)
+          const failed = blockDiagnostic(load, namespace, id, found, built, directory)
+          return { error: failed.lines.join('\n'), notified: false, notifyVia: null,
+            diagnostic: { reason: failed.reason, block: namespace + ':' + id, missing: failed.missing,
+              tried: failed.tried, referenceDirectory: directory } }
+        }
+        refs = [rel(root, load.assets + '/textures/block/' + id + '.png'),
+          rel(root, load.assets + '/models/block/' + id + '.json'),
+          rel(root, load.assets + '/blockstates/' + id + '.json')]
+      } else if (kind === 'entity') {
+        const source = (project.entities || []).filter((item) => item.id === id)[0]
+        if (source === undefined) return { error: 'entity not found: ' + id }
+        const full = (await readJson(dir + '/mc-art.atlas.json')) || {}
+        const spec = (full.entities || []).filter((item) => item.id === id)[0]
+        if (spec === undefined) return { error: 'entity spec missing: ' + id }
+        for (const layer of spec.layers || []) {
+          const path = load.assets + '/textures/' + layer.texture
+          quads = quads.concat(entityQuads(layer.model, path, layer.mode || 'opaque'))
+          refs.push(rel(root, path))
+        }
+        refs.push(rel(root, dir + '/mc-art.atlas.json'))
+        refs = refs.concat((spec.refs || []).map((r) => rel(root, dir + '/' + r)))
+      } else {
+        const full = (await readJson(dir + '/mc-art.atlas.json')) || {}
+        const list = kind === 'biome' ? (full.biomes || []) : (full.structures || [])
+        const item = list.filter((entry) => entry.id === id)[0]
+        if (item === undefined) return { error: kind + ' not found: ' + id }
+        const source = cellsOverride === undefined || cellsOverride === null
+          ? (item.cells || []) : normalizeCells(cellsOverride)
+        const byCell = new Map()
+        for (const cell of source) {
+          if (!cell || !Array.isArray(cell.at) || typeof cell.block !== 'string') continue
+          const key = cell.at[0] + ',' + cell.at[1] + ',' + cell.at[2]
+          const previous = byCell.get(key)
+          if (previous !== undefined && previous.block !== cell.block) {
+            note('格子重叠 ' + key + '：' + previous.block + ' 与 ' + cell.block + '，以后者为准')
+          }
+          const kept = { block: cell.block, at: cell.at }
+          if (typeof cell.variant === 'string' && cell.variant !== '') kept.variant = cell.variant
+          byCell.set(key, kept)
+        }
+        cells = Array.from(byCell.values())
+        const cache = new Map()
+        const counts = new Map()
+        const slots = []
+        const atCell = new Map()
+        for (let index = 0; index < cells.length; index++) {
+          const cell = cells[index]
+          const reference = String(cell.block)
+          const colon = reference.indexOf(':')
+          const cellNamespace = colon >= 0 ? reference.slice(0, colon) : namespace
+          const cellBlock = colon >= 0 ? reference.slice(colon + 1) : reference
+          const fullName = cellNamespace + ':' + cellBlock
+          counts.set(fullName, (counts.get(fullName) || 0) + 1)
+          const cellKey = fullName + (cell.variant === null || cell.variant === undefined ? '' : '@' + cell.variant)
+          let slot = cache.get(cellKey)
+          if (slot === undefined) {
+            slot = { load: undefined, entry: null, union: undefined,
+              id: fullName, variant: cell.variant === undefined ? null : cell.variant }
+            const found = await entryFor(root, project, reference, cell.variant)
+            if (found.error !== undefined) note('取不到 ' + fullName + '：' + found.error)
+            else { slot.load = found.load; slot.entry = found.entry; slot.id = found.id }
+            cache.set(cellKey, slot)
+          }
+          slots.push(slot)
+          atCell.set(neatKey(cell.at), slot)
+        }
+        const offsetAt = (index, dx, dy, dz) => {
+          const cell = cells[index]
+          const slot = atCell.get(neatKey([cell.at[0] + dx, cell.at[1] + dy, cell.at[2] + dz]))
+          if (slot === undefined || slot.entry === null || slot.load === undefined) return null
+          return describeEntry(slot.load, slot.entry, slot.id, slot.variant)
+        }
+        const unionOf = (slot) => {
+          if (slot.union === undefined) {
+            const built = quadsOfEntry(slot.load, slot.entry, note)
+            slot.union = built === undefined ? [] : built
+            if (slot.union.length === 0) note('no model for cell block ' + slot.id)
+          }
+          return slot.union
+        }
+        for (let index = 0; index < cells.length; index++) {
+          const cell = cells[index]
+          const slot = slots[index]
+          let cellQuads = []
+          if (slot.load !== undefined && slot.entry !== null) {
+            let keep
+            if (neighbourAware && slot.entry.multipart === true) {
+              const whens = Array.isArray(slot.entry.whenList) ? slot.entry.whenList : []
+              const family = entryFamily(slot.entry, slot.id)
+              if (whens.length > 0 && family !== 'other') {
+                const self = { id: slot.id, family: family, whens: whens,
+                  wooden: fenceWooden(slot.id) }
+                const values = multipartValues(slot.entry.version, self,
+                  (dx, dy, dz) => offsetAt(index, dx, dy, dz))
+                keep = keepFlags(slot.entry, values)
+              }
+            }
+            const built = keep === undefined
+              ? unionOf(slot) : quadsOfEntry(slot.load, slot.entry, note, keep)
+            cellQuads = built === undefined ? [] : built
+          }
+          const tagged = translateQuads(cellQuads, cell.at).map((quad) => ({
+            p: quad.p, uv: quad.uv, tex: quad.tex, shade: quad.shade, mode: quad.mode,
+            shaded: quad.shaded, pick: { cell: index, face: quad.face || '' },
+          }))
+          quads = quads.concat(tagged)
+        }
+        palette = Array.from(counts.keys()).map((key) => {
+          const at = key.indexOf(':')
+          const cellNamespace = at >= 0 ? key.slice(0, at) : namespace
+          const cellBlock = at >= 0 ? key.slice(at + 1) : key
+          const fromReference = refNameOf(cellNamespace, cellBlock)
+          return { block: key, label: fromReference || labelFor(cellNamespace, 'block', cellBlock), count: counts.get(key) }
+        })
+        palette.sort((a, b) => b.count - a.count)
+        refs = [rel(root, dir + '/mc-art.atlas.json')].concat((item.refs || []).map((r) => rel(root, dir + '/' + r)))
+      }
+
+      const textureIds = []
+      const seenTex = {}
+      for (const quad of quads) if (seenTex[quad.tex] !== true) { seenTex[quad.tex] = true; textureIds.push(quad.tex) }
+      const already = {}
+      if (Array.isArray(have)) for (const path of have) already[path] = true
+      const textures = {}
+      for (const path of textureIds) {
+        if (already[path] === true) continue
+        const url = await textureUrlFor(path, project)
+        if (url !== undefined) textures[path] = url
+      }
+      return { kind: kind, id: id, title: labelFor(namespace, kind, id),
+        project: project.title || project.id,
+        quads: quads, textureIds: textureIds, textures: textures,
+        animations: animationsFor(textureIds), animationNotes: animationNotesFor(textureIds),
+        cells: cells, faceStep: FACE_STEP,
+        model: blockModel, models: blockModels,
+        refs: refs, ref: refs[0], palette: palette, box: boxOfQuads(quads), errors: errors.slice(0, 8) }
+    }
+
+    async function shellExec(spec) {
+      const service = shellOf()
+      if (service === undefined) return { exitCode: null, text: '', err: 'no shell service' }
+      if (typeof service.run === 'function') return await service.run(spec)
+      if (typeof service.execute === 'function') return await service.execute(spec)
+      return { exitCode: null, text: '', err: '这个 shell 服务既没有 run() 也没有 execute()：' +
+        Object.keys(service).join(',') }
+    }
+
+
+    function shellText(value) {
+      if (value === undefined || value === null) return ''
+      if (typeof value === 'string') return value
+      return value.text === undefined ? String(value) : String(value.text)
+    }
+
+    async function runShell(command, timeoutMs, sandboxPolicy, maxBytes) {
+      if (shellOf() === undefined) return { exitCode: null, text: '', err: 'no shell service' }
+      const request = { command: command, timeoutMs: timeoutMs === undefined ? 20000 : timeoutMs,
+        stdoutMaxBytes: maxBytes === undefined ? 64 * 1024 : maxBytes }
+      if (sandboxPolicy !== undefined) request.sandboxPolicy = sandboxPolicy
+      const spec = shellOf().resolve(request)
+      const result = await shellExec(spec)
+      return { exitCode: result.exitCode === undefined ? null : result.exitCode,
+        text: shellText(result.stdout), err: shellText(result.stderr) }
+    }
+
+    async function available(tool) {
+      const dialect = await currentShell('')
+      const result = await runShell(dialect.available(tool), 10000)
+      return result.exitCode === 0 && String(result.text).trim().length > 0
+    }
+
+    const PS_QUOTE = (value) => "'" + String(value).split("'").join("''") + "'"
+    const SHELLS = {
+      posix: {
+        name: 'posix',
+        word: (value) => shellDecoded(value),
+        available: (tool) => 'command -v ' + tool,
+        remove: (path) => 'rm -f ' + shellDecoded(path),
+        makeDir: (path) => 'mkdir -p ' + shellDecoded(path),
+        move: (from, to) => 'mv -f ' + shellDecoded(from) + ' ' + shellDecoded(to),
+        decodeFile: (source, target) =>
+          'base64 -d < ' + shellDecoded(source) + ' > ' + shellDecoded(target),
+        writeInline: (target, base64) =>
+          'printf %s ' + quoteRaw(base64) + ' | base64 -d > ' + shellDecoded(target),
+      },
+      pwsh: {
+        name: 'pwsh',
+        word: (value) => PS_QUOTE(value),
+        available: (tool) => '(Get-Command ' + PS_QUOTE(tool) + ' -ErrorAction SilentlyContinue) -ne $null',
+        remove: (path) => 'Remove-Item -LiteralPath ' + PS_QUOTE(path) + ' -Force -ErrorAction SilentlyContinue',
+        makeDir: (path) => '[IO.Directory]::CreateDirectory(' + PS_QUOTE(path) + ') | Out-Null',
+        move: (from, to) => 'Move-Item -LiteralPath ' + PS_QUOTE(from) +
+          ' -Destination ' + PS_QUOTE(to) + ' -Force',
+        decodeFile: (source, target) => '[IO.File]::WriteAllBytes(' + PS_QUOTE(target) +
+          ', [Convert]::FromBase64String([IO.File]::ReadAllText(' + PS_QUOTE(source) + ')))',
+        writeInline: (target, base64) => '[IO.File]::WriteAllBytes(' + PS_QUOTE(target) +
+          ', [Convert]::FromBase64String(' + PS_QUOTE(base64) + '))',
+      },
+    }
+    let shellDialect = null
+
+    let shellProbeInfo = null
+    async function currentShell(workspaceRoot) {
+      if (shellDialect !== null) return SHELLS[shellDialect]
+      const platform = platformOf()
+      if (platform === 'win32') {
+        shellProbeInfo = { platform: platform, dialect: 'pwsh', why: '按平台定的（没跑探针）' }
+        shellDialect = 'pwsh'
+        return SHELLS.pwsh
+      }
+      if (platform === 'linux' || platform === 'darwin' || platform === 'freebsd' || platform === 'openbsd' || platform === 'sunos' || platform === 'aix') {
+        shellProbeInfo = { platform: platform, dialect: 'posix', why: '按平台定的（没跑探针）' }
+        shellDialect = 'posix'
+        return SHELLS.posix
+      }
+      const probe = await runShell('echo "mcart-shell:$($PSVersionTable.PSVersion.Major)"', 20000,
+        policyFor(workspaceRoot), 4096)
+      shellProbeInfo = { platform: platform, exitCode: probe.exitCode,
+        text: String(probe.text).slice(0, 80), err: String(probe.err).slice(0, 80) }
+      if (probe.exitCode !== 0) return SHELLS.posix
+      shellDialect = /^mcart-shell:\d+/.test(String(probe.text).trim()) ? 'pwsh' : 'posix'
+      return SHELLS[shellDialect]
+    }
+
+
+    async function windowsPowerShell() {
+      const root = (envOf('SystemRoot') || 'C:/Windows').split(BACKSLASH).join('/')
+      const absolute = [
+        root + '/System32/WindowsPowerShell/v1.0/powershell.exe',
+        'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe',
+      ]
+      for (const candidate of absolute) {
+        const info = await statOf(candidate)
+        if (info !== undefined && info.type === 'file') return candidate
+      }
+      for (const name of ['powershell.exe', 'pwsh']) {
+        if (shellOf() !== undefined && await available(name)) return name
+      }
+      return null
+    }
+
+
+    async function writeDecodedFile(target, base64, workspaceRoot, timeoutMs) {
+      if (shellOf() !== undefined) {
+        const dialect = await currentShell(workspaceRoot)
+        const policy = policyFor(workspaceRoot)
+        const staging = target + '.mcart-b64'
+        const staged = await writeTextFile(staging, base64, workspaceRoot)
+        if (staged.ok !== true) {
+          return { ok: false, exitCode: null, err: String(staged.detail), step: 1, steps: 2 }
+        }
+        const done = await runShell(dialect.decodeFile(staging, target), timeoutMs, policy)
+        const cleanup = await runShell(dialect.remove(staging), 15000, policy)
+        if (done.exitCode === 0) {
+          return { ok: true, steps: 2, dialect: dialect.name, stagingRemoved: cleanup.exitCode === 0 }
+        }
+        const local = localOf()
+        if (local === null) {
+          return { ok: false, exitCode: done.exitCode, err: done.err, step: 2, steps: 2 }
+        }
+        try {
+          await local.writeBase64(target, base64)
+          return { ok: true, steps: 1, dialect: dialect.name, via: 'node:fs',
+            shellSaid: 'exit=' + String(done.exitCode) }
+        } catch (error) {
+          return { ok: false, exitCode: done.exitCode,
+            err: beforeStderr(String(done.err)) + ' | node:fs: ' + messageOf(error), step: 2, steps: 2 }
+        }
+      }
+      const local = localOf()
+      if (local === null) {
+        return { ok: false, exitCode: null, step: 0, steps: 1,
+          err: '宿主既没有 shell 服务，也没有本地文件系统垫片' }
+      }
+      try {
+        await local.writeBase64(target, base64)
+        return { ok: true, steps: 1, via: 'node:fs' }
+      } catch (error) {
+        return { ok: false, exitCode: null, step: 0, steps: 1, err: messageOf(error) }
+      }
+    }
+
+
+    async function ensureDir(path, workspaceRoot, depth) {
+      if (await isDirectoryOf(path)) return { ok: true, via: 'existing' }
+      const tried = []
+      const level = depth === undefined ? 0 : depth
+      const picker = ctx.get('directoryPickerController')
+      if (picker !== undefined && typeof picker.createDirectory === 'function') {
+        const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+        if (cut > 0) {
+          const parent = path.slice(0, cut)
+          const name = path.slice(cut + 1)
+          try {
+            await picker.createDirectory(parent, name)
+            return { ok: true, via: 'directoryPickerController' }
+          } catch (error) {
+            if (level < 8) {
+              const up = await ensureDir(parent, workspaceRoot, level + 1)
+              if (up.ok === true) {
+                try {
+                  await picker.createDirectory(parent, name)
+                  return { ok: true, via: 'directoryPickerController' }
+                } catch (again) { tried.push('directoryPickerController: ' + messageOf(again)) }
+              } else {
+                tried.push('directoryPickerController: ' + messageOf(error) +
+                  '；父目录也建不出来：' + String(up.detail))
+              }
+            } else tried.push('directoryPickerController: ' + messageOf(error))
+          }
+        } else tried.push('directoryPickerController: 路径里没有父目录')
+      } else tried.push('directoryPickerController: 宿主没有这个服务')
+      if (shellOf() !== undefined) {
+        const done = await shellFileOp(workspaceRoot, (dialect) => dialect.makeDir(path), 20000)
+        if (done.ok === true) return { ok: true, via: 'shell' }
+        const detail = beforeStderr(done.err === undefined || done.err === null ? '' : done.err)
+        tried.push('shell: 退出码 ' + String(done.exitCode) + (detail === '' ? '，没有错误输出' : '，' + detail))
+      } else tried.push('shell: 宿主没有这个服务')
+      if (fsOf() !== undefined) {
+        try {
+          const target = await fsOf().resolve(path + '/.gitkeep')
+          await fsOf().writeText(target, '', undefined, undefined, policyFor(workspaceRoot))
+          return { ok: true, via: 'fs', placeholder: true }
+        } catch (error) { tried.push('fs: ' + messageOf(error)) }
+      } else tried.push('fs: 宿主没有这个服务')
+      const local = localOf()
+      if (local !== null) {
+        try {
+          await local.mkdirp(path)
+          return { ok: true, via: 'node:fs' }
+        } catch (error) { tried.push('node:fs: ' + messageOf(error)) }
+      } else tried.push('node:fs: 这个运行时里没有文件系统垫片')
+      return { ok: false, detail: tried.join('；') }
+    }
+
+
+    async function shellFileOp(workspaceRoot, build, timeoutMs) {
+      if (shellOf() === undefined) return { ok: false, exitCode: null, err: 'no shell service' }
+      const dialect = await currentShell(workspaceRoot)
+      const done = await runShell(build(dialect), timeoutMs, policyFor(workspaceRoot))
+      return { ok: done.exitCode === 0, exitCode: done.exitCode, err: done.err }
+    }
+
+    async function removeFile(path, workspaceRoot) {
+      const done = await shellFileOp(workspaceRoot, (dialect) => dialect.remove(path), 15000)
+      if (done.ok === true) return { ok: true, via: 'shell' }
+      const local = localOf()
+      if (local === null) return { ok: false, detail: String(done.err) }
+      try {
+        await local.remove(path)
+        return { ok: true, via: 'node:fs' }
+      } catch (error) { return { ok: false, detail: messageOf(error) } }
+    }
+
+    async function moveFile(from, to, workspaceRoot) {
+      const done = await shellFileOp(workspaceRoot, (dialect) => dialect.move(from, to), 20000)
+      if (done.ok === true) return { ok: true, via: 'shell' }
+      const local = localOf()
+      if (local === null) return { ok: false, exitCode: done.exitCode, detail: String(done.err) }
+      try {
+        await local.move(from, to)
+        return { ok: true, via: 'node:fs' }
+      } catch (error) {
+        return { ok: false, exitCode: done.exitCode, detail: messageOf(error) }
+      }
+    }
+
+    async function runDialog(command, sandboxPolicy, workspaceRoot) {
+      if (shellOf() === undefined) return ''
+      const request = { command: command, stdoutMaxBytes: 64 * 1024 }
+      if (sandboxPolicy !== undefined) request.sandboxPolicy = sandboxPolicy
+      const spec = shellOf().resolve(request)
+      if (typeof shellOf().start === 'function') {
+        const process = await shellOf().start(spec)
+        await process.done
+        return String(process.readOutput().delta)
+      }
+      const done = await shellExec(spec)
+      return shellText(done.stdout)
+    }
+
+    async function convertPath(flag, value) {
+      const trimmed = String(value === undefined || value === null ? '' : value).trim()
+      if (trimmed === '') return null
+      if (hasWslpath === null) hasWslpath = await available('wslpath')
+      if (hasWslpath !== true) return null
+      const result = await runShell('wslpath ' + flag + ' ' + shellDecoded(trimmed), 15000)
+      if (result.exitCode !== 0) return null
+      const converted = beforeStderr(result.text)
+      return converted === '' ? null : converted
+    }
+
+    async function writeTextFile(path, text, workspaceRoot) {
+      const policy = policyFor(workspaceRoot)
+      let fsDetail = null
+      if (fsOf() !== undefined) {
+        try {
+          const target = await fsOf().resolve(path)
+          await fsOf().writeText(target, text, undefined, undefined, policy)
+          return { ok: true, via: 'fs' }
+        } catch (error) {
+          fsDetail = messageOf(error)
+        }
+      } else {
+        fsDetail = 'no fs service'
+      }
+      let shellDetail = 'no shell service'
+      if (shellOf() !== undefined) {
+        const dialect = await currentShell(workspaceRoot)
+        const result = await runShell(dialect.writeInline(path, base64OfString(text)), 20000, policy)
+        if (result.exitCode === 0) return { ok: true, via: 'shell' }
+        const detail = beforeStderr(result.err === undefined || result.err === null ? '' : result.err)
+        shellDetail = 'exit=' + result.exitCode + (detail === '' ? '' : ' err=' + detail)
+      }
+      const local = localOf()
+      if (local !== null) {
+        try {
+          await local.writeText(path, text)
+          return { ok: true, via: 'node:fs' }
+        } catch (error) {
+          return { ok: false, detail: 'fs: ' + fsDetail + ' | shell: ' + shellDetail +
+            ' | node:fs: ' + messageOf(error) }
+        }
+      }
+      return { ok: false, detail: 'fs: ' + fsDetail + ' | shell: ' + shellDetail +
+        ' | node:fs: 这个运行时里没有文件系统垫片' }
+    }
+
+    ctx.effect(() => harness.handle('atlas.pickDirectory', async (args) => {
+      const request = args || {}
+      const start = typeof request.start === 'string' ? request.start : ''
+      if (shellOf() === undefined && subprocessOf() === undefined) {
+        return { supported: false, detail: '宿主既没有 shell 服务也没有 subprocess，起不了目录对话框。' }
+      }
+      try {
+        const powerShell = await windowsPowerShell()
+        if (powerShell !== null) {
+          const winStart = await convertPath('-w', start)
+          const lines = [
+            '$ProgressPreference = "SilentlyContinue"',
+            'Add-Type -AssemblyName System.Windows.Forms | Out-Null',
+            '$d = New-Object System.Windows.Forms.FolderBrowserDialog',
+            "$d.Description = '选择目录'",
+            '$d.ShowNewFolderButton = $false',
+          ]
+          if (winStart !== null) lines.push("$d.SelectedPath = '" + winStart.split("'").join("''") + "'")
+          lines.push('if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write("' + PICK_BEGIN + '" + $d.SelectedPath + "' + PICK_END + '") }')
+          const encoded = utf16leBase64(lines.join('\n'))
+          const dialog = await withDeadline(async () => {
+            let text = ''
+            const argvRun = await runProcess([powerShell, '-NoProfile', '-STA', '-EncodedCommand', encoded],
+              { cwd: start, maxBytes: 64 * 1024, graceMs: 3000 })
+            if (argvRun !== null) text = String(argvRun.text)
+            if (text === '' && shellOf() !== undefined) {
+              const quoting = await currentShell(start)
+              text = await runDialog(quoting.word(powerShell) + ' -NoProfile -STA -EncodedCommand ' + encoded,
+                policyFor(start))
+            }
+            return text
+          }, 120000)
+          if (dialog !== null && typeof dialog === 'object' && dialog.deadlineExpired === true) {
+            return { supported: false, platform: platformOf() || null,
+              detail: '目录对话框 120 秒没有返回 —— 这条路在你的环境里可能用不了（对话框既不显示也不结束）。' }
+          }
+          const output = String(dialog)
+          const picked = betweenMarkers(output)
+          if (picked === '') return { supported: true, cancelled: true, via: 'windows', exe: powerShell }
+          const converted = await convertPath('-u', picked)
+          const usable = converted !== null ? converted : picked
+          const info = await statOf(usable)
+          if (info !== undefined && info.type === 'directory') return { path: usable, raw: picked, via: 'windows', exe: powerShell }
+          return { supported: true, error: '你选的是 ' + picked + '，但宿主打不开它（转换后：' + usable + '）。' }
+        }
+        const linuxPickers = [
+          { tool: 'zenity', command: 'zenity --file-selection --directory --title="选择目录"' },
+          { tool: 'yad', command: 'yad --file --directory --title="选择目录"' },
+          { tool: 'kdialog', command: 'kdialog --getexistingdirectory "$HOME" "选择目录"' },
+        ]
+        for (const picker of linuxPickers) {
+          if (!(await available(picker.tool))) continue
+          const picked = beforeStderr(await runDialog(picker.command))
+          if (picked === '') return { supported: true, cancelled: true, via: picker.tool }
+          const info = await statOf(picked)
+          if (info !== undefined && info.type === 'directory') return { path: picked, raw: picked, via: picker.tool }
+          return { supported: true, error: '选择器返回了 ' + picked + '，但打不开这个目录。' }
+        }
+        return { supported: false, platform: platformOf() || null, shellDialect: shellDialect,
+          detail: '这个宿主里没找到能用的目录对话框（平台 ' + (platformOf() || '问不到') +
+            '；试过 powershell.exe 的绝对路径与 PATH、以及 zenity/yad/kdialog）。' }
+      } catch (error) {
+        return { error: '目录选择器出错：' + String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.settings', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' ? request.root : ''
+      const projectId = typeof request.project === 'string' ? request.project : ''
+      try {
+        const project = await projectFor(root, projectId)
+        if (project === undefined) return { error: '找不到项目：' + projectId }
+        const file = project.dir + '/mc-art.settings.json'
+        const stored = (await readJson(file)) || {}
+        const reference = stored.reference !== null && typeof stored.reference === 'object' ? stored.reference : {}
+        const chosen = reference.mods !== null && typeof reference.mods === 'object' ? reference.mods : {}
+        const directory = typeof reference.directory === 'string' ? reference.directory : ''
+        const scanner = await findScanner(project.dir)
+        const scanned = await scanReference(scanner, directory)
+        const detected = directory === '' ? await detectGameRoots(project.dir) : []
+        return {
+          path: rel(root, file),
+          project: project.id, title: project.title, file: file,
+          directory: directory,
+          shape: scanned.shape, textures: scanned.textures,
+          sources: (scanned.sources || []).slice(0, 80),
+          scanError: scanned.error,
+          scanner: scanner,
+          detected: detected,
+          includeGenerated: reference.includeGenerated !== false,
+          includeMods: reference.includeMods !== false,
+          mods: (scanned.namespaces || []).map((item) => ({ name: item.name, count: item.count,
+            from: item.from || [], on: chosen[item.name] !== false })),
+        }
+      } catch (error) {
+        return { error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.gameRoots', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' ? request.root : ''
+      const projectId = typeof request.project === 'string' ? request.project : ''
+      try {
+        const project = projectId === '' ? undefined : await projectFor(root, projectId)
+        const near = project === undefined ? root : project.dir
+        return { near: near, candidates: gameRootCandidates(near), detected: await detectGameRoots(near),
+          platform: typeof process === 'undefined' ? null : process.platform }
+      } catch (error) {
+        return { error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.saveSettings', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' ? request.root : ''
+      const projectId = typeof request.project === 'string' ? request.project : ''
+      try {
+        const project = await projectFor(root, projectId)
+        if (project === undefined) return { error: '找不到项目：' + projectId }
+        const mods = {}
+        if (request.mods !== null && typeof request.mods === 'object') {
+          for (const key of Object.keys(request.mods)) {
+            if (typeof request.mods[key] === 'boolean') mods[key] = request.mods[key]
+          }
+        }
+        const file = project.dir + '/mc-art.settings.json'
+        const stored = (await readJson(file)) || {}
+        const storedReference = stored.reference !== null && typeof stored.reference === 'object'
+          ? stored.reference : {}
+        const payload = Object.assign({}, stored, {
+          schema: 'mc-art.settings/1',
+          reference: Object.assign({}, storedReference, {
+            directory: typeof request.directory === 'string' ? request.directory : '',
+            includeGenerated: request.includeGenerated !== false,
+            includeMods: request.includeMods !== false,
+            mods: mods,
+          }),
+        })
+        const outcome = await writeTextFile(file, JSON.stringify(payload, null, 2) + '\n', root)
+        if (outcome.ok !== true) return { error: String(outcome.detail) }
+        return { saved: true, file: file, path: rel(root, file), via: outcome.via }
+      } catch (error) {
+        return { error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    const PNG_MAGIC = [137, 80, 78, 71, 13, 10, 26, 10]
+
+    ctx.effect(() => harness.handle('atlas.saveTexture', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' ? request.root : ''
+      const projectId = typeof request.project === 'string' ? request.project : ''
+      const path = typeof request.path === 'string' ? request.path : ''
+      const base64 = typeof request.base64 === 'string' ? request.base64 : ''
+      if (path === '') return { error: '贴图句柄是空的，拒绝写' }
+      if (base64 === '') return { error: '缺少图像数据' }
+      try {
+        const project = await projectFor(root, projectId)
+        if (project === undefined) return { error: '找不到项目：' + projectId }
+        let target = path
+        if (path.slice(0, 4) === 'ref:') {
+          const resolved = editablePaths.get(path)
+          if (resolved === undefined) {
+            return { error: '这张贴图不在这个项目的资源包里（它在参考的 jar 里），改不了：' + path }
+          }
+          target = resolved
+        }
+        const placed = packPathOf(project, target)
+        if (placed.ok !== true) {
+          return { error: placed.reason + '：' + String(target) }
+        }
+        target = placed.path
+        const temp = target + '.mcart-tmp'
+        async function discard(reason) {
+          const cleanup = await removeFile(temp, root)
+          return { error: reason + (cleanup.ok === true ? '（原文件没有被改动）' : '（临时文件也没清掉：' + temp + '）') }
+        }
+        const written = await writeDecodedFile(temp, base64, root, 30000)
+        if (written.ok !== true) {
+          const detail = beforeStderr(written.err === undefined || written.err === null ? '' : written.err)
+          return await discard('写入失败（退出码 ' + written.exitCode + '，第 ' + written.step + '/' + written.steps + ' 步）' +
+            (detail === '' ? '，没有错误输出' : '：' + detail))
+        }
+        const staged = await statOf(temp)
+        if (staged === undefined || staged.type !== 'file') return await discard('写完之后读不到临时文件')
+        if (staged.size === undefined || staged.size === 0) return await discard('写出来的是个空文件')
+        const bytes = await readBytesOf(temp, 8 * 1024 * 1024)
+        if (bytes === undefined) return await discard('写完之后读不出它的字节')
+        for (let i = 0; i < PNG_MAGIC.length; i++) {
+          if (bytes[i] !== PNG_MAGIC[i]) {
+            return await discard('写出来的不是 PNG（开头 ' + Array.prototype.slice.call(bytes, 0, 8).join(',') + '）')
+          }
+        }
+        const moved = await moveFile(temp, target, root)
+        if (moved.ok !== true) {
+          return await discard('换上新图失败（退出码 ' + String(moved.exitCode) + '）：' + String(moved.detail))
+        }
+        const info = await statOf(target)
+        if (info === undefined || info.type !== 'file') return { error: '换上新图之后读不到它：' + target }
+        return { saved: true, path: target, bytes: info.size }
+      } catch (error) {
+        return { error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    const PROJECT_ID = /^[a-z0-9_]{2,32}$/
+    ctx.effect(() => harness.handle('atlas.createProject', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' ? request.root : ''
+      const id = typeof request.id === 'string' ? request.id.trim() : ''
+      const asked = typeof request.namespace === 'string' ? request.namespace.trim() : ''
+      const namespace = asked === '' ? id : asked
+      if (root === '') return { error: '没有给定根目录' }
+      if (!PROJECT_ID.test(id)) return { error: '项目 id 只能用小写字母、数字、下划线，2-32 个字符：' + JSON.stringify(id) }
+      if (!PROJECT_ID.test(namespace)) return { error: '命名空间只能用小写字母、数字、下划线，2-32 个字符：' + JSON.stringify(namespace) }
+      try {
+        const dir = root + '/' + id
+        if ((await statOf(dir + '/mc-art.atlas.json')) !== undefined) {
+          return { error: '这个目录里已经有项目了：' + id }
+        }
+        const existing = (await listDir(dir + '/pack/assets')).filter((entry) => entry.type === 'directory')
+        const others = existing.map((entry) => entry.name)
+        if (others.length > 0 && others.indexOf(namespace) < 0) {
+          return { error: '这个项目的资源包里已经有命名空间 ' + others.join('、') +
+            '。一个模组只用一个命名空间：用已有的那个，或者换一个目录。' }
+        }
+        const folders = ['pack', 'pack/assets', 'pack/assets/' + namespace,
+          'pack/assets/' + namespace + '/textures/block', 'pack/assets/' + namespace + '/models/block',
+          'pack/assets/' + namespace + '/blockstates', 'pack/assets/' + namespace + '/lang']
+        const used = {}
+        let placeholder = false
+        const targets = [dir].concat(folders.map((folder) => dir + '/' + folder))
+        for (const target of targets) {
+          const made = await ensureDir(target, root)
+          if (made.ok !== true) {
+            return { error: '建目录失败：' + rel(root, target) + ' → ' + String(made.detail),
+              dir: dir, folders: folders.length }
+          }
+          used[made.via] = (used[made.via] === undefined ? 0 : used[made.via]) + 1
+          if (made.placeholder === true) placeholder = true
+        }
+        const atlas = { schema: 'mc-art.atlas/1', namespace: namespace,
+          biomes: [], structures: [], entities: [], blocks: [] }
+        const wrote = await writeTextFile(dir + '/mc-art.atlas.json', JSON.stringify(atlas, null, 2) + '\n', root)
+        if (wrote.ok !== true) return { error: '写 atlas 失败：' + String(wrote.detail) }
+        return { created: true, id: id, namespace: namespace, dir: dir,
+          atlas: rel(root, dir + '/mc-art.atlas.json'), folders: folders.length,
+          via: Object.keys(used).sort().map((key) => key + '×' + used[key]).join(' + '),
+          placeholder: placeholder, atlasVia: wrote.via }
+      } catch (error) {
+        return { error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.saveVoxel', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' ? request.root : ''
+      const projectId = typeof request.project === 'string' ? request.project : ''
+      const kind = request.kind === 'biome' ? 'biome' : (request.kind === 'structure' ? 'structure' : '')
+      const id = typeof request.id === 'string' ? request.id : ''
+      if (kind === '' || id === '') return { error: '只有群系和多方块结构能这样改' }
+      const cells = normalizeCells(request.cells)
+      if (cells.length === 0) return { error: '一格都没有，拒绝把结构写空' }
+      try {
+        const project = await projectFor(root, projectId)
+        if (project === undefined) return { error: '找不到项目：' + projectId }
+        const taken = {}
+        for (const cell of cells) {
+          const at = cell.at.join(',')
+          if (taken[at] === true) return { error: '同一个格子放了两个方块：' + at }
+          taken[at] = true
+        }
+        const file = project.dir + '/mc-art.atlas.json'
+        const atlas = await readJson(file)
+        if (atlas === undefined) return { error: '读不了图谱：' + file }
+        const key = kind === 'biome' ? 'biomes' : 'structures'
+        const list = Array.isArray(atlas[key]) ? atlas[key] : []
+        const item = list.filter((entry) => entry.id === id)[0]
+        if (item === undefined) return { error: '图谱里没有这个 ' + kind + '：' + id }
+        item.cells = cells
+        const outcome = await writeTextFile(file, JSON.stringify(atlas, null, 2) + '\n', root)
+        if (outcome.ok !== true) return { error: String(outcome.detail) }
+        return { saved: true, file: file, kind: kind, id: id, cells: cells.length, via: outcome.via }
+      } catch (error) {
+        return { error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.preview', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' ? request.root : ''
+      const projectId = typeof request.project === 'string' ? request.project : ''
+      const block = typeof request.block === 'string' ? request.block : ''
+      const at = Array.isArray(request.at) && request.at.length >= 3
+        ? [Math.trunc(request.at[0]), Math.trunc(request.at[1]), Math.trunc(request.at[2])] : [0, 0, 0]
+      const variant = typeof request.variant === 'string' && request.variant !== '' ? request.variant : null
+      const around = Array.isArray(request.around) ? request.around.slice(0, 32) : []
+      if (block === '') return { error: '预览需要方块名' }
+      try {
+        const project = await projectFor(root, projectId)
+        if (project === undefined) return { error: '找不到项目：' + projectId }
+        const built = await blockQuadsAt(root, project, block, at, variant, around)
+        if (built.error !== undefined) return { error: built.error }
+        const textureIds = []
+        const seen = {}
+        for (const quad of built.quads) if (seen[quad.tex] !== true) { seen[quad.tex] = true; textureIds.push(quad.tex) }
+        const already = {}
+        if (Array.isArray(request.have)) for (const path of request.have) already[path] = true
+        const textures = {}
+        for (const path of textureIds) {
+          if (already[path] === true) continue
+          const url = await textureUrlFor(path, project)
+          if (url !== undefined) textures[path] = url
+        }
+        return { block: block, at: at, quads: built.quads, textureIds: textureIds, textures: textures,
+          animations: animationsFor(textureIds), animationNotes: animationNotesFor(textureIds),
+          variants: built.variants || [], axes: built.axes || [], defaults: built.defaults || {},
+          multipart: built.multipart === true, derived: built.derived === true,
+          variant: built.variant === undefined ? null : built.variant }
+      } catch (error) {
+        return { error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.icons', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' ? request.root : ''
+      const projectId = typeof request.project === 'string' ? request.project : ''
+      const wanted = Array.isArray(request.blocks) ? request.blocks.slice(0, 120) : []
+      try {
+        const project = await projectFor(root, projectId)
+        if (project === undefined) return { error: '找不到项目：' + projectId }
+        const icons = {}
+        const failed = []
+        for (const block of wanted) {
+          if (typeof block !== 'string' || block === '' || icons[block] !== undefined) continue
+          const reference = block
+          const colon = reference.indexOf(':')
+          const namespace = colon >= 0 ? reference.slice(0, colon) : project.namespace
+          const name = colon >= 0 ? reference.slice(colon + 1) : reference
+          const load = await ensure(namespace)
+          if (load === undefined) { failed.push(reference + '（资源包 ' + namespace + ' 没载入）'); continue }
+          const elements = elementsOf(load, 'block/' + name)
+          if (elements === undefined) { failed.push(reference + '（没有模型）'); continue }
+          const first = elements.length > 0 && elements[0].faces !== undefined
+            ? Object.keys(elements[0].faces)[0] : undefined
+          const tex = first === undefined ? undefined : elements[0].faces[first].tex
+          const url = tex === undefined ? undefined : await textureUrlFor(tex, project)
+          if (url === undefined) { failed.push(reference + '（没有贴图）'); continue }
+          icons[block] = url
+        }
+        return { icons: icons, failed: failed.slice(0, 6) }
+      } catch (error) {
+        return { error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.scan', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' ? request.root : ''
+      if (root === '') return { rootSpecified: false, projects: [], errors: [] }
+      errors.length = 0
+      const index = await indexOf(root)
+      const projects = index.projects.map((project) => ({
+        id: project.id, title: project.title, namespace: project.namespace, root: project.root,
+        items: {
+          biome: project.biomes.map((item) => ({ id: item.id, title: item.title })),
+          structure: project.structures.map((item) => ({ id: item.id, title: item.title })),
+          entity: project.entities.map((item) => ({ id: item.id, title: item.title })),
+          block: project.blocks.map((item) => ({ id: item.id, title: item.title })),
+        },
+      }))
+      return { rootSpecified: true, root: root, projects: projects, errors: errors.slice(0, 8), cached: index.cached }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.projects', async (args) => {
+      const request = args || {}
+      const base = typeof request.path === 'string' ? request.path : ''
+      if (base === '') return { error: '没有给定目录' }
+      try {
+        const parents = []
+        const addParent = (value) => { if (value !== null && value !== undefined && parents.indexOf(value) < 0) parents.push(value) }
+        if (await looksLikeProject(base)) addParent(parentOf(base))
+        const entries = await listDir(base)
+        for (const entry of entries) {
+          if (entry.type !== 'directory') continue
+          const child = entry.target !== undefined && typeof entry.target.displayPath === 'string' && entry.target.displayPath.length > 0
+            ? entry.target.displayPath : base + '/' + entry.name
+          if (await looksLikeProject(child)) addParent(base)
+        }
+        const results = []
+        for (const parent of parents) {
+          const index = await indexOf(parent)
+          for (const project of index.projects) {
+            results.push({ root: parent, id: project.id, title: project.title, namespace: project.namespace, dir: project.dir })
+          }
+        }
+        return { base: base, projects: results }
+      } catch (error) {
+        return { error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.env', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' && request.root !== '' ? request.root : '.'
+      const picker = ctx.get('directoryPickerController')
+      const services = {
+        fs: fsOf() !== undefined,
+        shell: shellOf() !== undefined,
+        sessions: sessionsOf() !== undefined,
+        webServer: ctx.get('webServer') !== undefined,
+        directoryPickerController: picker !== undefined && typeof picker.createDirectory === 'function',
+        localFs: localOf() !== null,
+        subprocess: ctx.get('subprocess') !== undefined,
+      }
+      let dialect = null
+      if (services.shell) {
+        try { dialect = (await currentShell('')).name } catch (error) { dialect = 'probe failed: ' + messageOf(error) }
+      }
+      const missing = Object.keys(services).filter((key) => services[key] !== true)
+      const scanner = await findScanner(root)
+      const extractor = await findTool(root, EXTRACT_SCRIPT)
+      let python = null
+      try { python = await resolvePython(root) } catch (error) { python = 'probe failed: ' + messageOf(error) }
+      return { services: services, shellDialect: dialect,
+        platform: platformOf() || null,
+        node: typeof process === 'undefined' ? null : process.version,
+        missing: missing,
+        scanner: scanner, extractor: extractor, python: python, pythonVia: pythonVia,
+        pythonCandidates: pythonCandidates().slice(0, 8),
+        bundledPythonDirs: bundledPythonDirs(),
+        shellProbe: shellProbeInfo,
+        powershell: platformOf() === 'win32' ? await windowsPowerShell() : null,
+        moduleDir: moduleDirOf() || null,
+        note: missing.length === 0 ? '每一条路都在。'
+          : '缺 ' + missing.join('、') + '；每一件写入都会自动走能用的那条路（建目录/写文件/写字节各有退路），结果里会写 via=…' }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.scene', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' ? request.root : ''
+      if (root === '') return { error: 'no asset root specified' }
+      try {
+        const index = await indexOf(root)
+        const project = index.projects.filter((item) => item.id === request.project)[0]
+        if (project === undefined) return { error: 'project not found: ' + request.project }
+        return await payload(root, project, request.kind, request.id, request.have, request.cells,
+          request.neighbours)
+      } catch (error) {
+        return { error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.session', async (args) => {
+      const request = args || {}
+      try {
+        const id = typeof request.sessionId === 'string' ? request.sessionId : ''
+        const session = (sessionsOf() === undefined || id === '') ? undefined : sessionsOf().get(id)
+        if (session === undefined) return { cwd: null }
+        const cwd = session.header.cwd
+        return { cwd: typeof cwd === 'string' ? cwd : null }
+      } catch (error) {
+        return { cwd: null, error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.refNamespaces', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' ? request.root : ''
+      const projectId = typeof request.project === 'string' ? request.project : ''
+      try {
+        const project = await projectFor(root, projectId)
+        if (project === undefined) return { error: '找不到项目：' + projectId }
+        const directory = await referenceDirectory(project)
+        if (directory === '') return { namespaces: [], directory: '', reason: '没有设置参考目录' }
+        const extractor = await findTool(project.dir, EXTRACT_SCRIPT)
+        if (extractor === null || extractor === undefined) return { error: '找不到 ' + EXTRACT_SCRIPT }
+        const parsed = await runScanner(extractor, ['--root', directory, '--namespaces'],
+          120000, project.dir, REFERENCE_MAX_BYTES)
+        if (parsed === undefined || parsed.error !== undefined) {
+          return { error: String(parsed === undefined ? '没有返回任何东西' : parsed.error) }
+        }
+        const out = (parsed.namespaces || []).filter((item) => item.blocks > 0)
+        return { directory: directory, version: parsed.version, versionWhy: parsed.versionWhy,
+          namespaces: out, extractor: extractor }
+      } catch (error) {
+        return { error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.refItems', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' ? request.root : ''
+      const projectId = typeof request.project === 'string' ? request.project : ''
+      const namespace = typeof request.namespace === 'string' ? request.namespace : ''
+      const source = request.source === 'project' ? 'project' : 'reference'
+      if (namespace === '') return { error: '没有指定命名空间' }
+      try {
+        const project = await projectFor(root, projectId)
+        if (project === undefined) return { error: '找不到项目：' + projectId }
+        return await itemFactsList(project, namespace, source)
+      } catch (error) {
+        return { error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.itemIcons', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' ? request.root : ''
+      const projectId = typeof request.project === 'string' ? request.project : ''
+      const namespace = typeof request.namespace === 'string' ? request.namespace : ''
+      const wanted = Array.isArray(request.items) ? request.items.slice(0, 60) : []
+      const source = request.source === 'project' ? 'project' : 'reference'
+      if (namespace === '' || wanted.length === 0) return { items: {} }
+      try {
+        const project = await projectFor(root, projectId)
+        if (project === undefined) return { error: '找不到项目：' + projectId }
+        return await itemIconPage(project, namespace, wanted.filter((id) => typeof id === 'string' && id !== ''), source)
+      } catch (error) {
+        return { error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.icon', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' ? request.root : ''
+      const projectId = typeof request.project === 'string' ? request.project : ''
+      const namespace = typeof request.namespace === 'string' ? request.namespace : ''
+      const item = typeof request.item === 'string' ? request.item : ''
+      const source = request.source === 'project' ? 'project' : 'reference'
+      if (namespace === '' || item === '') return { error: '图标需要一个命名空间和一个物品名' }
+      try {
+        const project = await projectFor(root, projectId)
+        if (project === undefined) return { error: '找不到项目：' + projectId }
+        const entry = await referenceLoadItem(root, project, namespace, item, source)
+        if (entry.error !== undefined) return { error: entry.error }
+        return await itemIcon(namespace, entry.parsed, request.have, project)
+      } catch (error) {
+        return { error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.refBlocks', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' ? request.root : ''
+      const projectId = typeof request.project === 'string' ? request.project : ''
+      const namespace = typeof request.namespace === 'string' ? request.namespace : ''
+      if (namespace === '') return { error: '没有指定命名空间' }
+      try {
+        const project = await projectFor(root, projectId)
+        if (project === undefined) return { error: '找不到项目：' + projectId }
+        const directory = await referenceDirectory(project)
+        if (directory === '') return { error: '还没有设置参考目录' }
+        const extractor = await findTool(project.dir, EXTRACT_SCRIPT)
+        if (extractor === null || extractor === undefined) return { error: '找不到 ' + EXTRACT_SCRIPT }
+        const signature = await refSignatureOf(directory)
+        const cacheKey = 'list:' + namespace
+        const cached = referenceBlocks.get(cacheKey)
+        if (cached !== undefined && cached.signature === signature) return cached.value
+        const parsed = await runScanner(extractor, ['--root', directory, '--list', '--namespace', namespace],
+          120000, project.dir, REFERENCE_MAX_BYTES)
+        if (parsed === undefined || parsed.error !== undefined) {
+          return { error: String(parsed === undefined ? '没有返回任何东西' : parsed.error) }
+        }
+        const value = { namespace: namespace, version: parsed.version, blocks: parsed.blocks || [] }
+        referenceBlocks.set(cacheKey, { signature: signature, value: value })
+        return value
+      } catch (error) {
+        return { error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.refIcons', async (args) => {
+      const request = args || {}
+      const root = typeof request.root === 'string' ? request.root : ''
+      const projectId = typeof request.project === 'string' ? request.project : ''
+      const namespace = typeof request.namespace === 'string' ? request.namespace : ''
+      const wanted = Array.isArray(request.blocks) ? request.blocks.slice(0, 120) : []
+      if (namespace === '' || wanted.length === 0) return { icons: {}, names: {} }
+      try {
+        const project = await projectFor(root, projectId)
+        if (project === undefined) return { error: '找不到项目：' + projectId }
+        const directory = await referenceDirectory(project)
+        if (directory === '') return { error: '还没有设置参考目录' }
+        const extractor = await findTool(project.dir, EXTRACT_SCRIPT)
+        if (extractor === null || extractor === undefined) return { error: '找不到 ' + EXTRACT_SCRIPT }
+        const parsed = await runScanner(extractor,
+          ['--root', directory, '--namespace', namespace, '--icons', wanted.join(',')],
+          180000, project.dir, REFERENCE_MAX_BYTES)
+        if (parsed === undefined || parsed.error !== undefined) {
+          return { error: String(parsed === undefined ? '没有返回任何东西' : parsed.error) }
+        }
+        const icons = {}
+        const names = {}
+        const failed = Array.isArray(parsed.failed) ? parsed.failed : []
+        for (const id of Object.keys(parsed.icons || {})) {
+          const item = parsed.icons[id]
+          const key = namespace + ':' + id
+          if (item === null || item === undefined || typeof item !== 'object' ||
+              typeof item.png !== 'string' || item.png === '') {
+            failed.push(id + '（没有图标数据）')
+            continue
+          }
+          icons[key] = 'data:image/png;base64,' + item.png
+          names[key] = typeof item.name === 'string' && item.name !== '' ? item.name : id
+        }
+        return { icons: icons, names: names, failed: failed, version: parsed.version }
+      } catch (error) {
+        return { error: String(error && error.message ? error.message : error) }
+      }
+    }))
+
+    ctx.effect(() => harness.handle('atlas.releaseRefs', async (args) => {
+      const request = args || {}
+      const keep = {}
+      if (Array.isArray(request.keep)) for (const key of request.keep) keep[String(key)] = true
+      return releaseUnused(referenceBlocks, keep, referenceTextures, referenceAnimations)
+    }))
+
+    console.log('mc-art atlas host ready (unqualified cell blocks resolve to their project; vanilla and mod blocks are extracted on demand)')
+  },
+}
+
+  // <<< mcart:embedded-source
+  })(harness, console, TextEncoder, btoa, atob, nodeFs, MODULE_DIR, process)
   if (plugin === null || typeof plugin !== 'object' || typeof plugin.apply !== 'function') {
     throw new Error('mcart 宿主源码没有返回一个带 apply 的插件')
   }

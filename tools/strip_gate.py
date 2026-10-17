@@ -42,10 +42,14 @@ for _stream in (sys.stdout, sys.stderr):
 # 局部 const 被吞掉同样是坏函数，`roots` 那次就是这么丢的）。
 DECL = re.compile(r"^\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)"
                   r"|^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=", re.M)
-# 每一半在生成物里的样子（build.mjs 内嵌的字面量）。
+# 每一半在生成物里的样子：源码被**内联**在函数体里，两边用注释围栏标出
+# （`panel/build.mjs` 生成）。不再按 `const SOURCE = "…"` 找 —— 0.2.1 的浏览器
+# 沙箱禁掉了求值型加载，产物已经改成静态函数体，门禁跟着真实产物走。
+FENCE_BEGIN = "// >>> mcart:embedded-source"
+FENCE_END = "// <<< mcart:embedded-source"
 HALVES = [
-    ("host", "tools/mcart-plugin/host.js", "panel/lib/index.js", 'const SOURCE = "'),
-    ("client", "tools/mcart-plugin/client.js", "panel/lib/client.js", 'var SOURCE = "'),
+    ("host", "tools/mcart-plugin/host.js", "panel/lib/index.js"),
+    ("client", "tools/mcart-plugin/client.js", "panel/lib/client.js"),
 ]
 
 FAILURES = 0
@@ -66,15 +70,18 @@ def declared(text):
     return out
 
 
-def embedded(artifact, marker):
-    """把生成物里内嵌的那段源码字符串解出来（它一定是个 JSON 字面量）。"""
+def embedded(artifact):
+    """把生成物里内嵌的那段源码正文解出来（两行围栏之间）。"""
     text = open(os.path.join(REPO, artifact), encoding="utf-8").read()
-    at = text.find(marker)
-    if at < 0:
-        raise SystemExit("%s 里找不到 %r —— 生成物形状变了，这条门禁要跟着改" % (artifact, marker))
-    start = at + len(marker) - 1
-    decoded, _ = json.JSONDecoder().raw_decode(text[start:])
-    return decoded, text
+    start = text.find(FENCE_BEGIN)
+    if start < 0:
+        raise SystemExit("%s 里找不到源码围栏 %r —— 生成物形状变了，这条门禁要跟着改"
+                         % (artifact, FENCE_BEGIN))
+    start += len(FENCE_BEGIN)
+    stop = text.find(FENCE_END, start)
+    if stop < 0:
+        raise SystemExit("%s 里不完整的围栏（有 begin 没有 end）" % artifact)
+    return text[start:stop], text
 
 
 def compiles(source):
@@ -130,9 +137,9 @@ def fault():
 
 def main():
     print("--- 注释剥离器：生成物里声明的名字一个都不能少")
-    for label, source, artifact, marker in HALVES:
+    for label, source, artifact in HALVES:
         annotated = open(os.path.join(REPO, source), encoding="utf-8").read()
-        emitted, artifact_text = embedded(artifact, marker)
+        emitted, artifact_text = embedded(artifact)
         missing = compare(annotated, emitted, label)
         check("%s：%d 个声明一个不少（少了就说明剥离器吞了代码）" % (label, len(declared(annotated))),
               missing == [], "缺 " + "、".join(missing))

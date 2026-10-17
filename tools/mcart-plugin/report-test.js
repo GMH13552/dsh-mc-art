@@ -88,14 +88,28 @@ function stripComments(text) {
   return out
 }
 
-/** 生成物里内嵌的源码字符串（`const SOURCE = "…"` / `var SOURCE = "…"`）。 */
+/**
+ * 生成物里内嵌的源码正文。
+ *
+ * 形状由 `panel/build.mjs` 决定：源码**内联**在一个函数体里，由两行注释围栏标出来
+ * （`// >>> mcart:embedded-source` … `// <<< mcart:embedded-source`）。
+ *
+ * 为什么不再按 `const SOURCE = "…"` 解 JSON：0.2.1 的浏览器沙箱禁掉了求值型加载，
+ * 产物改成静态函数体（不再把源码当字符串求值）。门禁必须跟着**真实产物**走，
+ * 否则它就只是在检一个已经不存在的形状 —— 这次就是被它自己抓到的。
+ */
 function embeddedSources(text) {
   const out = []
-  const pattern = /(?:const|var|let)\s+(?:SOURCE|CLIENT)\s*=\s*("(?:[^"\\]|\\.)*")/g
-  let match = pattern.exec(text)
-  while (match !== null) {
-    try { out.push(JSON.parse(match[1])) } catch (error) { out.push('') }
-    match = pattern.exec(text)
+  const begin = '// >>> mcart:embedded-source'
+  const end = '// <<< mcart:embedded-source'
+  let at = 0
+  for (;;) {
+    const start = text.indexOf(begin, at)
+    if (start < 0) break
+    const stop = text.indexOf(end, start + begin.length)
+    if (stop < 0) break
+    out.push(text.slice(start + begin.length, stop))
+    at = stop + end.length
   }
   return out
 }

@@ -343,9 +343,15 @@ const shimBody = generated.slice(generated.indexOf('const nodeFs = {'), generate
 check('生成物里有本地文件系统垫片', shimBody.length > 200, shimBody.length + ' 字符')
 check('生成物把 node:fs 和 node:path 绑进来了（垫片靠它们）',
   generated.includes("from 'node:fs/promises'") && generated.includes("from 'node:path'"))
-check('生成物把垫片当参数交给宿主源码（不是全局共享）',
-  /new Function\([^)]*'nodeFs'[^)]*SOURCE\)/.test(generated),
-  (generated.match(/const plugin = new Function\([^)]*\)/) || ['(没找到)'])[0].slice(0, 160))
+check('生成物把垫片当参数交给宿主源码（不是全局共享，也不是运行时求值）',
+  /\(function \(harness, console, TextEncoder, btoa, atob, nodeFs, moduleDir, process\) \{/.test(generated),
+  (generated.match(/const plugin = \(function[^\n]*/) || ['(没找到)'])[0].slice(0, 160))
+// 0.2.1 的浏览器沙箱禁掉了求值型加载，而客户端那一半整块是在 `new Function(...)` 里
+// 求值自己的源码 —— 结果就是"宿主 active、面板不在槽里"。这条门禁钉住：产物里
+// **不许**再出现运行时求值，源码必须是静态函数体。
+check('生成物里没有 new Function / eval（沙箱禁 eval 时整块会失效，0.2.1 实测）',
+  !/new Function\s*\(/.test(generated) && !/(^|[^.\w])eval\s*\(/.test(generated),
+  (generated.match(/.{0,40}new Function\s*\(.{0,40}/) || ['(干净)'])[0])
 check('垫片两份都声明了 available: true（宿主源码靠它判断"这条退路在不在"）',
   /available:\s*true/.test(shimBody) && /available:\s*true/.test(shimMethods))
 for (const method of ['mkdirp', 'stat', 'listDir', 'readText', 'readBytes', 'writeText', 'writeBase64', 'remove', 'move']) {

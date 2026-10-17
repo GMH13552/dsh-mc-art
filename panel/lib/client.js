@@ -9,7 +9,6 @@ window.__ModuleLoader__.load({
 
     // 真包世界里 React 是 require 来的；动态插件世界里它是注入的绑定。
     var React = require('react')
-    var SOURCE = "const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]]\r\nconst add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]]\r\nconst mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k]\r\nconst dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]\r\nconst cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]\r\nconst vlen = (a) => Math.sqrt(dot(a, a))\r\nfunction unit(a) { const n = vlen(a); return n < 1e-12 ? [0, 0, 0] : mul(a, 1 / n) }\r\n\r\n\r\nfunction rotateAbout(point, origin, axis, degrees) {\r\n  if (!degrees) return point\r\n  const angle = (degrees * Math.PI) / 180\r\n  const p = sub(point, origin)\r\n  const c = Math.cos(angle)\r\n  const s = Math.sin(angle)\r\n  let r\r\n  if (axis === 'x') r = [p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c]\r\n  else if (axis === 'y') r = [p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c]\r\n  else r = [p[0] * c - p[1] * s, p[0] * s + p[1] * c, p[2]]\r\n  return add(r, origin)\r\n}\r\n\r\n\r\nfunction boxOfQuads(quads) {\r\n  const min = [Infinity, Infinity, Infinity]\r\n  const max = [-Infinity, -Infinity, -Infinity]\r\n  for (const quad of quads || []) for (const p of quad.p) for (let i = 0; i < 3; i++) {\r\n    if (p[i] < min[i]) min[i] = p[i]\r\n    if (p[i] > max[i]) max[i] = p[i]\r\n  }\r\n  if (!isFinite(min[0])) return { min: [-1, -1, -1], max: [1, 1, 1] }\r\n  return { min: min, max: max }\r\n}\r\n\r\nfunction makeCamera(position, target, width, height, fovY) {\r\n  const forward = unit(sub(target, position))\r\n  const right = unit(cross(forward, [0, 1, 0]))\r\n  const up = cross(right, forward)\r\n  const focal = height / 2 / Math.tan(fovY / 2)\r\n  return {\r\n    project: function (point) {\r\n      const offset = sub(point, position)\r\n      const x = dot(offset, right)\r\n      const y = dot(offset, up)\r\n      const z = dot(offset, forward)\r\n      if (z <= 0.02) return null\r\n      return [width / 2 + (x * focal) / z, height / 2 - (y * focal) / z, z]\r\n    },\r\n  }\r\n}\r\n\r\nfunction orbitCamera(box, yaw, pitch, zoom, width, height, fovY) {\r\n  const centre = mul(add(box.min, box.max), 0.5)\r\n  const radius = Math.max(vlen(sub(box.max, box.min)) / 2, 0.05)\r\n  const fit = radius / Math.sin(fovY / 2) / zoom\r\n  const cp = Math.cos(pitch)\r\n  const direction = [Math.sin(yaw) * cp, Math.sin(pitch), Math.cos(yaw) * cp]\r\n  return makeCamera(add(centre, mul(direction, fit * 1.05)), centre, width, height, fovY)\r\n}\r\n\r\nconst EMPTY_ANIMATIONS = {}\r\n\r\nfunction animationRow(animation, timeMs) {\r\n  if (animation === undefined || animation === null) return 0\r\n  const order = Array.isArray(animation.order) && animation.order.length > 0 ? animation.order : null\r\n  const frames = order === null ? animation.frames : order.length\r\n  if (!(frames > 1)) return 0\r\n  const ticks = Math.max(1, animation.frametime || 1)\r\n  const step = Math.floor((timeMs || 0) / (ticks * 50))\r\n  const index = ((step % frames) + frames) % frames\r\n  return order === null ? index : order[index]\r\n}\r\n\r\nfunction stripOf(texture) {\r\n  const animation = texture === undefined ? undefined : texture.animation\r\n  if (animation === undefined || animation === null) return null\r\n  const strip = animation.strip\r\n  if (!(strip > 1) || texture.width <= 0) return null\r\n  if (texture.height !== strip * texture.width) return null\r\n  return strip\r\n}\r\n\r\nfunction renderScene(options) {\r\n  const width = options.width\r\n  const height = options.height\r\n  const background = options.background\r\n  const camera = options.camera\r\n  const colour = options.colour === undefined ? new Float64Array(width * height * 4) : options.colour\r\n  const depth = options.depth === undefined ? new Float64Array(width * height) : options.depth\r\n  const overlay = options.overlay === undefined ? null : options.overlay\r\n  const tint = options.tint === undefined ? null : options.tint\r\n  const backgroundAlpha = options.backgroundAlpha === undefined ? 1 : options.backgroundAlpha\r\n  const orthographic = options.orthographic === true\r\n  if (overlay === null) {\r\n    for (let i = 0; i < width * height; i++) {\r\n      colour[i * 4] = background[0] / 255\r\n      colour[i * 4 + 1] = background[1] / 255\r\n      colour[i * 4 + 2] = background[2] / 255\r\n      colour[i * 4 + 3] = backgroundAlpha\r\n      depth[i] = Infinity\r\n    }\r\n  }\r\n  const pick = options.pick === undefined ? null : options.pick\r\n  for (let quadIndex = 0; quadIndex < options.quads.length; quadIndex++) {\r\n    const quad = options.quads[quadIndex]\r\n    const texture = options.textures[quad.tex]\r\n    if (texture === undefined) continue\r\n    const mode = quad.mode || 'opaque'\r\n    const shade = quad.shade === undefined ? 1 : quad.shade\r\n    for (const indices of [[0, 1, 2], [0, 2, 3]]) {\r\n      const points = [quad.p[indices[0]], quad.p[indices[1]], quad.p[indices[2]]]\r\n      const uvs = [quad.uv[indices[0]], quad.uv[indices[1]], quad.uv[indices[2]]]\r\n      const screen = []\r\n      let visible = true\r\n      for (const point of points) {\r\n        const projected = camera.project(point)\r\n        if (projected === null) { visible = false; break }\r\n        screen.push(projected)\r\n      }\r\n      if (!visible) continue\r\n      const s0 = screen[0], s1 = screen[1], s2 = screen[2]\r\n      const minx = Math.max(0, Math.floor(Math.min(s0[0], s1[0], s2[0])))\r\n      const maxx = Math.min(width - 1, Math.ceil(Math.max(s0[0], s1[0], s2[0])))\r\n      const miny = Math.max(0, Math.floor(Math.min(s0[1], s1[1], s2[1])))\r\n      const maxy = Math.min(height - 1, Math.ceil(Math.max(s0[1], s1[1], s2[1])))\r\n      if (minx > maxx || miny > maxy) continue\r\n      const area = (s1[0] - s0[0]) * (s2[1] - s0[1]) - (s2[0] - s0[0]) * (s1[1] - s0[1])\r\n      if (Math.abs(area) < 1e-9) continue\r\n      const tw = texture.width\r\n      const th = texture.height\r\n      const data = texture.data\r\n      const blend = mode === 'blend'\r\n      const animation = (options.animations || EMPTY_ANIMATIONS)[quad.tex]\r\n      const strip = stripOf({ width: tw, height: th, animation: animation })\r\n      const row = strip === null ? 0 : animationRow(animation, options.timeMs)\r\n      for (let y = miny; y <= maxy; y++) {\r\n        const gy = y + 0.5\r\n        for (let x = minx; x <= maxx; x++) {\r\n          const gx = x + 0.5\r\n          const w0 = ((s1[0] - gx) * (s2[1] - gy) - (s2[0] - gx) * (s1[1] - gy)) / area\r\n          const w1 = ((s2[0] - gx) * (s0[1] - gy) - (s0[0] - gx) * (s2[1] - gy)) / area\r\n          const w2 = 1 - w0 - w1\r\n          if (w0 < -1e-6 || w1 < -1e-6 || w2 < -1e-6) continue\r\n          let zs, u, v\r\n          if (orthographic) {\r\n            zs = w0 * s0[2] + w1 * s1[2] + w2 * s2[2]\r\n            if (!(zs > 1e-9)) continue\r\n            u = w0 * uvs[0][0] + w1 * uvs[1][0] + w2 * uvs[2][0]\r\n            v = w0 * uvs[0][1] + w1 * uvs[1][1] + w2 * uvs[2][1]\r\n          } else {\r\n            const inv = w0 / s0[2] + w1 / s1[2] + w2 / s2[2]\r\n            if (!(inv > 1e-9)) continue\r\n            zs = 1 / inv\r\n            u = (w0 * uvs[0][0] / s0[2] + w1 * uvs[1][0] / s1[2] + w2 * uvs[2][0] / s2[2]) / inv\r\n            v = (w0 * uvs[0][1] / s0[2] + w1 * uvs[1][1] / s1[2] + w2 * uvs[2][1] / s2[2]) / inv\r\n          }\r\n          let tx = Math.trunc(u * tw)\r\n          let ty = strip === null ? Math.trunc(v * th) : row * tw + Math.trunc(v * tw)\r\n          if (tx < 0) tx = 0; else if (tx > tw - 1) tx = tw - 1\r\n          if (ty < 0) ty = 0; else if (ty > th - 1) ty = th - 1\r\n          const index = (ty * tw + tx) * 4\r\n          const alpha = data[index + 3] / 255\r\n          if (overlay === null) {\r\n            if (blend) {\r\n              if (!(alpha > 0)) continue\r\n              if (!(zs <= depth[y * width + x])) continue\r\n            } else {\r\n              if (!(alpha >= 0.5)) continue\r\n              if (!(zs < depth[y * width + x])) continue\r\n            }\r\n            depth[y * width + x] = zs\r\n            if (pick !== null) pick[y * width + x] = quadIndex\r\n          } else if (!(zs <= depth[y * width + x] + 1e-6)) {\r\n            continue\r\n          }\r\n          const target = (y * width + x) * 4\r\n          const r = tint === null ? (data[index] / 255) * shade : tint[0]\r\n          const g = tint === null ? (data[index + 1] / 255) * shade : tint[1]\r\n          const b = tint === null ? (data[index + 2] / 255) * shade : tint[2]\r\n          if (overlay !== null) {\r\n            colour[target] = r * overlay + colour[target] * (1 - overlay)\r\n            colour[target + 1] = g * overlay + colour[target + 1] * (1 - overlay)\r\n            colour[target + 2] = b * overlay + colour[target + 2] * (1 - overlay)\r\n          } else if (blend) {\r\n            colour[target] = r * alpha + colour[target] * (1 - alpha)\r\n            colour[target + 1] = g * alpha + colour[target + 1] * (1 - alpha)\r\n            colour[target + 2] = b * alpha + colour[target + 2] * (1 - alpha)\r\n          } else {\r\n            colour[target] = r\r\n            colour[target + 1] = g\r\n            colour[target + 2] = b\r\n          }\r\n          colour[target + 3] = 1\r\n        }\r\n      }\r\n    }\r\n  }\r\n  const bytes = new Uint8ClampedArray(width * height * 4)\r\n  for (let i = 0; i < bytes.length; i++) {\r\n    const value = Math.round(colour[i] * 255)\r\n    bytes[i] = value < 0 ? 0 : (value > 255 ? 255 : value)\r\n  }\r\n  return bytes\r\n}\r\n\r\n\r\nconst FACE_AXIS = { down: 'y', up: 'y', north: 'z', south: 'z', west: 'x', east: 'x' }\r\nconst FACE_OPPOSITE = { down: 'up', up: 'down', north: 'south', south: 'north', west: 'east', east: 'west' }\r\nconst HORIZONTAL_FACES = { north: true, south: true, west: true, east: true }\r\n\r\nconst VALUE_LABEL = {\r\n  down: '下', up: '上', north: '北', south: '南', west: '西', east: '东',\r\n  x: 'X 轴', y: 'Y 轴', z: 'Z 轴', none: '无',\r\n  true: '是', false: '否',\r\n  top: '上半', bottom: '下半',\r\n  straight: '直', inner_left: '内左', inner_right: '内右',\r\n  outer_left: '外左', outer_right: '外右',\r\n  save: '保存', load: '读取', corner: '角', data: '数据',\r\n}\r\nconst AXIS_LABEL = {\r\n  facing: '朝向', axis: '朝向（轴）', half: '上下', rotation: '旋转',\r\n  conditional: '有条件', shape: '形状', mode: '模式',\r\n  powered: '通电', locked: '锁定', delay: '延迟', open: '开合',\r\n}\r\n\r\nfunction labelOfValue(value) { return VALUE_LABEL[value] === undefined ? String(value) : VALUE_LABEL[value] }\r\nfunction labelOfAxis(name) { return AXIS_LABEL[name] === undefined ? String(name) : AXIS_LABEL[name] }\r\n\r\nfunction withKey(table, name, value) {\r\n  const next = Object.assign({}, table || {})\r\n  next[name] = value\r\n  return next\r\n}\r\nfunction withoutKey(table, name) {\r\n  const next = Object.assign({}, table || {})\r\n  delete next[name]\r\n  return next\r\n}\r\n\r\n\r\nfunction canonicalVariant(parts) {\r\n  return Object.keys(parts).sort().map((name) => name + '=' + parts[name]).join(',')\r\n}\r\n\r\n\r\nfunction deriveVariant(axes, face, hitY, flip) {\r\n  const out = {}\r\n  const horizontal = HORIZONTAL_FACES[face] === true\r\n  for (const axis of axes) {\r\n    const name = axis.name\r\n    if (name === 'axis') {\r\n      if (FACE_AXIS[face] !== undefined) out[name] = FACE_AXIS[face]\r\n      continue\r\n    }\r\n    if (name === 'facing') {\r\n      const value = flip && horizontal ? FACE_OPPOSITE[face] : face\r\n      if (value !== undefined && axis.values.indexOf(value) >= 0) out[name] = value\r\n      continue\r\n    }\r\n    if (name === 'half') {\r\n      const value = face === 'down' ? 'top' : (face === 'up' ? 'bottom' : (hitY > 0.5 ? 'top' : 'bottom'))\r\n      if (axis.values.indexOf(value) >= 0) out[name] = value\r\n      continue\r\n    }\r\n  }\r\n  return out\r\n}\r\n\r\n\r\nfunction variantFor(axes, keys, defaults, face, hitY, flip, overrides) {\r\n  if (!Array.isArray(axes) || axes.length === 0) return null\r\n  const derived = deriveVariant(axes, face, hitY, flip)\r\n  const fallback = defaults || {}\r\n  const parts = {}\r\n  for (const axis of axes) {\r\n    const hand = (overrides || {})[axis.name]\r\n    const value = hand !== undefined ? hand : (derived[axis.name] !== undefined ? derived[axis.name] : fallback[axis.name])\r\n    if (value !== undefined) parts[axis.name] = value\r\n  }\r\n  if (Object.keys(parts).length !== axes.length) return null\r\n  const key = canonicalVariant(parts)\r\n  return (keys || []).indexOf(key) >= 0 ? key : null\r\n}\r\n\r\n\r\nfunction aroundOf(cells, at) {\r\n  const out = []\r\n  if (!Array.isArray(cells) || !Array.isArray(at)) return out\r\n  for (const cell of cells) {\r\n    if (cell === null || typeof cell !== 'object' || !Array.isArray(cell.at)) continue\r\n    if (typeof cell.block !== 'string' || cell.block === '') continue\r\n    const d = [cell.at[0] - at[0], cell.at[1] - at[1], cell.at[2] - at[2]]\r\n    if (d[0] === 0 && d[1] === 0 && d[2] === 0) continue\r\n    if (Math.abs(d[0]) > 1 || Math.abs(d[1]) > 1 || Math.abs(d[2]) > 1) continue\r\n    const item = { d: d, block: cell.block }\r\n    if (typeof cell.variant === 'string' && cell.variant !== '') item.variant = cell.variant\r\n    out.push(item)\r\n  }\r\n  return out\r\n}\r\n\r\n\r\nconst GUI_FACE_SHADE = { up: 1.0, east: 0.637, north: 0.435,\r\n  down: 0.4, south: 0.4, west: 0.4 }\r\nconst GUI_FACE_SHADE_FLAT = { up: 1.0, east: 0.417, north: 0.624,\r\n  down: 0.4, south: 0.841, west: 0.543 }\r\n\r\n\r\nfunction guiItemRotation(quads, rotation, table) {\r\n  const yaw = rotation === undefined || rotation === null ? 0 : (rotation[1] || 0)\r\n  const pitch = rotation === undefined || rotation === null ? 0 : (rotation[0] || 0)\r\n  const shade = table === undefined || table === null ? GUI_FACE_SHADE : table\r\n  return quads.map((quad) => {\r\n    let p = quad.p\r\n    if (yaw) p = p.map((point) => rotateAbout(point, [0.5, 0.5, 0.5], 'y', yaw))\r\n    if (pitch) p = p.map((point) => rotateAbout(point, [0.5, 0.5, 0.5], 'x', pitch))\r\n    const lit = quad.shaded === false ? (quad.shade === undefined ? 1.0 : quad.shade)\r\n      : (shade[quad.face] === undefined ? 1.0 : shade[quad.face])\r\n    return { p: p, uv: quad.uv, tex: quad.tex, shade: lit, mode: quad.mode,\r\n      face: quad.face, shaded: quad.shaded }\r\n  })\r\n}\r\n\r\n\r\nfunction iconCamera(quads, width, height, fill) {\r\n  const box = boxOfQuads(quads)\r\n  const spanX = Math.max(box.max[0] - box.min[0], 1e-6)\r\n  const spanY = Math.max(box.max[1] - box.min[1], 1e-6)\r\n  const ppu = Math.min(width, height) * (fill === undefined ? 0.98 : fill) / Math.max(spanX, spanY)\r\n  const centre = [(box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2]\r\n  const mid = (box.min[2] + box.max[2]) / 2\r\n  return {\r\n    project: function (point) {\r\n      return [width / 2 + (point[0] - centre[0]) * ppu,\r\n        height / 2 - (point[1] - centre[1]) * ppu,\r\n        mid + 1 - point[2] + 0.5]\r\n    },\r\n  }\r\n}\r\n\r\n\r\nfunction drawItemIcon(canvas, recipe, frameIndex, decoded) {\r\n  const width = canvas.width, height = canvas.height\r\n  const paint = canvas.getContext('2d')\r\n  paint.clearRect(0, 0, width, height)\r\n  if (recipe === null || recipe === undefined) return\r\n  if (recipe.shape === 'iso') {\r\n    const hasDisplay = recipe.display !== null && recipe.display !== undefined\r\n    const rotation = hasDisplay ? (recipe.display.rotation || [0, 0, 0]) : [0, 0, 0]\r\n    const quads = guiItemRotation(recipe.quads || [], rotation,\r\n      hasDisplay ? GUI_FACE_SHADE : GUI_FACE_SHADE_FLAT)\r\n    if (quads.length === 0) return\r\n    const bytes = renderScene({ width: width, height: height,\r\n      background: [0, 0, 0], backgroundAlpha: 0, orthographic: true,\r\n      camera: iconCamera(quads, width, height, 0.98), quads: quads,\r\n      textures: decoded, animations: recipe.animations || {},\r\n      timeMs: animTicks * 50 })\r\n    const frame = paint.createImageData(width, height)\r\n    frame.data.set(bytes)\r\n    paint.putImageData(frame, 0, 0)\r\n    return\r\n  }\r\n  const frames = recipe.frames && recipe.frames.length > 0 ? recipe.frames : null\r\n  const layers = frames === null ? (recipe.layers || [])\r\n    : (frames[((frameIndex || 0) % frames.length + frames.length) % frames.length].layers || [])\r\n  const out = new Uint8ClampedArray(width * height * 4)\r\n  for (const id of layers) {\r\n    const texture = decoded === undefined ? undefined : decoded[id]\r\n    if (texture === undefined || texture.data === undefined) continue\r\n    const sw = texture.width\r\n    const sh = texture.height\r\n    if (!(sw > 0 && sh > 0)) continue\r\n    const animation = (recipe.animations || {})[id]\r\n    const strip = stripOf({ width: sw, height: sh, animation: animation })\r\n    const top = strip === null ? 0 : animationRow(animation, animTicks * 50) * sw\r\n    const rows = strip === null ? sh : sw\r\n    for (let y = 0; y < height; y++) {\r\n      const sy = top + Math.floor((y * rows) / height)\r\n      if (sy < 0 || sy >= sh) continue\r\n      for (let x = 0; x < width; x++) {\r\n        const sx = Math.floor((x * sw) / width)\r\n        const from = (sy * sw + sx) * 4\r\n        const alpha = texture.data[from + 3] / 255\r\n        if (alpha <= 0) continue\r\n        const to = (y * width + x) * 4\r\n        out[to] = texture.data[from] * alpha + out[to] * (1 - alpha)\r\n        out[to + 1] = texture.data[from + 1] * alpha + out[to + 1] * (1 - alpha)\r\n        out[to + 2] = texture.data[from + 2] * alpha + out[to + 2] * (1 - alpha)\r\n        out[to + 3] = Math.max(out[to + 3], texture.data[from + 3])\r\n      }\r\n    }\r\n  }\r\n  const frame = paint.createImageData(width, height)\r\n  frame.data.set(out)\r\n  paint.putImageData(frame, 0, 0)\r\n}\r\n\r\n\r\nfunction clearViewport(canvas, width, height) {\r\n  canvas.width = width\r\n  canvas.height = height\r\n  const paint = canvas.getContext('2d')\r\n  if (paint !== null && paint !== undefined) paint.clearRect(0, 0, width, height)\r\n}\r\n\r\n\r\nfunction itemIconUrl(recipe, decoded, size) {\r\n  if (recipe === null || recipe === undefined) return null\r\n  const canvas = document.createElement('canvas')\r\n  canvas.width = size\r\n  canvas.height = size\r\n  drawItemIcon(canvas, recipe, 0, decoded)\r\n  return canvas.toDataURL('image/png')\r\n}\r\n\r\n\r\nfunction faceHitY(quad, pixelX, pixelY, camera) {\r\n  if (quad === undefined || camera === undefined || camera === null) return 0.5\r\n  const screen = []\r\n  for (const point of quad.p) {\r\n    const projected = camera.project(point)\r\n    if (projected === null) return 0.5\r\n    screen.push(projected)\r\n  }\r\n  for (const triangle of [[0, 1, 2], [0, 2, 3]]) {\r\n    const a = screen[triangle[0]], b = screen[triangle[1]], c = screen[triangle[2]]\r\n    const area = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])\r\n    if (Math.abs(area) < 1e-9) continue\r\n    const w0 = ((b[0] - pixelX) * (c[1] - pixelY) - (c[0] - pixelX) * (b[1] - pixelY)) / area\r\n    const w1 = ((c[0] - pixelX) * (a[1] - pixelY) - (a[0] - pixelX) * (c[1] - pixelY)) / area\r\n    const w2 = 1 - w0 - w1\r\n    if (w0 < -0.02 || w1 < -0.02 || w2 < -0.02) continue\r\n    const weights = [w0, w1, w2]\r\n    let y = 0\r\n    for (let i = 0; i < 3; i++) y += quad.p[triangle[i]][1] * weights[i]\r\n    const ys = quad.p.map((point) => point[1])\r\n    const min = Math.min(ys[0], ys[1], ys[2], ys[3])\r\n    const max = Math.max(ys[0], ys[1], ys[2], ys[3])\r\n    return max - min < 1e-6 ? 0.5 : (y - min) / (max - min)\r\n  }\r\n  return 0.5\r\n}\r\n\r\n\r\nfunction variantSummary(axes, props) {\r\n  const parts = []\r\n  for (const axis of axes) {\r\n    const value = props[axis.name]\r\n    if (value === undefined) continue\r\n    parts.push(labelOfAxis(axis.name) + ' ' + labelOfValue(value))\r\n  }\r\n  return parts.length === 0 ? '按方块默认' : parts.join(' · ')\r\n}\r\n\r\nconst CSS = [\r\n  '.mcart-root{display:flex;flex-direction:column;gap:8px;padding:10px;height:100%;box-sizing:border-box;overflow-y:auto;overflow-x:hidden;font-size:12px}',\r\n  '.mcart-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}',\r\n  '.mcart-title{font-size:13px;font-weight:600}',\r\n  '.mcart-sub{opacity:.6;font-size:11px}',\r\n  '.mcart-path{opacity:.75;font-size:11px;word-break:break-all;flex:1;min-width:0}',\r\n  '.mcart-list{overflow:auto;border:1px solid rgba(127,127,127,.25);border-radius:8px;padding:4px;max-height:220px}',\r\n  '.mcart-group{font-size:10px;letter-spacing:.05em;text-transform:uppercase;opacity:.55;padding:6px 6px 2px}',\r\n  '.mcart-item{display:block;width:100%;text-align:left;background:none;border:0;border-radius:6px;color:inherit;font:inherit;font-size:12px;padding:4px 6px;cursor:pointer}',\r\n  '.mcart-item:hover{background:rgba(127,127,127,.16)}',\r\n  '.mcart-item[data-on=\"1\"]{background:rgba(127,127,127,.28);font-weight:600}',\r\n  '.mcart-id{font-size:10px;opacity:.45;margin-left:4px}',\r\n  '.mcart-stage{flex:none;display:flex;flex-direction:column;gap:6px}',\r\n  '.mcart-canvas{width:100%;height:240px;display:block;border-radius:8px;background:#1a181c;border:1px solid rgba(127,127,127,.25);cursor:grab;touch-action:none}',\r\n  '.mcart-canvas:active{cursor:grabbing}',\r\n  '.mcart-btn{background:rgba(127,127,127,.14);border:1px solid rgba(127,127,127,.3);border-radius:6px;color:inherit;font:inherit;font-size:11px;padding:3px 8px;cursor:pointer;flex:none}',\r\n  '.mcart-btn:hover{background:rgba(127,127,127,.26)}',\r\n  '.mcart-btn[disabled]{opacity:.35;cursor:default}',\r\n  '.mcart-icon{background:none;border:0;color:inherit;font:inherit;font-size:13px;line-height:1;padding:2px 6px;border-radius:6px;cursor:pointer}',\r\n  '.mcart-icon:hover{background:rgba(127,127,127,.2)}',\r\n  '.mcart-input{flex:1;min-width:0;background:rgba(0,0,0,.18);border:1px solid rgba(127,127,127,.3);border-radius:6px;color:inherit;font:inherit;font-size:11px;padding:4px 6px}',\r\n  '.mcart-card{border:1px solid rgba(127,127,127,.22);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;background:rgba(127,127,127,.04)}',\r\n  '.mcart-row{display:flex;align-items:center;gap:6px;border-radius:6px;padding:2px 4px}',\r\n  '.mcart-row:hover{background:rgba(127,127,127,.14)}',\r\n  '.mcart-grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',\r\n  '.mcart-projects{max-height:190px;overflow:auto;display:flex;flex-direction:column;gap:1px;border:1px solid rgba(127,127,127,.18);border-radius:8px;padding:3px}',\r\n  '.mcart-switch{display:flex;align-items:flex-start;gap:6px;cursor:pointer;padding:2px 0}',\r\n  '.mcart-switch input{margin:1px 0 0 0;flex:none}',\r\n  '.mcart-hint{font-size:10px;opacity:.5;margin-left:19px}',\r\n  '.mcart-mods{border:1px solid rgba(127,127,127,.18);border-radius:8px;padding:3px 6px;display:flex;flex-direction:column;gap:1px;max-height:160px;overflow:auto}',\r\n  '.mcart-chip{font-size:10px;padding:1px 6px;border-radius:999px;background:rgba(127,127,127,.16)}',\r\n  '.mcart-note{opacity:.66;font-size:11px}',\r\n  '.mcart-bad{font-size:11px;color:#e0a06c;word-break:break-all}',\r\n  '.mcart-err{font-size:11px;color:#e06c6c;word-break:break-all}',\r\n  '.mcart-edit{display:flex;flex-direction:column;gap:6px}',\r\n  '.mcart-edit-canvas{display:block;width:100%;height:auto;max-height:52vh;object-fit:contain;image-rendering:pixelated;border-radius:4px;background:#111;cursor:crosshair;touch-action:none}',\r\n  '.mcart-tools{display:flex;gap:4px;flex-wrap:wrap;align-items:center}',\r\n  '.mcart-tool[data-on=\"1\"]{background:rgba(127,127,127,.42);font-weight:600}',\r\n  '.mcart-swatches{display:flex;gap:3px;flex-wrap:wrap;max-height:56px;overflow:auto}',\r\n  '.mcart-swatch{width:16px;height:16px;border-radius:3px;border:1px solid rgba(127,127,127,.5);cursor:pointer;padding:0;flex:none}',\r\n  '.mcart-color{width:22px;height:22px;border-radius:4px;border:1px solid rgba(127,127,127,.5);flex:none}',\r\n  '.mcart-tabs{display:flex;gap:4px;flex-wrap:wrap;align-items:center}',\r\n  '.mcart-picker{width:36px;height:24px;padding:0;border:1px solid rgba(127,127,127,.5);border-radius:4px;background:none;flex:none}',\r\n  '.mcart-alpha{flex:1;min-width:60px}',\r\n  '.mcart-select{flex:1;min-width:0;background:rgba(0,0,0,.18);border:1px solid rgba(127,127,127,.3);border-radius:6px;color:inherit;font:inherit;font-size:11px;padding:3px 4px}',\r\n  '.mcart-hotbar{display:flex;gap:3px;flex-wrap:wrap;max-height:124px;overflow:auto}',\r\n  '.mcart-slot{width:26px;height:26px;border:1px solid rgba(127,127,127,.4);border-radius:4px;background:none;background-size:cover;image-rendering:pixelated;padding:0;flex:none;cursor:pointer}',\r\n  '.mcart-slot:hover{background-color:rgba(127,127,127,.22)}',\r\n  '.mcart-slot[data-on=\"1\"]{outline:2px solid currentColor;outline-offset:1px}',\r\n  '.mcart-slotq{font-size:13px;line-height:1;opacity:.6}',\r\n  '.mcart-slotmissing{font-size:10px;font-weight:600;opacity:.95;color:#e0a06c;letter-spacing:0}',\r\n  '.mcart-slot[data-missing=\"1\"],.mcart-hudslot[data-missing=\"1\"]{border-color:rgba(224,160,108,.75);background:rgba(224,160,108,.12)}',\r\n  '.mcart-icon[data-on=\"1\"]{background:rgba(127,127,127,.3)}',\r\n  '.mcart-viewport{position:relative;flex:none}',\r\n  '.mcart-zoom{position:absolute;right:6px;top:6px;display:flex;gap:3px;opacity:.72}',\r\n  '.mcart-zoom:hover{opacity:1}',\r\n  '.mcart-zoombtn{width:22px;height:22px;padding:0;display:flex;align-items:center;justify-content:center;font-size:12px;line-height:1;background:rgba(20,20,24,.62);border-color:rgba(200,200,210,.45)}',\r\n  '.mcart-hud{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;gap:4px;padding:0 6px 6px;pointer-events:none}',\r\n  '.mcart-hudname{font-size:11px;padding:1px 8px;border-radius:999px;background:rgba(20,20,24,.72);border:1px solid rgba(200,200,210,.28);text-shadow:0 1px 2px rgba(0,0,0,.85)}',\r\n  '.mcart-hudbar{display:flex;align-items:center;gap:3px;padding:3px;border-radius:8px;background:rgba(20,20,24,.64);border:1px solid rgba(200,200,210,.32);pointer-events:auto}',\r\n  '.mcart-hudslot{width:34px;height:34px;padding:0;flex:none;display:flex;align-items:center;justify-content:center;border-radius:4px;border:1px solid rgba(120,120,130,.45);background:rgba(0,0,0,.32);cursor:pointer}',\r\n  '.mcart-hudslot:hover{border-color:rgba(240,240,250,.8);background:rgba(255,255,255,.14)}',\r\n  '.mcart-hudslot[data-on=\"1\"]{border-color:#f2f2f6;box-shadow:inset 0 0 0 1px #f2f2f6,0 0 6px rgba(0,0,0,.6)}',\r\n  '.mcart-hudicon{width:30px;height:30px;display:block;image-rendering:pixelated}',\r\n  '.mcart-hudempty{background:rgba(0,0,0,.22);border-color:rgba(120,120,130,.26);cursor:default}',\r\n  '.mcart-hudpage{width:16px;height:34px;padding:0;flex:none;font:inherit;font-size:12px;line-height:1;color:inherit;background:none;border:0;cursor:pointer;opacity:.7}',\r\n  '.mcart-hudpage:hover{opacity:1}',\r\n  '.mcart-hudpage[disabled]{opacity:.22;cursor:default}',\r\n  '.mcart-poster{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);image-rendering:pixelated;pointer-events:none}',\r\n  '.mcart-grip{display:flex;align-items:center;justify-content:center;height:13px;cursor:ns-resize;touch-action:none}',\r\n  '.mcart-gripbar{width:46px;height:4px;border-radius:999px;background:rgba(127,127,127,.42)}',\r\n  '.mcart-grip:hover .mcart-gripbar{background:rgba(210,210,220,.8)}',\r\n  '.mcart-grip:active .mcart-gripbar{background:rgba(235,235,245,.95)}',\r\n  '.mcart-src{display:flex;align-items:center;gap:6px}',\r\n  '.mcart-ref{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 6px;padding:6px 10px;border-radius:8px;background:rgba(127,127,127,.14);border:1px solid rgba(127,127,127,.3);font-size:12px}',\r\n  '.mcart-ref-path{opacity:.66;word-break:break-all}',\r\n  '.mcart-report{white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,.22);border:1px solid rgba(127,127,127,.28);border-radius:6px;padding:6px 8px;margin:2px 0;font-size:11px;line-height:1.5;max-height:280px;overflow:auto;user-select:text;font-family:inherit}',\r\n  '.mcart-reportnote{font-size:10px;opacity:.55;word-break:break-all}',\r\n].join('')\r\n\r\nconst CATEGORIES = [\r\n  { key: 'biome', label: '群系' },\r\n  { key: 'structure', label: '结构' },\r\n  { key: 'entity', label: '实体' },\r\n  { key: 'block', label: '方块' },\r\n]\r\n\r\nconst TAB_ID = 'mc-art.atlas'\r\n\r\nlet lastProject = ''\r\nconst decoded = {}\r\nconst failedTex = {}\r\nconst indexes = {}\r\nconst imageNodes = {}\r\nconst drag = { active: false, x: 0, y: 0, moved: 0 }\r\nlet pickBuffer = null\r\nlet ghostAsk = ''\r\nconst icons = {}\r\nconst iconTried = {}\r\nconst itemRecipes = {}\r\nconst itemUrls = {}\r\nlet itemFetchError = ''\r\n\r\n\r\nfunction forgetTextures() {\r\n  for (const key of Object.keys(decoded)) delete decoded[key]\r\n  for (const key of Object.keys(failedTex)) delete failedTex[key]\r\n  for (const key of Object.keys(itemUrls)) delete itemUrls[key]\r\n  for (const key of Object.keys(icons)) delete icons[key]\r\n  for (const key of Object.keys(iconTried)) delete iconTried[key]\r\n  for (const key of Object.keys(itemRecipes)) delete itemRecipes[key]\r\n  itemFetchError = ''\r\n}\r\nconst hudCanvases = {}\r\nconst TINT_REMOVE = [0.85, 0.2, 0.18]\r\nconst painting = { active: false }\r\n\r\nconst EDIT_ZOOM = 18\r\nconst EDIT_UNDO = 24\r\nconst EDIT_PALETTE = 64\r\n\r\nlet hudFollowed = ''\r\nconst VIEW_H = 240\r\nconst VIEW_H_MIN = 140\r\nconst VIEW_H_MAX = 760\r\nconst gripDrag = { active: false, y: 0, origin: 0 }\r\nconst clampViewH = (value) => Math.max(VIEW_H_MIN, Math.min(VIEW_H_MAX, Math.round(value)))\r\n\r\nfunction texturePoint(rect, target, clientX, clientY) {\r\n  if (rect === undefined || rect === null) return null\r\n  if (!(rect.width > 0) || !(rect.height > 0)) return null\r\n  if (!(target.w > 0) || !(target.h > 0)) return null\r\n  const scale = Math.min(rect.width / target.w, rect.height / target.h)\r\n  if (!(scale > 0)) return null\r\n  const left = rect.left + (rect.width - target.w * scale) / 2\r\n  const top = rect.top + (rect.height - target.h * scale) / 2\r\n  return [Math.floor((clientX - left) / scale), Math.floor((clientY - top) / scale)]\r\n}\r\n\r\nconst PAGE_SIZE = 20\r\nconst ICON_BATCH = 80\r\nconst ITEM_PAGE = 40\r\nconst HUD_SLOTS = 9\r\n\r\n\r\n\r\nconst isAbsent = (value) => value === null || value === undefined\r\nconst idsOf = (value) => (isAbsent(value) || !Array.isArray(value.textureIds) ? [] : value.textureIds)\r\nconst objectOf = (value) => (isAbsent(value) || typeof value !== 'object' ? {} : value)\r\nconst arrayOf = (value) => (Array.isArray(value) ? value : [])\r\n\r\n\r\nconst sceneOf = (payload) => ({\r\n  kind: payload.kind,\r\n  id: payload.id,\r\n  title: payload.title,\r\n  project: payload.project,\r\n  quads: arrayOf(payload.quads),\r\n  textureIds: idsOf(payload),\r\n  textures: objectOf(payload.textures),\r\n  animations: objectOf(payload.animations),\r\n  animationNotes: objectOf(payload.animationNotes),\r\n  cells: isAbsent(payload.cells) ? null : payload.cells,\r\n  faceStep: payload.faceStep,\r\n  refs: arrayOf(payload.refs),\r\n  ref: isAbsent(payload.ref) ? null : payload.ref,\r\n  palette: arrayOf(payload.palette),\r\n  box: isAbsent(payload.box) ? null : payload.box,\r\n  errors: arrayOf(payload.errors),\r\n  preview: payload.preview === true,\r\n})\r\n\r\nfunction failureOf(reply) {\r\n  if (reply === null || reply === undefined) return '没有返回结果'\r\n  if (reply.error === undefined || reply.error === null) return null\r\n  return String(reply.error)\r\n}\r\n\r\n\r\nconst DIAG_REASON = {\r\n  'project-model-missing': '项目包里缺这个模型文件（要补的是项目自己的文件，不是原版的）',\r\n  'vanilla-parent-missing': '原版母模型没取到（参考目录没设对，或那个 jar 里确实没有）',\r\n  'no-reference-directory': '还没有设置参考目录，原版/模组的模型取不到',\r\n  'reference-jar-missing': '参考目录里找不到对应的 jar',\r\n  'extractor-failed': '抽取器跑失败了（多半是 Python 探测或工具本身的毛病）',\r\n  'parent-cycle': '模型 parent 链成环了',\r\n  'textures-unresolved': '模型解析出来了，但面上引用的贴图取不到（典型：项目模型用了原版的 minecraft:block/…，而参考目录没设或取不到）',\r\n  'no-quads': '整条模型链都完整，但一个面都没产出（例如零厚度平面 + 贴图缺失）',\r\n  'unknown': '原因不明',\r\n}\r\nconst DIAG_KIND = { project: '项目里缺', vanilla: '缺的原版母模型' }\r\nconst DIAG_LINES = 20\r\nconst DIAG_SHOW = 8\r\n\r\n\r\nfunction reasonLine(reason) {\r\n  const raw = typeof reason === 'string' ? reason : ''\r\n  if (raw !== '' && Object.prototype.hasOwnProperty.call(DIAG_REASON, raw)) {\r\n    return '原因：' + DIAG_REASON[raw] + '（' + raw + '）'\r\n  }\r\n  if (raw !== '') return '原因：' + raw + '（面板不认识这个 reason，把原值照贴出来）'\r\n  return '原因：unknown（宿主没有给 reason）'\r\n}\r\n\r\nconst diagnosticOf = (payload) => {\r\n  const raw = payload === null || payload === undefined ? undefined : payload.diagnostic\r\n  if (raw === null || raw === undefined || typeof raw !== 'object') return null\r\n  return {\r\n    reason: typeof raw.reason === 'string' && raw.reason !== '' ? raw.reason : 'unknown',\r\n    block: typeof raw.block === 'string' ? raw.block : '',\r\n    missing: arrayOf(raw.missing).filter((entry) => entry !== null && typeof entry === 'object')\r\n      .map((entry) => ({\r\n        kind: entry.kind === 'vanilla' ? 'vanilla' : 'project',\r\n        name: typeof entry.name === 'string' ? entry.name : '',\r\n        fixPath: typeof entry.fixPath === 'string' ? entry.fixPath : '',\r\n      })),\r\n    tried: arrayOf(raw.tried).map((line) => String(line)),\r\n    referenceDirectory: typeof raw.referenceDirectory === 'string' ? raw.referenceDirectory : '',\r\n  }\r\n}\r\n\r\n\r\nfunction diagLines(diag, error) {\r\n  const lines = []\r\n  const head = error === null || error === undefined ? '' : String(error).trim()\r\n  if (head !== '') lines.push(head)\r\n  lines.push(reasonLine(diag.reason))\r\n  if (diag.block !== '') lines.push('方块：' + diag.block)\r\n  for (const entry of diag.missing) {\r\n    lines.push('· ' + (DIAG_KIND[entry.kind] || DIAG_KIND.project) + '：'\r\n      + (entry.name === '' ? '（没给名字）' : entry.name)\r\n      + (entry.fixPath === '' ? '' : ' —— 要动这个文件：' + entry.fixPath))\r\n  }\r\n  lines.push(diag.referenceDirectory === ''\r\n    ? '参考目录：没设。点右上角 ⚙ 把 .minecraft / 版本目录 / mods 目录的路径贴进去'\r\n    : '参考目录：' + diag.referenceDirectory)\r\n  if (diag.tried.length > 0) {\r\n    lines.push('已经试过：')\r\n    for (const line of diag.tried) lines.push('  - ' + String(line))\r\n  }\r\n  return lines\r\n}\r\n\r\nfunction diagText(diag, error) {\r\n  const all = diagLines(diag, error)\r\n  if (all.length <= DIAG_LINES) return all.join('\\n')\r\n  return all.slice(0, DIAG_LINES).join('\\n') + '\\n…（还有 ' + (all.length - DIAG_LINES) + ' 行没画出来）'\r\n}\r\n\r\n\r\nfunction reportKeyOf(diag) {\r\n  return diag.reason + '|' + diag.block + '|'\r\n    + diag.missing.map((entry) => entry.kind + ':' + entry.name).join(',')\r\n}\r\n\r\nconst versionTag = () => '（MC 资产面板 ' + String(PANEL_VERSION) + '）'\r\n\r\n\r\nfunction withVersion(text) {\r\n  const line = text === null || text === undefined ? '' : String(text)\r\n  if (line === '') return line\r\n  if (line.indexOf('MC 资产面板') >= 0) return line\r\n  if (!/(画不出|取不到|拿不到|失败|没有返回|没写盘)/.test(line)) return line\r\n  return line + versionTag()\r\n}\r\n\r\n\r\nfunction safeTextureHandle(id) {\r\n  const text = id === undefined || id === null ? '' : String(id)\r\n  if (text === '') return false\r\n  if (text.indexOf('\\u0000') >= 0) return false\r\n  if (/^[a-zA-Z]:/.test(text)) return false\r\n  if (text.charAt(0) === '/' || text.charAt(0) === '\\\\') return false\r\n  if (text.split(/[\\\\/]/).indexOf('..') >= 0) return false\r\n  if (text.indexOf('..') >= 0) return false\r\n  return true\r\n}\r\n\r\n\r\nconst ghostOf = (result, base) => ({\r\n  block: base.block,\r\n  at: base.at,\r\n  variant: base.variant,\r\n  loading: false,\r\n  quads: arrayOf(result.quads),\r\n  textures: objectOf(result.textures),\r\n  textureIds: idsOf(result),\r\n  animations: objectOf(result.animations),\r\n})\r\nfunction countsOf(list, keyOf, labelOf) {\r\n  const out = {}\r\n  for (const entry of list || []) {\r\n    const key = keyOf(entry) || ''\r\n    if (key === '') continue\r\n    if (out[key] === undefined) out[key] = { count: 0, label: labelOf(entry) || key }\r\n    out[key].count += 1\r\n  }\r\n  return out\r\n}\r\n\r\nfunction cssColour(colour) {\r\n  if (colour === null || colour === undefined) return 'transparent'\r\n  return 'rgba(' + colour[0] + ',' + colour[1] + ',' + colour[2] + ',' + (colour[3] / 255) + ')'\r\n}\r\n\r\nfunction hexOf(colour) {\r\n  const c = colour === null || colour === undefined ? [0, 0, 0, 255] : colour\r\n  const two = (v) => ('0' + Math.max(0, Math.min(255, Math.round(v))).toString(16)).slice(-2)\r\n  return '#' + two(c[0]) + two(c[1]) + two(c[2])\r\n}\r\n\r\nfunction fromHex(text, alpha) {\r\n  const raw = String(text === undefined || text === null ? '' : text).replace('#', '')\r\n  const a = alpha === undefined ? 255 : alpha\r\n  if (raw.length !== 6) return [0, 0, 0, a]\r\n  return [parseInt(raw.slice(0, 2), 16), parseInt(raw.slice(2, 4), 16), parseInt(raw.slice(4, 6), 16), a]\r\n}\r\n\r\n\r\nfunction faceLabel(faces) {\r\n  const list = faces === undefined || faces === null ? [] : faces\r\n  if (list.length === 0) return '贴图'\r\n  const top = list.indexOf('up') >= 0\r\n  const bottom = list.indexOf('down') >= 0\r\n  const side = list.some((face) => face === 'north' || face === 'south' || face === 'west' || face === 'east')\r\n  const parts = []\r\n  if (top) parts.push('顶面')\r\n  if (side) parts.push('侧面')\r\n  if (bottom) parts.push('底面')\r\n  return parts.length === 0 ? '贴图' : parts.join('+')\r\n}\r\n\r\nfunction sameColour(a, b) {\r\n  return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3]\r\n}\r\n\r\n\r\nfunction addToPalette(palette, colour, limit) {\r\n  if (colour === null || colour === undefined) return palette\r\n  if (palette.some((c) => sameColour(c, colour))) return palette\r\n  const next = palette.concat([colour])\r\n  return next.length > limit ? next.slice(next.length - limit) : next\r\n}\r\n\r\nfunction readPixel(pixels, width, x, y) {\r\n  const at = (y * width + x) * 4\r\n  return [pixels[at], pixels[at + 1], pixels[at + 2], pixels[at + 3]]\r\n}\r\n\r\nfunction writePixel(pixels, width, x, y, colour) {\r\n  const at = (y * width + x) * 4\r\n  pixels[at] = colour[0]\r\n  pixels[at + 1] = colour[1]\r\n  pixels[at + 2] = colour[2]\r\n  pixels[at + 3] = colour[3]\r\n}\r\n\r\n\r\nfunction paletteOf(pixels, limit) {\r\n  const seen = []\r\n  const known = {}\r\n  for (let i = 0; i < pixels.length; i += 4) {\r\n    if (pixels[i + 3] === 0) continue\r\n    const key = pixels[i] + ',' + pixels[i + 1] + ',' + pixels[i + 2] + ',' + pixels[i + 3]\r\n    if (known[key] === true) continue\r\n    known[key] = true\r\n    seen.push([pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]])\r\n    if (seen.length >= limit) break\r\n  }\r\n  return seen\r\n}\r\n\r\nlet canvasGeneration = 0\r\nlet lastDrawKey = ''\r\nlet lastCamera = null\r\nlet lastReportKey = ''\r\n\r\nconst composer = { write: null, draft: '' }\r\nconst composerWaiters = []\r\nlet composerFilledKey = ''\r\nlet autoReportOn = true\r\nlet lastAutoVerdict = ''\r\nconst AUTO_REPORT_KEY = 'dsh-mc-art.auto-report'\r\ntry {\r\n  if (typeof localStorage !== 'undefined' && localStorage !== null && localStorage.getItem(AUTO_REPORT_KEY) === '0') {\r\n    autoReportOn = false\r\n  }\r\n} catch (error) { /* 沙箱里没有 storage：用默认值（开） */ }\r\n\r\nfunction setAutoReport(on) {\r\n  autoReportOn = on === true\r\n  try {\r\n    if (typeof localStorage !== 'undefined' && localStorage !== null) {\r\n      localStorage.setItem(AUTO_REPORT_KEY, autoReportOn ? '1' : '0')\r\n    }\r\n  } catch (error) { /* 存不下不影响本次会话 */ }\r\n}\r\n\r\n\r\nfunction onComposerReady(callback) {\r\n  if (typeof composer.write === 'function') { callback(); return () => {} }\r\n  composerWaiters.push(callback)\r\n  return () => {\r\n    const at = composerWaiters.indexOf(callback)\r\n    if (at >= 0) composerWaiters.splice(at, 1)\r\n  }\r\n}\r\nfunction composerCaptured() {\r\n  const waiting = composerWaiters.slice()\r\n  composerWaiters.length = 0\r\n  for (const callback of waiting) {\r\n    try { callback() } catch (error) { /* 等的人自己有问题不该拖垮这里 */ }\r\n  }\r\n}\r\n\r\n\r\nfunction autoFillDraft(text, key, manual) {\r\n  const body = text === null || text === undefined ? '' : String(text)\r\n  const name = key === undefined || key === null ? '' : String(key)\r\n  if (body === '') { lastAutoVerdict = 'empty'; return 'empty' }\r\n  if (autoReportOn !== true && manual !== true) { lastAutoVerdict = 'off'; return 'off' }\r\n  if (manual !== true && name !== '' && composerFilledKey === name) { lastAutoVerdict = 'done'; return 'done' }\r\n  if (typeof composer.write !== 'function') { lastAutoVerdict = 'no-composer'; return 'no-composer' }\r\n  const current = String(composer.draft === undefined || composer.draft === null ? '' : composer.draft)\r\n  if (manual !== true && current.trim() !== '') { lastAutoVerdict = 'busy'; return 'busy' }\r\n  const base = manual === true && current.trim() !== '' ? current.replace(/\\s+$/, '') + ' ' : ''\r\n  composer.write(base + body)\r\n  composerFilledKey = name\r\n  lastAutoVerdict = 'filled'\r\n  return 'filled'\r\n}\r\n\r\n\r\nfunction reportForAI(diag, error) {\r\n  return '这是「MC 资产面板」自动生成的报告（面板版本 ' + String(PANEL_VERSION)\r\n    + '；只放进草稿，没有发送，按回车之前都可以改）。'\r\n    + '\\n' + diagText(diag, error)\r\n    + '\\n请按这份报告直接修，不用再问我。'\r\n}\r\n\r\nfunction reportForBoundary(error) {\r\n  const message = error !== null && error !== undefined && error.message !== undefined\r\n    ? String(error.message) : String(error)\r\n  return '这是「MC 资产面板」自动生成的报告（面板版本 ' + String(PANEL_VERSION)\r\n    + '；只放进草稿，没有发送）。'\r\n    + '\\n面板渲染失败：' + message\r\n    + '\\n这一条没有结构化诊断（异常发生在渲染期）。请从这句话入手。'\r\n}\r\nlet animTicks = 0\r\n\r\nconst roots = {}\r\nconst listeners = []\r\nlet pending = null\r\nfunction setPending(next) {\r\n  pending = next\r\n  const copy = listeners.slice()\r\n  for (const listener of copy) listener()\r\n}\r\nfunction usePending() {\r\n  const pair = React.useState(pending)\r\n  React.useEffect(() => {\r\n    const listener = () => pair[1](pending)\r\n    listeners.push(listener)\r\n    return () => {\r\n      const at = listeners.indexOf(listener)\r\n      if (at >= 0) listeners.splice(at, 1)\r\n    }\r\n  }, [])\r\n  return pair[0]\r\n}\r\n\r\nreturn {\r\n  inject: ['timer'],\r\n  apply(ctx) {\r\n    const slots = ctx.get('slots')\r\n    if (slots === undefined) return\r\n    const timer = ctx.timer\r\n    ctx.effect(() => styles.insert(CSS))\r\n\r\n    const tabs = ctx.get('sidebarRightTabs')\r\n    const sidebarRight = ctx.get('sidebarRight')\r\n    function slotHasEntries(name) {\r\n      try {\r\n        if (typeof slots.entries !== 'function') return false\r\n        const list = slots.entries(name)\r\n        return Array.isArray(list) && list.length > 0\r\n      } catch (error) {\r\n        return false\r\n      }\r\n    }\r\n    function rightColumnReady() {\r\n      return ctx.get('sidebarRightTabs') !== undefined &&\r\n        (ctx.get('sidebarRight') !== undefined || slotHasEntries('sidebar.right.pane.tab'))\r\n    }\r\n    const tabsReady = ctx.get('sidebarRightTabs')\r\n    const sidebarRightReady = ctx.get('sidebarRight')\r\n    const inRightColumn = tabsReady !== undefined &&\r\n      (sidebarRightReady !== undefined || slotHasEntries('sidebar.right.pane.tab'))\r\n\r\n\r\n    const canUseBoundary = typeof React.Component === 'function'\r\n    const PanelBoundary = canUseBoundary\r\n      ? class PanelBoundary extends React.Component {\r\n        constructor(props) {\r\n          super(props)\r\n          this.state = { error: null }\r\n        }\r\n        static getDerivedStateFromError(error) {\r\n          return { error: error }\r\n        }\r\n        componentDidCatch(error) {\r\n          try { console.error('[mcart] 面板渲染失败', error) } catch (ignored) { /* 没有 console 也不能再炸 */ }\r\n          try {\r\n            autoFillDraft(reportForBoundary(error), 'boundary|'\r\n              + (error !== null && error !== undefined && error.message !== undefined ? String(error.message) : String(error)))\r\n          } catch (ignored) { /* 通知失败不该把\"报错\"这件事本身也弄没 */ }\r\n        }\r\n        render() {\r\n          if (this.state.error === null || this.state.error === undefined) return this.props.children\r\n          const message = this.state.error !== null && this.state.error.message !== undefined\r\n            ? this.state.error.message : this.state.error\r\n          const notice = lastAutoVerdict === 'filled' || lastAutoVerdict === 'done'\r\n            ? '已把这份报告放进输入框（只是草稿，没发送；按回车才会发）'\r\n            : (lastAutoVerdict === 'busy'\r\n              ? '输入框里已经有你写的字，没有动它 —— 报告在上面这段里，选中就能复制'\r\n              : (lastAutoVerdict === 'off'\r\n                ? '「出错时自动把报告放进输入框」现在是关的'\r\n                : (lastAutoVerdict === 'no-composer'\r\n                  ? '这个壳没有给输入框接口 —— 上面这段可以手动选中复制'\r\n                  : '刷新一次；如果仍是这一句，把它连同\"MC 资产\"面板发给我')))\r\n          return React.createElement('div', { className: 'mcart-root' },\r\n            React.createElement('div', { className: 'mcart-err' },\r\n              '面板渲染失败：' + String(message)),\r\n            React.createElement('div', { className: 'mcart-hint' },\r\n              notice + ' —— 版本：' + String(PANEL_VERSION)),\r\n          )\r\n        }\r\n      }\r\n      : function PanelBoundary(props) { return props.children }\r\n\r\n    function Atlas(props) {\r\n      if (typeof globalThis !== 'undefined' && globalThis.__MCART_FORCE_RENDER_ERROR__ === true) {\r\n        throw new Error('注入的渲染错误')\r\n      }\r\n      const sessionId = props.sessionId === undefined ? '' : String(props.sessionId)\r\n      const indexPair = React.useState(null)\r\n      const failurePair = React.useState(null)\r\n      const emptyPair = React.useState(null)\r\n      const newIdPair = React.useState('')\r\n      const noticePair = React.useState(null)\r\n      const nearbyPair = React.useState(null)\r\n      const choicePair = React.useState(null)\r\n      const scenePair = React.useState(null)\r\n      const tickPair = React.useState(0)\r\n      const yawPair = React.useState(0.72)\r\n      const pitchPair = React.useState(0.34)\r\n      const zoomPair = React.useState(1)\r\n      const canvasPair = React.useState(null)\r\n      const scratchPair = React.useState(null)\r\n      const sizePair = React.useState([340, 260])\r\n      const viewHPair = React.useState(VIEW_H)\r\n      const posterPair = React.useState(null)\r\n      const itemMsgPair = React.useState(null)\r\n      const savedSettingsPair = React.useState(null)\r\n      const busyPair = React.useState(false)\r\n      const pickingPair = React.useState(false)\r\n      const dirDraftPair = React.useState('')\r\n      const draftPair = React.useState('')\r\n      const settingsPair = React.useState(null)\r\n      const savePair = React.useState(null)\r\n      const modsOpenPair = React.useState(false)\r\n      const rootPair = React.useState(roots[sessionId] === undefined ? '' : roots[sessionId])\r\n      const index = indexPair[0], setIndex = indexPair[1]\r\n      const failure = failurePair[0], setFailure = failurePair[1]\r\n      const emptyRoot = emptyPair[0], setEmptyRoot = emptyPair[1]\r\n      const newId = newIdPair[0], setNewId = newIdPair[1]\r\n      const notice = noticePair[0], setNotice = noticePair[1]\r\n      const nearby = nearbyPair[0], setNearby = nearbyPair[1]\r\n      const choice = choicePair[0], setChoice = choicePair[1]\r\n      const scene = scenePair[0], setScene = scenePair[1]\r\n      const tick = tickPair[0], setTick = tickPair[1]\r\n      const yaw = yawPair[0], setYaw = yawPair[1]\r\n      const pitch = pitchPair[0], setPitch = pitchPair[1]\r\n      const zoom = zoomPair[0], setZoom = zoomPair[1]\r\n      const canvas = canvasPair[0], setCanvas = canvasPair[1]\r\n      const scratch = scratchPair[0], setScratch = scratchPair[1]\r\n      const size = sizePair[0], setSize = sizePair[1]\r\n      const viewH = viewHPair[0], setViewH = viewHPair[1]\r\n      const posterCanvas = posterPair[0], setPosterCanvas = posterPair[1]\r\n      const itemMsg = itemMsgPair[0], setItemMsg = itemMsgPair[1]\r\n      const savedSettings = savedSettingsPair[0], setSavedSettings = savedSettingsPair[1]\r\n      const busy = busyPair[0], setBusy = busyPair[1]\r\n      const picking = pickingPair[0], setPicking = pickingPair[1]\r\n      const dirDraft = dirDraftPair[0], setDirDraft = dirDraftPair[1]\r\n      const draft = draftPair[0], setDraft = draftPair[1]\r\n      const settings = settingsPair[0], setSettings = settingsPair[1]\r\n      const saveState = savePair[0], setSaveState = savePair[1]\r\n      const modsOpen = modsOpenPair[0], setModsOpen = modsOpenPair[1]\r\n      const root = rootPair[0], setRoot = rootPair[1]\r\n      const editPair = React.useState(null)\r\n      const undoPair = React.useState([])\r\n      const editTickPair = React.useState(0)\r\n      const editCanvasPair = React.useState(null)\r\n      const editScratchPair = React.useState(null)\r\n      const editBusyPair = React.useState(false)\r\n      const editMsgPair = React.useState(null)\r\n      const voxelPair = React.useState(null)\r\n      const hoverPair = React.useState(null)\r\n      const ghostPair = React.useState(null)\r\n      const iconTickPair = React.useState(0)\r\n      const texEpochPair = React.useState(0)\r\n      const diagPair = React.useState(null)\r\n      const diagOpenPair = React.useState(false)\r\n      const copiedPair = React.useState('')\r\n      const autoStatusPair = React.useState('')\r\n      const autoTickPair = React.useState(0)\r\n      const composerTickPair = React.useState(0)\r\n      const diag = diagPair[0], setDiag = diagPair[1]\r\n      const diagOpen = diagOpenPair[0], setDiagOpen = diagOpenPair[1]\r\n      const copied = copiedPair[0], setCopied = copiedPair[1]\r\n      const autoStatus = autoStatusPair[0], setAutoStatus = autoStatusPair[1]\r\n      const autoTick = autoTickPair[0], setAutoTick = autoTickPair[1]\r\n      const composerTick = composerTickPair[0], setComposerTick = composerTickPair[1]\r\n      const voxel = voxelPair[0], setVoxel = voxelPair[1]\r\n      const hover = hoverPair[0], setHover = hoverPair[1]\r\n      const ghost = ghostPair[0], setGhost = ghostPair[1]\r\n      const iconTick = iconTickPair[0], setIconTick = iconTickPair[1]\r\n      const texEpoch = texEpochPair[0], setTexEpoch = texEpochPair[1]\r\n      const edit = editPair[0], setEdit = editPair[1]\r\n      const undo = undoPair[0], setUndo = undoPair[1]\r\n      const editTick = editTickPair[0], setEditTick = editTickPair[1]\r\n      const editCanvas = editCanvasPair[0], setEditCanvas = editCanvasPair[1]\r\n      const editScratch = editScratchPair[0], setEditScratch = editScratchPair[1]\r\n      const editBusy = editBusyPair[0], setEditBusy = editBusyPair[1]\r\n      const editMsg = editMsgPair[0], setEditMsg = editMsgPair[1]\r\n      const refSourcesPair = React.useState([])\r\n      const refSources = refSourcesPair[0], setRefSources = refSourcesPair[1]\r\n      const itemPair = React.useState(null)\r\n      const item = itemPair[0], setItem = itemPair[1]\r\n      const iconPair = React.useState(null)\r\n      const iconPick = iconPair[0], setIconPick = iconPair[1]\r\n      const itemOpenPair = React.useState(false)\r\n      const itemOpen = itemOpenPair[0], setItemOpen = itemOpenPair[1]\r\n      const hudPagePair = React.useState(1)\r\n      const hudPage = hudPagePair[0], setHudPage = hudPagePair[1]\r\n      const previewPair = React.useState(null)\r\n      const previewItem = previewPair[0], setPreviewItem = previewPair[1]\r\n      const filterPair = React.useState('')\r\n      const filter = filterPair[0], setFilter = filterPair[1]\r\n      const pickGroupPair = React.useState('')\r\n      const pickGroup = pickGroupPair[0], setPickGroup = pickGroupPair[1]\r\n      const pickFamilyPair = React.useState('')\r\n      const pickFamily = pickFamilyPair[0], setPickFamily = pickFamilyPair[1]\r\n      const pickPagePair = React.useState(1)\r\n      const pickPage = pickPagePair[0], setPickPage = pickPagePair[1]\r\n\r\n      function activeProjectId() {\r\n        if (choice !== null && choice.project !== undefined && choice.project !== null) return choice.project\r\n        const projects = index === null ? [] : (index.projects || [])\r\n        return projects.length > 0 ? projects[0].id : null\r\n      }\r\n\r\n      function noteDiag(payload, error) {\r\n        const info = diagnosticOf(payload)\r\n        if (info === null) { setDiag(null); return }\r\n        const key = reportKeyOf(info)\r\n        const repeat = lastReportKey !== '' && lastReportKey === key\r\n        lastReportKey = key\r\n        setDiagOpen(false)\r\n        setCopied('')\r\n        setDiag({ diag: info, error: error === undefined || error === null ? '' : String(error), repeat: repeat, key: key })\r\n      }\r\n\r\n\r\n      function statusText(verdict) {\r\n        if (verdict === 'filled') return '已放进输入框（只是草稿，没发送；按回车之前都可以改）'\r\n        if (verdict === 'busy') return '输入框里已经有你写的字，没有动它 —— 要放就点左边的按钮'\r\n        if (verdict === 'done') return '同一条报告已经放进过输入框，没有再塞一遍'\r\n        if (verdict === 'off') return '「出错时自动把报告放进输入框」现在是关的'\r\n        if (verdict === 'no-composer') return '这个壳没有给输入框接口 —— 上面那段可以选中复制'\r\n        return '出错时会把这份报告放进输入框（只放草稿，不发送）'\r\n      }\r\n      function placeReport(manual) {\r\n        if (diag === null) return\r\n        const verdict = autoFillDraft(reportForAI(diag.diag, diag.error), 'diag|' + String(diag.key), manual === true)\r\n        setAutoStatus(verdict)\r\n      }\r\n\r\n      React.useEffect(() => onComposerReady(() => setComposerTick(composerTick + 1)), [])\r\n      React.useEffect(() => {\r\n        if (diag === null) return\r\n        const verdict = autoFillDraft(reportForAI(diag.diag, diag.error), 'diag|' + String(diag.key))\r\n        setAutoStatus(verdict)\r\n      }, [diag === null ? '' : String(diag.key), composerTick, autoTick])\r\n\r\n\r\n      function copyReport(text) {\r\n        const payload = String(text === undefined || text === null ? '' : text)\r\n        const done = (message) => { try { setCopied(message) } catch (ignored) { /* 不能因为一句提示再炸一次 */ } }\r\n        try {\r\n          const board = typeof navigator !== 'undefined' && navigator !== null ? navigator.clipboard : undefined\r\n          if (board !== undefined && board !== null && typeof board.writeText === 'function') {\r\n            const result = board.writeText(payload)\r\n            if (result !== undefined && result !== null && typeof result.then === 'function') {\r\n              result.then(() => done('已复制到剪贴板'), () => fallbackCopy(payload, done))\r\n            } else { done('已复制到剪贴板') }\r\n            return\r\n          }\r\n        } catch (error) { /* 没有剪贴板就走下面那条 */ }\r\n        fallbackCopy(payload, done)\r\n      }\r\n\r\n      function fallbackCopy(text, done) {\r\n        try {\r\n          if (typeof document !== 'undefined' && document !== null && typeof document.createElement === 'function') {\r\n            const area = document.createElement('textarea')\r\n            area.value = text\r\n            area.setAttribute('readonly', 'readonly')\r\n            if (document.body && typeof document.body.appendChild === 'function') document.body.appendChild(area)\r\n            if (typeof area.select === 'function') area.select()\r\n            const ok = typeof document.execCommand === 'function' ? document.execCommand('copy') : false\r\n            if (document.body && typeof document.body.removeChild === 'function') document.body.removeChild(area)\r\n            done(ok === false ? '没复制成 —— 请手动选中上面那段' : '已复制到剪贴板')\r\n            return\r\n          }\r\n        } catch (error) { /* 没有 DOM 不是错误 */ }\r\n        done('没复制成 —— 请手动选中上面那段')\r\n      }\r\n\r\n      function open(target, where) {\r\n        if (lastProject !== target.project) { forgetTextures(); setTexEpoch(texEpoch + 1) }\r\n        lastProject = target.project\r\n        setBusy(true)\r\n        setChoice(target)\r\n        setPreviewItem(null)\r\n        painting.active = false\r\n        setEdit(null)\r\n        setUndo([])\r\n        setEditMsg(null)\r\n        setVoxel(null)\r\n        setHover(null)\r\n        setGhost(null)\r\n        const want = { root: where, project: target.project, kind: target.kind, id: target.id, have: Object.keys(decoded) }\r\n        host.call('atlas.scene', want).then((result) => {\r\n          setBusy(false)\r\n          if (result === null || result === undefined) { setFailure('scene returned nothing'); return }\r\n          if (result.error !== undefined) {\r\n            setFailure(result.error)\r\n            noteDiag(result, result.error)\r\n            setScene(null)\r\n            return\r\n          }\r\n          setFailure(null)\r\n          lastReportKey = ''\r\n          setDiag(null)\r\n          for (const key of Object.keys(imageNodes)) delete imageNodes[key]\r\n          setScene(sceneOf(result))\r\n        }).catch((error) => { setBusy(false); setFailure(String(error && error.message ? error.message : error)) })\r\n      }\r\n\r\n      function firstOfProject(project) {\r\n        if (project === undefined || project === null) return null\r\n        for (const category of CATEGORIES) {\r\n          const items = (project.items && project.items[category.key]) || []\r\n          if (items.length > 0) return { project: project.id, kind: category.key, id: items[0].id }\r\n        }\r\n        return null\r\n      }\r\n\r\n      function firstPick(result) {\r\n        const projects = result.projects || []\r\n        for (const category of CATEGORIES) {\r\n          for (const project of projects) {\r\n            const items = (project.items && project.items[category.key]) || []\r\n            if (items.length > 0) return { project: project.id, kind: category.key, id: items[0].id }\r\n          }\r\n        }\r\n        return null\r\n      }\r\n\r\n      function scan(where, force, wantProject) {\r\n        if (where === undefined || where === '') { setIndex(null); return }\r\n        if (force !== true && indexes[where] !== undefined) {\r\n          const cached = indexes[where]\r\n          setIndex(cached)\r\n          setFailure(null)\r\n          const project = wantProject === undefined || wantProject === null ? null : (cached.projects || []).filter((p) => p.id === wantProject)[0]\r\n          const first = project !== null && project !== undefined ? firstOfProject(project) : firstPick(cached)\r\n          if (first !== null) open(first, where)\r\n          return\r\n        }\r\n        setBusy(true)\r\n        setFailure(null)\r\n        host.call('atlas.scan', { root: where }).then((result) => {\r\n          setBusy(false)\r\n          if (result === null || result === undefined) { setFailure('scan returned nothing'); return }\r\n          setIndex(result)\r\n          if (result.error !== undefined) { setFailure(result.error); return }\r\n          const projects = result.projects || []\r\n          if (projects.length === 0) {\r\n            setFailure(null)\r\n            setEmptyRoot(where)\r\n            setNewId(String(where).replace(/[\\\\/]+$/, '').split(/[\\\\/]/).pop() || '')\r\n            setScene(null)\r\n            return\r\n          }\r\n          setEmptyRoot(null)\r\n          setFailure(null)\r\n          indexes[where] = result\r\n          const project = wantProject === undefined || wantProject === null ? null : projects.filter((p) => p.id === wantProject)[0]\r\n          const first = project !== null && project !== undefined ? firstOfProject(project) : firstPick(result)\r\n          if (first !== null) open(first, where)\r\n        }).catch((error) => { setBusy(false); setFailure(String(error && error.message ? error.message : error)) })\r\n      }\r\n\r\n      function commitRoot(next) {\r\n        roots[sessionId] = next\r\n        setRoot(next)\r\n        setDraft('')\r\n        setNotice(null)\r\n        setSettings(null)\r\n        scan(next, false, null)\r\n      }\r\n\r\n      function openNearby(rootPath, projectId) {\r\n        roots[sessionId] = rootPath\r\n        setRoot(rootPath)\r\n        setNotice(null)\r\n        scan(rootPath, false, projectId)\r\n      }\r\n\r\n      function runPicker(start, onPicked) {\r\n        if (picking === true) return\r\n        setPicking(true)\r\n        setNotice('正在打开系统的目录选择器…（有的环境弹不出来；弹不出来就在下面的输入框里直接贴路径）')\r\n        host.call('atlas.pickDirectory', { start: start })\r\n          .then((result) => {\r\n            setPicking(false)\r\n            if (result === null || result === undefined) { setNotice('目录选择器没有返回结果。'); return }\r\n            if (result.error !== undefined) { setNotice(String(result.error)); return }\r\n            if (result.supported === false) {\r\n              setNotice(String(result.detail || '这个环境没有可用的目录选择器，') + '请把路径直接贴进下面的输入框。')\r\n              return\r\n            }\r\n            if (result.cancelled === true) { setNotice(null); return }\r\n            if (typeof result.path === 'string' && result.path.length > 0) { setNotice(null); onPicked(result.path); return }\r\n            setNotice('目录选择器没有返回路径。')\r\n          })\r\n          .catch((error) => {\r\n            setPicking(false)\r\n            setNotice('目录选择器失败：' + String(error && error.message ? error.message : error) +\r\n              '　请把路径直接贴进下面的输入框。')\r\n          })\r\n      }\r\n\r\n      function pickDirectory() {\r\n        runPicker(root !== '' ? root : (nearby !== null ? nearby.cwd : ''), commitRoot)\r\n      }\r\n\r\n      function applyDirDraft() {\r\n        const wanted = String(dirDraft).trim()\r\n        patchSettings({ directory: wanted }, true)\r\n      }\r\n\r\n      function loadSettings() {\r\n        const projectId = activeProjectId()\r\n        if (projectId === null) return\r\n        setSaveState(null)\r\n        setModsOpen(false)\r\n        setSettings({ loading: true })\r\n        host.call('atlas.settings', { root: root, project: projectId }).then((result) => {\r\n          if (result === null || result === undefined || result.error !== undefined) {\r\n            setSettings({ error: result !== null && result !== undefined && result.error !== undefined ? result.error : '设置读取失败' })\r\n            return\r\n          }\r\n          setSettings(Object.assign({ loading: false }, result))\r\n        }).catch((error) => setSettings({ error: String(error && error.message ? error.message : error) }))\r\n      }\r\n\r\n      function openSettings() {\r\n        if (settings !== null) { setSettings(null); return }\r\n        loadSettings()\r\n      }\r\n\r\n      function saveSettings(next, rescan) {\r\n        const modMap = {}\r\n        for (const item of next.mods || []) modMap[item.name] = item.on === true\r\n        setSaveState('保存中…')\r\n        host.call('atlas.saveSettings', {\r\n          root: root, project: next.project, directory: next.directory,\r\n          includeGenerated: next.includeGenerated, includeMods: next.includeMods, mods: modMap,\r\n        }).then((result) => {\r\n          const failed = result !== null && result !== undefined && result.error !== undefined\r\n          setSaveState(failed ? ('保存失败：' + result.error) : '已保存')\r\n          if (failed) { setSavedSettings(null); return }\r\n          const on = (next.mods || []).filter((item) => item.on === true).length\r\n          setSavedSettings({\r\n            path: result.path === undefined ? '' : String(result.path),\r\n            note: '参考目录改成了 ' + (next.directory === '' ? '（空）' : next.directory)\r\n              + '；' + on + '/' + (next.mods || []).length + ' 个 mod 开着，'\r\n              + (next.includeGenerated === false ? '不含' : '含') + '本项目自己的贴图。请按这个重做',\r\n          })\r\n          if (rescan === true) loadSettings()\r\n        }).catch((error) => {\r\n          setSavedSettings(null)\r\n          setSaveState('保存失败：' + String(error && error.message ? error.message : error))\r\n        })\r\n      }\r\n\r\n      function patchSettings(patch, rescan) {\r\n        if (settings === null) return\r\n        const next = Object.assign({}, settings, patch)\r\n        setSettings(next)\r\n        saveSettings(next, rescan)\r\n      }\r\n\r\n      function toggleMod(name, on) {\r\n        if (settings === null) return\r\n        const mods = (settings.mods || []).map((item) => (item.name === name ? Object.assign({}, item, { on: on }) : item))\r\n        const next = Object.assign({}, settings, { mods: mods })\r\n        setSettings(next)\r\n        saveSettings(next)\r\n      }\r\n\r\n      React.useEffect(() => {\r\n        if (root !== '') { scan(root, false, null); return }\r\n        host.call('atlas.session', { sessionId: sessionId })\r\n          .then((result) => {\r\n            const cwd = result !== null && result !== undefined && typeof result.cwd === 'string' && result.cwd.length > 0 ? result.cwd : null\r\n            if (cwd === null) return null\r\n            setNearby({ cwd: cwd, loading: true, projects: [], error: null })\r\n            return host.call('atlas.projects', { path: cwd })\r\n          })\r\n          .then((result) => {\r\n            if (result === null || result === undefined) return\r\n            if (result.error !== undefined) { setNearby({ cwd: result.base || '', loading: false, projects: [], error: result.error }); return }\r\n            setNearby({ cwd: result.base, loading: false, projects: result.projects || [], error: null })\r\n          })\r\n          .catch((error) => setNearby({ cwd: '', loading: false, projects: [], error: String(error && error.message ? error.message : error) }))\r\n      }, [])\r\n\r\n      React.useEffect(() => {\r\n        if (settings === null) return\r\n        setDirDraft(typeof settings.directory === 'string' ? settings.directory : '')\r\n      }, [settings === null ? '' : String(settings.directory)])\r\n\r\n      React.useEffect(() => {\r\n        if (canvas === null) return\r\n        const width = canvas.clientWidth || 340\r\n        const height = canvas.clientHeight || 240\r\n        if (width !== size[0] || height !== size[1]) setSize([width, height])\r\n      })\r\n\r\n      React.useEffect(() => {\r\n        if (posterCanvas === null || posterRecipe === null) return\r\n        const frames = (posterRecipe.frames || []).length\r\n        const frame = frames > 1 ? Math.floor(animTicks / 2) % frames : 0\r\n        drawItemIcon(posterCanvas, posterRecipe, frame, decoded)\r\n      })\r\n\r\n      React.useEffect(() => {\r\n        if (canvas === null) return\r\n        function onWheel(event) {\r\n          event.preventDefault()\r\n          setZoom((previous) => Math.max(0.35, Math.min(3, previous * (event.deltaY > 0 ? 0.92 : 1.08))))\r\n        }\r\n        canvas.addEventListener('wheel', onWheel, { passive: false })\r\n        return () => canvas.removeEventListener('wheel', onWheel)\r\n      }, [canvas])\r\n\r\n      function zoomBy(factor) {\r\n        setZoom((previous) => Math.max(0.35, Math.min(3, previous * factor)))\r\n      }\r\n\r\n      function projectNamespaceOf(id) {\r\n        const projects = index === null ? [] : (index.projects || [])\r\n        const found = projects.filter((entry) => entry.id === id)[0]\r\n        return found === undefined ? '' : found.namespace\r\n      }\r\n\r\n      const hudView = () => {\r\n        const list = itemFiltered()\r\n        const pages = Math.max(1, Math.ceil(list.length / HUD_SLOTS))\r\n        const page = Math.min(Math.max(1, hudPage), pages)\r\n        return { list: list.slice((page - 1) * HUD_SLOTS, page * HUD_SLOTS),\r\n          page: page, pages: pages, total: list.length }\r\n      }\r\n      const hudOn = previewItem !== null ? previewItem.id\r\n        : (choice !== null && choice.kind === 'block' ? choice.id : '')\r\n      const hudPickedEntry = hudOn === '' ? undefined\r\n        : itemFiltered().filter((entry) => entry.id === hudOn)[0]\r\n      const hudPicked = previewItem !== null\r\n        ? (hudPickedEntry === undefined ? previewItem.id : hudPickedEntry.name)\r\n        : (hudPickedEntry !== undefined ? hudPickedEntry.name\r\n          : (choice === null ? '' : (choice.title || choice.id)))\r\n      const hudKey = item === null ? '' : [item.source, item.namespace, item.filter,\r\n        item.form, item.family].join('|')\r\n      React.useEffect(() => {\r\n        if (hudOn === '') return\r\n        const token = hudKey + '#' + hudOn\r\n        if (token === hudFollowed) return\r\n        hudFollowed = token\r\n        const at = itemFiltered().map((entry) => entry.id).indexOf(hudOn)\r\n        if (at < 0) return\r\n        const page = Math.floor(at / HUD_SLOTS) + 1\r\n        if (page !== hudView().page) setHudPage(page)\r\n      }, [hudKey, hudOn])\r\n      const hudAnimated = item !== null && itemFiltered().some((entry) => {\r\n        const recipe = itemRecipes[itemKey(item.namespace, entry.id)]\r\n        return recipe !== undefined && recipe !== null\r\n          && (((recipe.frames || []).length > 1) || Object.keys(recipe.animations || {}).length > 0)\r\n      })\r\n      const animating = (scene !== null && Object.keys(scene.animations || {}).length > 0)\r\n        || (ghost !== null && Object.keys(ghost.animations || {}).length > 0)\r\n        || hudAnimated\r\n      React.useEffect(() => {\r\n        if (!animating) return undefined\r\n        const dispose = timer.interval(() => {\r\n          animTicks += 1\r\n          setTick((previous) => previous + 1)\r\n        }, 50)\r\n        return () => { if (typeof dispose === 'function') dispose() }\r\n      }, [animating])\r\n\r\n      React.useEffect(() => {\r\n        const ours = projectNamespaceOf(activeProjectId())\r\n        if (ours === '') return\r\n        if (item === null) { loadItems('project', ours, 1, '', '', ''); return }\r\n        if (item.source === 'project' && item.namespace !== ours) loadItems('project', ours, 1, '', '', '')\r\n      }, [index === null ? '' : (index.projects || []).map((project) => project.id).join(','),\r\n        activeProjectId(), item === null ? '' : item.source + '|' + item.namespace])\r\n\r\n      React.useEffect(() => {\r\n        if (scene === null && item === null) return\r\n        const needed = idsOf(scene).slice()\r\n        const waiting = needed.slice()\r\n        if (ghost !== null && Array.isArray(ghost.textureIds)) {\r\n          for (const id of idsOf(ghost)) if (needed.indexOf(id) < 0) needed.push(id)\r\n        }\r\n        for (const recipe of iconRecipesInUse()) {\r\n          for (const id of idsOf(recipe)) if (needed.indexOf(id) < 0) needed.push(id)\r\n        }\r\n        let changed = false\r\n        if (scratch !== null) {\r\n          for (const id of needed) {\r\n            if (decoded[id] !== undefined || failedTex[id] === true) continue\r\n            const node = imageNodes[id]\r\n            if (node === undefined || node.complete !== true) continue\r\n            changed = true\r\n            if (!node.naturalWidth || !node.naturalHeight) { failedTex[id] = true; continue }\r\n            const neededWidth = Math.max(scratch.width, node.naturalWidth)\r\n            const neededHeight = Math.max(scratch.height, node.naturalHeight)\r\n            if (neededWidth !== scratch.width || neededHeight !== scratch.height) {\r\n              scratch.width = neededWidth\r\n              scratch.height = neededHeight\r\n            }\r\n            const paint = scratch.getContext('2d')\r\n            paint.clearRect(0, 0, scratch.width, scratch.height)\r\n            paint.drawImage(node, 0, 0)\r\n            const frame = paint.getImageData(0, 0, node.naturalWidth, node.naturalHeight)\r\n            decoded[id] = { width: frame.width, height: frame.height, data: frame.data }\r\n          }\r\n        }\r\n        if (changed) { setTick(tick + 1); return }\r\n        if (scene === null) {\r\n          if (canvas === null) return\r\n          const emptyKey = 'empty|' + size[0] + '|' + size[1] + '|' + canvasGeneration\r\n          if (emptyKey === lastDrawKey) return\r\n          lastDrawKey = emptyKey\r\n          clearViewport(canvas, size[0], size[1])\r\n          return\r\n        }\r\n        if (canvas === null) return\r\n        for (const id of waiting) {\r\n          if (decoded[id] === undefined && failedTex[id] !== true) return\r\n        }\r\n        const ghostKey = ghost === null ? '-' : (ghost.block + '@' + ghost.at.join(',') + ':' + ghost.quads.length)\r\n        const hoverKey = voxel === null || hover === null ? '-' : (hover.cell + ':' + hover.face)\r\n        const animations = Object.assign({}, scene.animations || {},\r\n          ghost === null || ghost.animations === undefined ? {} : ghost.animations)\r\n        const animTime = animTicks * 50\r\n        const animKey = Object.keys(animations).sort()\r\n          .map((id) => id + ':' + animationRow(animations[id], animTime)).join(',')\r\n        const key = [scene.kind, scene.id, scene.quads.length, size[0], size[1], canvasGeneration,\r\n          yaw.toFixed(4), pitch.toFixed(4), zoom.toFixed(4), ghostKey, hoverKey, animKey].join('|')\r\n        if (key === lastDrawKey) return\r\n        lastDrawKey = key\r\n        const box = scene.box || { min: [-1, -1, -1], max: [1, 1, 1] }\r\n        const camera = orbitCamera(box, yaw, pitch, zoom, size[0], size[1], Math.PI / 4)\r\n        lastCamera = camera\r\n        const buffer = new Int32Array(size[0] * size[1])\r\n        buffer.fill(-1)\r\n        const colourBuf = new Float64Array(size[0] * size[1] * 4)\r\n        const depthBuf = new Float64Array(size[0] * size[1])\r\n        const pass = { width: size[0], height: size[1], background: [26, 24, 28], camera: camera,\r\n          colour: colourBuf, depth: depthBuf, textures: decoded, animations: animations, timeMs: animTime }\r\n        const bytes = renderScene(Object.assign({ quads: scene.quads, pick: buffer }, pass))\r\n        pickBuffer = buffer\r\n        if (voxel !== null && hover !== null) {\r\n          const marked = scene.quads.filter((quad) => quad.pick !== undefined && quad.pick !== null\r\n            && quad.pick.cell === hover.cell)\r\n          if (marked.length > 0) {\r\n            renderScene(Object.assign({ quads: marked, overlay: 0.45, tint: TINT_REMOVE }, pass))\r\n          }\r\n          const ghostQuads = ghost === null || !Array.isArray(ghost.quads) ? [] : ghost.quads\r\n          const usable = ghostQuads.some((quad) => decoded[quad.tex] !== undefined)\r\n          if (usable) {\r\n            renderScene(Object.assign({ quads: ghostQuads, overlay: 0.5, tint: null }, pass))\r\n          }\r\n        }\r\n        for (let i = 0; i < bytes.length; i++) {\r\n          const value = Math.round(colourBuf[i] * 255)\r\n          bytes[i] = value < 0 ? 0 : (value > 255 ? 255 : value)\r\n        }\r\n        canvas.width = size[0]\r\n        canvas.height = size[1]\r\n        const paint = canvas.getContext('2d')\r\n        const frame = paint.createImageData(size[0], size[1])\r\n        frame.data.set(bytes)\r\n        paint.putImageData(frame, 0, 0)\r\n      })\r\n\r\n\r\n      function iconRecipesInUse() {\r\n        const out = []\r\n        if (item === null) return out\r\n        const seen = {}\r\n        const add = (entry) => {\r\n          const key = itemKey(item.namespace, entry.id)\r\n          if (seen[key] === true) return\r\n          const recipe = itemRecipes[key]\r\n          if (recipe === undefined || recipe === null) return\r\n          seen[key] = true\r\n          out.push(recipe)\r\n        }\r\n        for (const entry of hudView().list) add(entry)\r\n        for (const entry of itemView().list) add(entry)\r\n        return out\r\n      }\r\n\r\n      React.useEffect(() => {\r\n        if (item === null || item.facts.length === 0) return\r\n        ensureItemPage()\r\n      }, [item === null ? '' : [item.namespace, item.page, hudPage, item.filter, item.form,\r\n        item.family, item.facts.length].join('|'), texEpoch])\r\n\r\n      React.useEffect(() => {\r\n        if (item === null) return\r\n        let added = 0\r\n        for (const entry of itemView().list) {\r\n          const key = itemKey(item.namespace, entry.id)\r\n          if (itemUrls[key] !== undefined) continue\r\n          const recipe = itemRecipes[key]\r\n          if (recipe === undefined || recipe === null || recipe.shape === 'none') continue\r\n          let ready = true\r\n          for (const id of idsOf(recipe)) {\r\n            if (decoded[id] === undefined && failedTex[id] !== true) { ready = false; break }\r\n          }\r\n          if (!ready) continue\r\n          const url = itemIconUrl(recipe, decoded, 32)\r\n          if (url === null) continue\r\n          itemUrls[key] = url\r\n          added += 1\r\n        }\r\n        if (added > 0) setIconTick(iconTick + 1)\r\n      })\r\n\r\n      React.useEffect(() => {\r\n        if (item === null) return\r\n        for (const entry of hudView().list) {\r\n          const key = itemKey(item.namespace, entry.id)\r\n          const canvas = hudCanvases[key]\r\n          if (canvas === undefined || canvas === null) continue\r\n          const recipe = itemRecipes[key]\r\n          const frames = recipe === undefined || recipe === null ? 0 : (recipe.frames || []).length\r\n          const frame = frames > 1 ? Math.floor(animTicks / 2) % frames : 0\r\n          drawItemIcon(canvas, recipe, frame, decoded)\r\n        }\r\n      })\r\n\r\n\r\n      function slotNote(recipe) {\r\n        if (recipe === undefined || recipe === null) return null\r\n        if (recipe.missing === true) {\r\n          return '这一格没有图标：' + (recipe.error || recipe.reason || '参考目录里取不到这个物品')\r\n        }\r\n        if (recipe.shape === 'none') {\r\n          return '这个物品是代码画的，没有可用的图标模型'\r\n            + (recipe.error ? ' —— ' + String(recipe.error) : '')\r\n        }\r\n        if (recipe.shape === 'iso' && (recipe.display === null || recipe.display === undefined)) {\r\n          return '物品模型指向几何模型，模型链里没有 display.gui：游戏里物品栏也是这样画的。'\r\n            + '把它改成 item/generated（layer0 指向那张贴图）就有正常的平面图标了'\r\n        }\r\n        const absent = (recipe.missingModels || []).filter((name) => String(name).indexOf('内置:') !== 0)\r\n        if (absent.length > 0) return '模型链缺 ' + absent.join('、')\r\n        return null\r\n      }\r\n\r\n\r\n      function slotFacts(recipe) {\r\n        if (recipe === undefined || recipe === null) return '还没取到这个物品的图标'\r\n        if (recipe.missing === true) {\r\n          return '缺：' + (recipe.error || recipe.reason || '参考目录里取不到这个物品')\r\n        }\r\n        const parts = [recipe.shape === 'iso' ? '等距' : '平铺']\r\n        if (recipe.display !== null && recipe.display !== undefined) {\r\n          parts.push('display.gui ' + JSON.stringify(recipe.display.rotation))\r\n        }\r\n        const absent = []\r\n        const builtin = []\r\n        for (const name of (recipe.missingModels || [])) {\r\n          if (String(name).indexOf('内置:') === 0) builtin.push(String(name).slice(3))\r\n          else absent.push(String(name))\r\n        }\r\n        if (absent.length > 0) parts.push('模型链缺 ' + absent.join('、'))\r\n        if (builtin.length > 0) {\r\n          parts.push('原版母模型用了内置的 ' + builtin.join('、') + '（设了参考目录就从游戏里读）')\r\n        }\r\n        return parts.join(' · ')\r\n      }\r\n\r\n      function blockChoices() {\r\n        const out = []\r\n        const seen = {}\r\n        const add = (name, title) => {\r\n          if (typeof name !== 'string' || name === '' || seen[name] === true) return\r\n          seen[name] = true\r\n          out.push({ name: name, title: title || name })\r\n        }\r\n        const projects = index === null ? [] : (index.projects || [])\r\n        const current = activeProjectId()\r\n        const currentProject = projects.filter((item) => item.id === current)[0]\r\n        const fallback = currentProject === undefined ? '' : currentProject.namespace\r\n        const titleOf = {}\r\n        for (const project of projects) {\r\n          const named = project.id === current\r\n          for (const item of ((project.items && project.items.block) || [])) {\r\n            const qualified = project.namespace + ':' + item.id\r\n            titleOf[qualified] = named ? item.title : (project.title + ' · ' + item.title)\r\n            add(qualified, titleOf[qualified])\r\n          }\r\n        }\r\n        for (const cell of (scene !== null && Array.isArray(scene.cells) ? scene.cells : [])) {\r\n          const raw = String(cell.block)\r\n          const qualified = raw.indexOf(':') >= 0 || fallback === '' ? raw : (fallback + ':' + raw)\r\n          add(qualified, titleOf[qualified] || qualified)\r\n        }\r\n        return out\r\n      }\r\n\r\n      function openVoxel() {\r\n        if (scene === null || !Array.isArray(scene.cells)) {\r\n          setEditMsg('这个资产没有可编辑的格子')\r\n          return\r\n        }\r\n        const choices = blockChoices()\r\n        loadRefSources()\r\n        resetPick()\r\n        painting.active = false\r\n        setHover(null)\r\n        setGhost(null)\r\n        setEdit(null)\r\n        setFilter('')\r\n        setVoxel({\r\n          kind: scene.kind, id: scene.id, title: scene.title || scene.id,\r\n          cells: scene.cells.map((cell) => {\r\n            const kept = { block: cell.block, at: [cell.at[0], cell.at[1], cell.at[2]] }\r\n            if (typeof cell.variant === 'string' && cell.variant !== '') kept.variant = cell.variant\r\n            return kept\r\n          }),\r\n          block: choices.length > 0 ? choices[0].name : '', choices: choices,\r\n          source: 'project', variants: [], axes: [], defaults: {}, flip: false, overrides: {}, manual: false,\r\n          undo: [], busy: false, msg: null,\r\n        })\r\n      }\r\n\r\n      function loadRefSources() {\r\n        setRefSources([])\r\n        host.call('atlas.refNamespaces', { root: root, project: activeProjectId() })\r\n          .then((result) => {\r\n            if (result === null || result === undefined || result.error !== undefined) return\r\n            setRefSources(result.namespaces || [])\r\n          }).catch(() => { /* decoration: an empty picker is not fatal */ })\r\n      }\r\n\r\n      function itemKey(namespace, id) { return namespace + ':' + id }\r\n\r\n      function loadItems(source, namespace, page, filter, form, family) {\r\n        setItem({ source: source, namespace: namespace, facts: [],\r\n          page: page === undefined ? 1 : page,\r\n          filter: filter === undefined ? '' : filter, form: form === undefined ? '' : form,\r\n          family: family === undefined ? '' : family, busy: true, msg: null,\r\n          choices: item === null || item.choices === undefined ? [] : item.choices })\r\n        host.call('atlas.refItems', { root: root, project: activeProjectId(),\r\n          source: source, namespace: namespace })\r\n          .then((result) => {\r\n            const failed = failureOf(result)\r\n            if (failed !== null) {\r\n              setItem((previous) => Object.assign({}, previous, { busy: false,\r\n                msg: '取不到物品：' + failed }))\r\n              return\r\n            }\r\n            const facts = (result.items || []).filter((entry) => entry.parentOnly !== true)\r\n            setItem((previous) => Object.assign({}, previous, { busy: false, facts: facts,\r\n              version: result.version,\r\n              msg: facts.length + ' 个物品' + (result.version === undefined ? '' : ' · ' + result.version) }))\r\n          }).catch((error) => {\r\n            setItem((previous) => Object.assign({}, previous, { busy: false,\r\n              msg: '取不到物品：' + String(error && error.message ? error.message : error) }))\r\n          })\r\n      }\r\n\r\n      function openItems() {\r\n        if (itemOpen) { setItemOpen(false); return }\r\n        setItemOpen(true)\r\n        loadRefSources()\r\n        setIconPick(null)\r\n        const ours = projectNamespaceOf(activeProjectId())\r\n        const stale = item === null || item.facts.length === 0\r\n          || (item.source === 'project' && ours !== '' && item.namespace !== ours)\r\n        if (!stale) return\r\n        if (ours !== '') { loadItems('project', ours, 1, '', '', ''); return }\r\n        const namespace = refSources.length > 0 ? refSources[0].name : 'minecraft'\r\n        loadItems('reference', namespace, 1, '', '', '')\r\n      }\r\n\r\n\r\n      function itemSearch() {\r\n        return item === null ? '' : String(item.filter).trim().toLowerCase()\r\n      }\r\n\r\n\r\n      function itemFiltered() {\r\n        if (item === null) return []\r\n        const needle = itemSearch()\r\n        if (needle !== '') return item.facts.filter((entry) => String(entry.name).toLowerCase().indexOf(needle) >= 0\r\n          || String(entry.id).toLowerCase().indexOf(needle) >= 0)\r\n        return item.facts.filter((entry) => (item.form === '' || entry.form === item.form)\r\n          && (item.family === '' || entry.family === item.family))\r\n      }\r\n\r\n      function itemView() {\r\n        const list = itemFiltered()\r\n        const total = list.length\r\n        const pages = Math.max(1, Math.ceil(total / ITEM_PAGE))\r\n        const page = Math.min(Math.max(1, item.page), pages)\r\n        return { list: list.slice((page - 1) * ITEM_PAGE, page * ITEM_PAGE), page: page, pages: pages, total: total }\r\n      }\r\n\r\n      function ensureItemPage() {\r\n        if (item === null) return\r\n        const missing = []\r\n        const want = (list) => {\r\n          for (const entry of list) {\r\n            const key = itemKey(item.namespace, entry.id)\r\n            if (itemRecipes[key] === undefined && missing.indexOf(entry.id) < 0) missing.push(entry.id)\r\n          }\r\n        }\r\n        want(itemView().list)\r\n        want(hudView().list)\r\n        if (missing.length === 0) return\r\n        host.call('atlas.itemIcons', { root: root, project: activeProjectId(),\r\n          source: item.source, namespace: item.namespace, items: missing }).then((result) => {\r\n          const failed = failureOf(result)\r\n          if (failed !== null) {\r\n            itemFetchError = '取不到物品图标：' + failed\r\n            setIconTick(iconTick + 1)\r\n            return\r\n          }\r\n          itemFetchError = ''\r\n          let added = 0\r\n          for (const id of Object.keys(result.items || {})) {\r\n            const recipe = result.items[id]\r\n            const key = itemKey(item.namespace, id)\r\n            if (itemRecipes[key] !== undefined) continue\r\n            if (recipe === undefined || recipe === null) continue\r\n            itemRecipes[key] = recipe\r\n            added += 1\r\n          }\r\n          if (added > 0) setIconTick(iconTick + 1)\r\n        }).catch((error) => {\r\n          itemFetchError = '取不到物品图标：' + String(error && error.message ? error.message : error)\r\n          setIconTick(iconTick + 1)\r\n        })\r\n      }\r\n\r\n\r\n      function projectHasBlock(id) {\r\n        const project = index === null ? null\r\n          : (index.projects || []).filter((entry) => entry.id === activeProjectId())[0]\r\n        if (project === null || project === undefined) return false\r\n        return ((project.items && project.items.block) || []).some((entry) => entry.id === id)\r\n      }\r\n\r\n      function pickItem(entry) {\r\n        const namespace = item === null ? '' : item.namespace\r\n        setIconPick({ namespace: namespace, id: entry.id })\r\n        if (item !== null && item.source === 'project') {\r\n          if (!projectHasBlock(entry.id)) {\r\n            setPreviewItem({ source: 'project', namespace: namespace, id: entry.id, localOnly: true })\r\n            setScene(null)\r\n            setVoxel(null)\r\n            setHover(null)\r\n            setGhost(null)\r\n            setEdit(null)\r\n            setFailure(null)\r\n            return\r\n          }\r\n          setPreviewItem(null)\r\n          open({ project: activeProjectId(), kind: 'block', id: entry.id }, root)\r\n          return\r\n        }\r\n        openReferenceItem(entry)\r\n      }\r\n\r\n\r\n      function forgetSceneBecauseItem() {\r\n        painting.active = false\r\n        setScene(null)\r\n        setVoxel(null)\r\n        setHover(null)\r\n        setGhost(null)\r\n        setEdit(null)\r\n        setFailure(null)\r\n        lastDrawKey = ''\r\n      }\r\n\r\n      function openReferenceItem(entry) {\r\n        const reference = (item === null ? '' : item.namespace) + ':' + entry.id\r\n        setPreviewItem({ source: 'reference', namespace: item === null ? '' : item.namespace, id: entry.id })\r\n        host.call('atlas.preview', { root: root, project: activeProjectId(), block: reference,\r\n          at: [0, 0, 0], variant: null, have: Object.keys(decoded) }).then((result) => {\r\n          const failed = failureOf(result)\r\n          if (failed !== null) {\r\n            forgetSceneBecauseItem()\r\n            setItem((previous) => previous === null ? previous : Object.assign({}, previous,\r\n              { msg: '3D 取不到：' + failed }))\r\n            return\r\n          }\r\n          lastDrawKey = ''\r\n          setFailure(null)\r\n          setScene(sceneOf({ kind: 'block', id: reference, title: entry.name || entry.id,\r\n            quads: result.quads, textureIds: idsOf(result), textures: result.textures,\r\n            animations: result.animations, cells: null, palette: [], errors: [],\r\n            box: boxOfQuads(arrayOf(result.quads)), preview: true }))\r\n          setVoxel(null)\r\n          setHover(null)\r\n          setGhost(null)\r\n        }).catch((error) => {\r\n          forgetSceneBecauseItem()\r\n          setItem((previous) => previous === null ? previous : Object.assign({}, previous,\r\n            { msg: '3D 取不到：' + String(error && error.message ? error.message : error) }))\r\n        })\r\n      }\r\n\r\n      function pickSource(source) {\r\n        if (voxel === null) return\r\n        if (source === 'project') {\r\n          const choices = blockChoices()\r\n          setFilter('')\r\n          resetPick()\r\n          setVoxel(Object.assign({}, voxel, { source: 'project', choices: choices,\r\n            block: choices.length > 0 ? choices[0].name : '' }))\r\n          setGhost(null)\r\n          return\r\n        }\r\n        const namespace = source.slice(4)\r\n        setVoxel(Object.assign({}, voxel, { source: source, msg: '正在读取 ' + namespace + ' 的方块…' }))\r\n        host.call('atlas.refBlocks', { root: root, project: activeProjectId(), namespace: namespace })\r\n          .then((result) => {\r\n            if (result === null || result === undefined || result.error !== undefined) {\r\n              setVoxel(Object.assign({}, voxel, { msg: '取不到 ' + namespace + ' 的方块：'\r\n                + String(result && result.error ? result.error : '没有返回结果') }))\r\n              return\r\n            }\r\n            const choices = (result.blocks || []).map((item) => ({ name: namespace + ':' + item.id,\r\n              title: item.name, group: item.group || '', groupLabel: item.groupLabel || '',\r\n              family: item.family || '' }))\r\n            if (choices.length === 0) {\r\n              setVoxel(Object.assign({}, voxel, { msg: namespace + ' 里没有方块' }))\r\n              return\r\n            }\r\n            setFilter('')\r\n            resetPick()\r\n            setVoxel(Object.assign({}, voxel, { source: source, choices: choices,\r\n              block: choices[0].name, msg: '参考 ' + namespace + ' · ' + choices.length + ' 个方块' }))\r\n            setGhost(null)\r\n          }).catch((error) => {\r\n            setVoxel(Object.assign({}, voxel, { msg: '取不到方块：' + String(error && error.message ? error.message : error) }))\r\n          })\r\n      }\r\n\r\n      function searchMatch(item, needle) {\r\n        return String(item.title).toLowerCase().indexOf(needle) >= 0\r\n          || String(item.name).toLowerCase().indexOf(needle) >= 0\r\n      }\r\n\r\n      function groupOfItem(item) { return item.group || '' }\r\n      function familyOfItem(item) { return item.family || '其他' }\r\n\r\n\r\n      function countsBy(keyOf, within) {\r\n        const counts = {}\r\n        for (const item of (voxel === null ? [] : voxel.choices)) {\r\n          if (within !== null && within(item) !== true) continue\r\n          const value = keyOf(item) || ''\r\n          counts[value] = (counts[value] || 0) + 1\r\n        }\r\n        return counts\r\n      }\r\n\r\n\r\n      function choiceView() {\r\n        if (voxel === null) return { list: [], page: 1, pages: 1, total: 0 }\r\n        const needle = String(filter).trim().toLowerCase()\r\n        let list = voxel.choices\r\n        if (needle !== '') {\r\n          list = list.filter((item) => searchMatch(item, needle))\r\n        } else if (pickGroup !== '' || pickFamily !== '') {\r\n          list = list.filter((item) =>\r\n            (pickGroup === '' || groupOfItem(item) === pickGroup)\r\n            && (pickFamily === '' || familyOfItem(item) === pickFamily))\r\n        }\r\n        const total = list.length\r\n        const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))\r\n        const shownPage = Math.min(Math.max(1, pickPage), pages)\r\n        return { list: list.slice((shownPage - 1) * PAGE_SIZE, shownPage * PAGE_SIZE),\r\n          page: shownPage, pages: pages, total: total }\r\n      }\r\n\r\n      function resetPick() {\r\n        setPickGroup('')\r\n        setPickFamily('')\r\n        setPickPage(1)\r\n      }\r\n\r\n      function releaseRefs() {\r\n        const keep = []\r\n        for (const cell of (voxel === null ? [] : voxel.cells)) {\r\n          const raw = String(cell.block)\r\n          const colon = raw.indexOf(':')\r\n          let qualified = null\r\n          if (colon >= 0) qualified = raw\r\n          else if (voxel !== null && voxel.source !== 'project') qualified = voxel.source.slice(4) + ':' + raw\r\n          if (qualified === null) continue\r\n          keep.push(qualified)\r\n          if (typeof cell.variant === 'string' && cell.variant !== '') {\r\n            keep.push(qualified + '@' + cell.variant)\r\n          }\r\n        }\r\n        if (voxel !== null && voxel.source !== 'project' && voxel.block !== '') {\r\n          keep.push(voxel.block)\r\n          if (ghost !== null && ghost.block === voxel.block\r\n            && typeof ghost.variant === 'string' && ghost.variant !== '') {\r\n            keep.push(voxel.block + '@' + ghost.variant)\r\n          }\r\n        }\r\n        host.call('atlas.releaseRefs', { keep: keep }).catch(() => { /* cache only */ })\r\n      }\r\n\r\n      function voxelWith(cells, x, y, z, block, variant) {\r\n        const out = cells.filter((cell) => !(cell.at[0] === x && cell.at[1] === y && cell.at[2] === z))\r\n        if (block !== null && block !== '') {\r\n          const cell = { block: block, at: [x, y, z] }\r\n          if (typeof variant === 'string' && variant !== '') cell.variant = variant\r\n          out.push(cell)\r\n        }\r\n        return out\r\n      }\r\n\r\n\r\n      function voxelTargetAt(event) {\r\n        if (voxel === null || scene === null || canvas === null || pickBuffer === null) return null\r\n        const rect = canvas.getBoundingClientRect()\r\n        if (rect.width === 0 || rect.height === 0) return null\r\n        const px = Math.floor((event.clientX - rect.left) / rect.width * canvas.width)\r\n        const py = Math.floor((event.clientY - rect.top) / rect.height * canvas.height)\r\n        if (px < 0 || py < 0 || px >= canvas.width || py >= canvas.height) return null\r\n        const quadIndex = pickBuffer[py * canvas.width + px]\r\n        if (quadIndex === undefined || quadIndex < 0) return null\r\n        const quad = scene.quads[quadIndex]\r\n        const pick = quad === undefined ? undefined : quad.pick\r\n        if (pick === undefined || pick === null) return null\r\n        const cell = (scene.cells || [])[pick.cell]\r\n        if (cell === undefined) return null\r\n        const hitY = faceHitY(quad, px + 0.5, py + 0.5, lastCamera)\r\n        return { cell: pick.cell, face: pick.face, at: cell.at, block: cell.block, hitY: hitY }\r\n      }\r\n\r\n\r\n      function placementAt(target) {\r\n        if (target === null) return null\r\n        const step = (scene === null ? {} : (scene.faceStep || {}))[target.face]\r\n        if (step === undefined) return null\r\n        const at = [target.at[0] + step[0], target.at[1] + step[1], target.at[2] + step[2]]\r\n        const occupied = (voxel === null ? [] : voxel.cells).some((cell) =>\r\n          cell.at[0] === at[0] && cell.at[1] === at[1] && cell.at[2] === at[2])\r\n        return occupied ? null : at\r\n      }\r\n\r\n      React.useEffect(() => {\r\n        if (voxel === null) return\r\n        const source = voxel.source === undefined ? 'project' : voxel.source\r\n        const missing = []\r\n        for (const item of choiceView().list) {\r\n          if (icons[item.name] !== undefined || iconTried[item.name] === true) continue\r\n          if (missing.indexOf(item.name) < 0) missing.push(item.name)\r\n        }\r\n        if (missing.length === 0) return\r\n        const batch = missing.slice(0, ICON_BATCH)\r\n        for (const name of batch) iconTried[name] = true\r\n        let request\r\n        if (source === 'project') {\r\n          request = host.call('atlas.icons', { root: root, project: activeProjectId(), blocks: batch })\r\n        } else {\r\n          const namespace = String(source).slice(4)\r\n          const ids = batch.filter((name) => name.indexOf(namespace + ':') === 0)\r\n            .map((name) => name.slice(namespace.length + 1))\r\n          if (ids.length === 0) return\r\n          request = host.call('atlas.refIcons', { root: root, project: activeProjectId(),\r\n            namespace: namespace, blocks: ids })\r\n        }\r\n        request.then((result) => {\r\n          if (result === null || result === undefined || result.error !== undefined) {\r\n            for (const name of batch) delete iconTried[name]\r\n            return\r\n          }\r\n          let added = 0\r\n          for (const key of Object.keys(result.icons || {})) {\r\n            const icon = result.icons[key]\r\n            if (icon === undefined || icon === null) continue\r\n            icons[key] = icon\r\n            added += 1\r\n          }\r\n          for (const name of arrayOf(result.failed)) iconTried[name] = true\r\n          if (added > 0) setIconTick(iconTick + 1)\r\n        }).catch(() => {\r\n          for (const name of batch) delete iconTried[name]\r\n        })\r\n      }, [voxel === null ? '' : (voxel.source + '|' + voxel.kind + ':' + voxel.id + '|' + voxel.choices.length),\r\n        filter, pickGroup, pickFamily, pickPage, iconTick, texEpoch])\r\n\r\n      React.useEffect(() => {\r\n        if (voxel === null) { ghostAsk = ''; if (ghost !== null) setGhost(null); return }\r\n        const target = hover === null ? null : placementAt(hover)\r\n        if (target === null) { ghostAsk = ''; if (ghost !== null) setGhost(null); return }\r\n        const face = hover === null || hover.face === undefined ? 'north' : hover.face\r\n        const hitY = hover === null || hover.hitY === undefined ? 0.5 : hover.hitY\r\n        const wantVariant = variantFor(voxel.axes, voxel.variants, voxel.defaults, face, hitY,\r\n          voxel.flip === true, voxel.overrides)\r\n        const around = aroundOf(voxel.cells, target)\r\n        const wantKey = voxel.block + '|' + String(wantVariant) + '|' + target.join(',')\r\n          + '|' + JSON.stringify(around)\r\n        if (ghost !== null && ghostAsk === wantKey) return\r\n        ghostAsk = wantKey\r\n        setGhost({ block: voxel.block, at: target, variant: wantVariant, quads: [], textures: {},\r\n          textureIds: [], loading: true })\r\n        host.call('atlas.preview', {\r\n          root: root, project: activeProjectId(), block: voxel.block, at: target,\r\n          variant: wantVariant, have: Object.keys(decoded), around: around,\r\n        }).then((result) => {\r\n          if (result === null || result === undefined || result.error !== undefined) {\r\n            setGhost({ block: voxel.block, at: target, variant: wantVariant, quads: [], textures: {},\r\n              textureIds: [], error: String(result && result.error ? result.error : '没有返回结果') })\r\n            return\r\n          }\r\n          setGhost(ghostOf(result, { block: voxel.block, at: target, variant: wantVariant }))\r\n        }).catch((error) => {\r\n          setGhost({ block: voxel.block, at: target, variant: wantVariant, quads: [], textures: {},\r\n            textureIds: [], error: String(error && error.message ? error.message : error) })\r\n        })\r\n      })\r\n\r\n      const variantKey = voxel === null ? '' : (voxel.source + '|' + voxel.block)\r\n      React.useEffect(() => {\r\n        if (voxel === null || voxel.block === '') return undefined\r\n        let live = true\r\n        host.call('atlas.preview', {\r\n          root: root, project: activeProjectId(), block: voxel.block, at: [0, 0, 0],\r\n          variant: null, have: Object.keys(decoded),\r\n        }).then((result) => {\r\n          if (!live) return\r\n          const keys = result === null || result === undefined || !Array.isArray(result.variants)\r\n            ? [] : result.variants\r\n          const axes = result === null || result === undefined || !Array.isArray(result.axes)\r\n            ? [] : result.axes\r\n          const defaults = result === null || result === undefined || typeof result.defaults !== 'object'\r\n            || result.defaults === null ? {} : result.defaults\r\n          setVoxel((previous) => {\r\n            if (previous === null || previous.block !== voxel.block) return previous\r\n            if ((previous.variants || []).join(',') === keys.join(',')\r\n              && JSON.stringify(previous.axes || []) === JSON.stringify(axes)) return previous\r\n            return Object.assign({}, previous,\r\n              { variants: keys, axes: axes, defaults: defaults, flip: false, overrides: {}, manual: false })\r\n          })\r\n        }).catch(() => { /* the list is a convenience, not a requirement */ })\r\n        return () => { live = false }\r\n      }, [variantKey])\r\n\r\n      function refreshVoxel(state) {\r\n        host.call('atlas.scene', {\r\n          root: root, project: activeProjectId(), kind: state.kind, id: state.id,\r\n          cells: state.cells, have: Object.keys(decoded),\r\n          neighbours: state.neighbours !== false,\r\n        }).then((result) => {\r\n          if (result === null || result === undefined || result.error !== undefined) {\r\n            setVoxel(Object.assign({}, state, { busy: false,\r\n              msg: '预览失败：' + String(result && result.error ? result.error : '没有返回结果') }))\r\n            return\r\n          }\r\n          setVoxel(Object.assign({}, state, { busy: false }))\r\n          lastDrawKey = ''\r\n          setScene(sceneOf(result))\r\n          releaseRefs()\r\n        }).catch((error) => {\r\n          setVoxel(Object.assign({}, state, { busy: false, msg: '预览失败：' + String(error && error.message ? error.message : error) }))\r\n        })\r\n      }\r\n\r\n      function voxelApply(cells, note) {\r\n        if (voxel === null) return\r\n        const next = Object.assign({}, voxel, {\r\n          cells: cells, busy: true, msg: note,\r\n          undo: voxel.undo.concat([voxel.cells]).slice(-16),\r\n        })\r\n        setVoxel(next)\r\n        refreshVoxel(next)\r\n      }\r\n\r\n      function voxelUndo() {\r\n        if (voxel === null || voxel.undo.length === 0) return\r\n        const next = Object.assign({}, voxel, {\r\n          cells: voxel.undo[voxel.undo.length - 1],\r\n          undo: voxel.undo.slice(0, voxel.undo.length - 1),\r\n          msg: '撤销', busy: true,\r\n        })\r\n        setVoxel(next)\r\n        refreshVoxel(next)\r\n      }\r\n\r\n      function voxelSave() {\r\n        if (voxel === null || voxel.busy) return\r\n        setVoxel(Object.assign({}, voxel, { busy: true, msg: '保存中…' }))\r\n        host.call('atlas.saveVoxel', {\r\n          root: root, project: activeProjectId(), kind: voxel.kind, id: voxel.id, cells: voxel.cells,\r\n        }).then((result) => {\r\n          if (result === null || result === undefined || result.error !== undefined) {\r\n            setVoxel(Object.assign({}, voxel, { busy: false,\r\n              msg: '保存失败：' + String(result && result.error ? result.error : '没有返回结果') }))\r\n            return\r\n          }\r\n          delete indexes[root]\r\n          setVoxel(Object.assign({}, voxel, { busy: false,\r\n            msg: '已保存 ' + result.cells + ' 格 -> ' + String(result.file).split('/').pop() }))\r\n        }).catch((error) => {\r\n          setVoxel(Object.assign({}, voxel, { busy: false, msg: '保存失败：' + String(error && error.message ? error.message : error) }))\r\n        })\r\n      }\r\n\r\n      function voxelClick(event, action) {\r\n        if (voxel === null || scene === null || canvas === null || pickBuffer === null) return\r\n        const target = voxelTargetAt(event)\r\n        if (target === null) {\r\n          setVoxel(Object.assign({}, voxel, { msg: '那里是空的，点方块上' }))\r\n          return\r\n        }\r\n        const pick = { cell: target.cell, face: target.face }\r\n        const cell = (scene.cells || [])[pick.cell]\r\n        if (cell === undefined) {\r\n          setVoxel(Object.assign({}, voxel, { msg: '格子索引对不上了，刷新一下' }))\r\n          return\r\n        }\r\n        if (action === 'remove') {\r\n          voxelApply(voxelWith(voxel.cells, cell.at[0], cell.at[1], cell.at[2], null, null), '挖掉 ' + cell.block)\r\n          return\r\n        }\r\n        const step = (scene.faceStep || {})[pick.face]\r\n        if (step === undefined) {\r\n          setVoxel(Object.assign({}, voxel, { msg: '认不出这个面：' + String(pick.face) }))\r\n          return\r\n        }\r\n        const placed = variantFor(voxel.axes, voxel.variants, voxel.defaults, pick.face,\r\n          target.hitY === undefined ? 0.5 : target.hitY, voxel.flip === true, voxel.overrides)\r\n        voxelApply(voxelWith(voxel.cells, cell.at[0] + step[0], cell.at[1] + step[1], cell.at[2] + step[2],\r\n          voxel.block, placed), '放置 ' + voxel.block)\r\n      }\r\n\r\n      function voxelCard() {\r\n        if (voxel === null) return null\r\n        const rows = []\r\n        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },\r\n          React.createElement('span', { className: 'mcart-title' }, '搭建'),\r\n          React.createElement('span', { className: 'mcart-sub' }, (voxel.title || '') + ' · ' + voxel.cells.length + ' 格')))\r\n        rows.push(React.createElement('div', { className: 'mcart-src', key: 'filter' },\r\n          React.createElement('input', {\r\n            className: 'mcart-input', placeholder: '搜方块名或 id（共 ' + voxel.choices.length + ' 个）',\r\n            value: filter, onChange: (event) => { setFilter(event.target.value); setPickPage(1) },\r\n          }),\r\n          filter === '' ? null : React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n            onClick: () => { setFilter(''); setPickPage(1) } }, '清空')))\r\n\r\n        const derivedOn = voxel.neighbours !== false\r\n        rows.push(React.createElement('div', { className: 'mcart-tabs', key: 'neighbours' },\r\n          React.createElement('span', { className: 'mcart-note' }, '连接'),\r\n          React.createElement('button', {\r\n            className: 'mcart-btn mcart-tool', type: 'button',\r\n            'data-on': derivedOn ? '1' : '0',\r\n            title: '墙/栅栏/玻璃板：原版按邻居决定画哪几段。关掉就是抽取器给的那份并集（全部画上），不是\"算不出来\"。',\r\n            onClick: () => {\r\n              const next = Object.assign({}, voxel, { neighbours: voxel.neighbours === false })\r\n              setVoxel(next)\r\n              refreshVoxel(next)\r\n            },\r\n          }, derivedOn ? '按邻居推导' : '全部画上')))\r\n\r\n        const axes = Array.isArray(voxel.axes) ? voxel.axes : []\r\n        if (axes.length > 0) {\r\n          const face = hover === null || hover.face === undefined ? null : hover.face\r\n          const hitY = hover === null || hover.hitY === undefined ? 0.5 : hover.hitY\r\n          const derived = face === null ? {} : deriveVariant(axes, face, hitY, voxel.flip === true)\r\n          const summary = []\r\n          summary.push(React.createElement('span', { className: 'mcart-note', key: '__what' },\r\n            face === null\r\n              ? '朝向由你点的那个面决定——悬停到方块上试试'\r\n              : '点 ' + labelOfValue(face) + ' 面 → ' + variantSummary(axes, derived)))\r\n          if (derived.facing !== undefined) {\r\n            summary.push(React.createElement('button', {\r\n              key: '__flip', type: 'button', className: 'mcart-btn mcart-tool',\r\n              'data-on': voxel.flip === true ? '1' : '0',\r\n              title: '熔炉这类是朝着你，楼梯/活板门那类正相反——盘上没写，只能你说了算',\r\n              onClick: () => setVoxel(Object.assign({}, voxel, { flip: voxel.flip !== true })),\r\n            }, '翻转 180°'))\r\n          }\r\n          if (Object.keys(voxel.overrides || {}).length > 0) {\r\n            summary.push(React.createElement('button', {\r\n              key: '__reset', type: 'button', className: 'mcart-btn mcart-tool',\r\n              onClick: () => setVoxel(Object.assign({}, voxel, { overrides: {} })),\r\n            }, '恢复自动'))\r\n          }\r\n          summary.push(React.createElement('button', {\r\n            key: '__manual', type: 'button', className: 'mcart-btn mcart-tool',\r\n            'data-on': voxel.manual === true ? '1' : '0',\r\n            onClick: () => setVoxel(Object.assign({}, voxel, { manual: voxel.manual !== true })),\r\n          }, voxel.manual === true ? '收起 ▴' : '手动 ▾'))\r\n          rows.push(React.createElement('div', { className: 'mcart-tabs', key: 'orientation' },\r\n            React.createElement('span', { className: 'mcart-note' }, '朝向'), summary))\r\n\r\n          if (voxel.manual === true) {\r\n            for (const axis of axes) {\r\n              const picked = (voxel.overrides || {})[axis.name]\r\n              const chips = [React.createElement('button', {\r\n                key: '__auto', type: 'button', className: 'mcart-btn mcart-tool',\r\n                'data-on': picked === undefined ? '1' : '0',\r\n                onClick: () => setVoxel(Object.assign({}, voxel,\r\n                  { overrides: withoutKey(voxel.overrides, axis.name) })),\r\n              }, '自动')]\r\n              for (const value of axis.values) {\r\n                chips.push(React.createElement('button', {\r\n                  key: value, type: 'button', className: 'mcart-btn mcart-tool',\r\n                  'data-on': picked === value ? '1' : '0',\r\n                  onClick: () => setVoxel(Object.assign({}, voxel,\r\n                    { overrides: withKey(voxel.overrides, axis.name, value) })),\r\n                }, labelOfValue(value)))\r\n              }\r\n              rows.push(React.createElement('div', { className: 'mcart-tabs', key: 'axis:' + axis.name },\r\n                React.createElement('span', { className: 'mcart-note' }, labelOfAxis(axis.name)), chips))\r\n            }\r\n            if (axes.some((axis) => axis.name === 'shape')) {\r\n              rows.push(React.createElement('div', { className: 'mcart-hint', key: 'shapenote' },\r\n                '形状（内角/外角）在原版里是看邻居算出来的，这里还没做——默认给你 straight，不是不敢算就说算了。'))\r\n            }\r\n            rows.push(React.createElement('div', { className: 'mcart-hint', key: 'oriennote' },\r\n              '不选就是自动。摆放时按你点的面和位置推导，幽灵预览里看到的就是要放上去的。'))\r\n          }\r\n        }\r\n\r\n        const needle = String(filter).trim().toLowerCase()\r\n        if (needle === '') {\r\n          const groupCounts = countsBy(groupOfItem, null)\r\n          const groupKeys = Object.keys(groupCounts).filter((key) => key !== '').sort()\r\n          if (groupKeys.length > 0) {\r\n            const chips = [React.createElement('button', {\r\n              key: '__all', type: 'button', className: 'mcart-btn mcart-tool',\r\n              'data-on': pickGroup === '' ? '1' : '0',\r\n              onClick: () => { setPickGroup(''); setPickFamily(''); setPickPage(1) },\r\n            }, '全部 ' + voxel.choices.length)]\r\n            for (const key of groupKeys) {\r\n              const label = (voxel.choices.filter((item) => groupOfItem(item) === key)[0] || {}).groupLabel || key\r\n              chips.push(React.createElement('button', {\r\n                key: key, type: 'button', className: 'mcart-btn mcart-tool',\r\n                'data-on': pickGroup === key ? '1' : '0',\r\n                onClick: () => { setPickGroup(key); setPickFamily(''); setPickPage(1) },\r\n              }, label + ' ' + groupCounts[key]))\r\n            }\r\n            rows.push(React.createElement('div', { className: 'mcart-tabs', key: 'groups' },\r\n              React.createElement('span', { className: 'mcart-note' }, '分类'), chips))\r\n          }\r\n          const familyCounts = countsBy(familyOfItem,\r\n            pickGroup === '' ? null : (item) => groupOfItem(item) === pickGroup)\r\n          const familyKeys = Object.keys(familyCounts).sort()\r\n          if (familyKeys.length > 1) {\r\n            const chips = [React.createElement('button', {\r\n              key: '__all', type: 'button', className: 'mcart-btn mcart-tool',\r\n              'data-on': pickFamily === '' ? '1' : '0',\r\n              onClick: () => { setPickFamily(''); setPickPage(1) },\r\n            }, '全部 ' + Object.keys(familyCounts).reduce((sum, key) => sum + familyCounts[key], 0))]\r\n            for (const key of familyKeys) {\r\n              chips.push(React.createElement('button', {\r\n                key: key, type: 'button', className: 'mcart-btn mcart-tool',\r\n                'data-on': pickFamily === key ? '1' : '0',\r\n                onClick: () => { setPickFamily(key); setPickPage(1) },\r\n              }, key + ' ' + familyCounts[key]))\r\n            }\r\n            rows.push(React.createElement('div', { className: 'mcart-tabs', key: 'families' },\r\n              React.createElement('span', { className: 'mcart-note' }, '形状'), chips))\r\n          }\r\n        }\r\n\r\n        const view = choiceView()\r\n        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'pager' },\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: view.page <= 1,\r\n            onClick: () => setPickPage(view.page - 1) }, '‹ 上一页'),\r\n          React.createElement('span', { className: 'mcart-note' },\r\n            '第 ' + view.page + ' / ' + view.pages + ' 页 · 共 ' + view.total + ' 个'),\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: view.page >= view.pages,\r\n            onClick: () => setPickPage(view.page + 1) }, '下一页 ›'),\r\n          React.createElement('input', {\r\n            className: 'mcart-input', type: 'number', min: 1, max: view.pages, value: view.page,\r\n            style: { maxWidth: '66px' },\r\n            onChange: (event) => setPickPage(Number(event.target.value) || 1),\r\n          })))\r\n\r\n        rows.push(React.createElement('div', { className: 'mcart-hotbar', key: 'hotbar' },\r\n          view.list.map((item) => React.createElement('button', {\r\n            key: item.name, type: 'button', className: 'mcart-slot',\r\n            'data-on': item.name === voxel.block ? '1' : '0',\r\n            title: item.title + '\\n' + item.name,\r\n            style: icons[item.name] === undefined ? {} : { backgroundImage: 'url(' + icons[item.name] + ')' },\r\n            onClick: () => { setVoxel(Object.assign({}, voxel, { block: item.name })); setGhost(null) },\r\n          }))))\r\n        if (refSources.length > 0) {\r\n          const options = [React.createElement('option', { key: 'project', value: 'project' }, '本项目')]\r\n          for (const item of refSources) {\r\n            options.push(React.createElement('option', { key: 'ref:' + item.name, value: 'ref:' + item.name },\r\n              item.name + '（' + item.blocks + ' 个方块）'))\r\n          }\r\n          rows.push(React.createElement('div', { className: 'mcart-src', key: 'source' },\r\n            React.createElement('span', { className: 'mcart-note' }, '方块来源'),\r\n            React.createElement('select', {\r\n              className: 'mcart-select',\r\n              value: voxel.source === undefined ? 'project' : voxel.source,\r\n              onChange: (event) => pickSource(event.target.value),\r\n            }, options)))\r\n        }\r\n        const chosen = voxel.choices.filter((item) => item.name === voxel.block)[0]\r\n        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'chosen' },\r\n          React.createElement('span', { className: 'mcart-note mcart-grow' },\r\n            '手持：' + (chosen === undefined ? voxel.block : chosen.title) + '（' + voxel.block + '）')))\r\n        rows.push(React.createElement('div', { className: 'mcart-tools', key: 'tools' },\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: voxel.undo.length === 0 || voxel.busy,\r\n            onClick: voxelUndo }, '撤销 ' + voxel.undo.length),\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: voxel.busy,\r\n            onClick: voxelSave }, voxel.busy ? '…' : '保存'),\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n            onClick: () => { setVoxel(null); setHover(null); setGhost(null); painting.active = false } }, '关闭')))\r\n        rows.push(React.createElement('div', { className: 'mcart-hint', key: 'how' },\r\n          '像原版一样：左键破坏，右键放置；拖动仍然是旋转。半透明的方块就是将要放上去的位置，红色高亮是要破坏的那一格。'))\r\n        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'msg' },\r\n          React.createElement('span', { className: 'mcart-note mcart-grow' }, voxel.msg === null ? '' : withVersion(voxel.msg))))\r\n        if (ghost !== null && ghost.error !== undefined) {\r\n          rows.push(React.createElement('div', { className: 'mcart-err', key: 'ghosterr' }, withVersion('预览拿不到：' + String(ghost.error))))\r\n        }\r\n        return React.createElement('div', { className: 'mcart-card', key: 'voxel' }, rows)\r\n      }\r\n\r\n\r\n\r\n      function hudBar() {\r\n        const view = hudView()\r\n        const slots = []\r\n        for (const entry of view.list) {\r\n          const key = itemKey(item.namespace, entry.id)\r\n          const recipe = itemRecipes[key]\r\n          const note = slotNote(recipe)\r\n          const lacking = recipe !== undefined && recipe !== null && recipe.missing === true\r\n          slots.push(React.createElement('button', {\r\n            key: key, type: 'button', className: 'mcart-hudslot',\r\n            'data-on': hudOn === entry.id ? '1' : '0',\r\n            'data-missing': lacking ? '1' : '0',\r\n            title: entry.name + '（' + entry.id + '）'\r\n              + (entry.formLabel ? '\\n' + entry.formLabel : '')\r\n              + '\\n' + slotFacts(recipe) + (note === null ? '' : '\\n' + note),\r\n            onClick: () => pickItem(entry),\r\n          }, React.createElement('canvas', {\r\n            className: 'mcart-hudicon', width: 32, height: 32,\r\n            ref: (node) => {\r\n              if (node === null || node === undefined) delete hudCanvases[key]\r\n              else hudCanvases[key] = node\r\n            },\r\n          }), lacking\r\n            ? React.createElement('span', { className: 'mcart-slotq mcart-slotmissing' }, '缺')\r\n            : null))\r\n        }\r\n        while (slots.length < HUD_SLOTS) {\r\n          slots.push(React.createElement('span', { key: 'empty:' + slots.length,\r\n            className: 'mcart-hudslot mcart-hudempty' }))\r\n        }\r\n        return React.createElement('div', { className: 'mcart-hud', key: 'hud' },\r\n          hudPicked === '' ? null : React.createElement('div', { className: 'mcart-hudname' },\r\n            hudPicked + (view.pages > 1 ? ' · ' + view.page + '/' + view.pages : '')),\r\n          React.createElement('div', { className: 'mcart-hudbar' },\r\n            view.pages > 1 ? React.createElement('button', { className: 'mcart-hudpage', type: 'button',\r\n              disabled: view.page <= 1, title: '上一页物品',\r\n              onClick: () => setHudPage(view.page - 1) }, '‹') : null,\r\n            slots,\r\n            view.pages > 1 ? React.createElement('button', { className: 'mcart-hudpage', type: 'button',\r\n              disabled: view.page >= view.pages,\r\n              title: '下一页物品（第 ' + view.page + ' / ' + view.pages + ' 页）',\r\n              onClick: () => setHudPage(view.page + 1) }, '›') : null))\r\n      }\r\n\r\n      function itemCard() {\r\n        if (item === null) return null\r\n        const rows = []\r\n        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },\r\n          React.createElement('span', { className: 'mcart-title' }, '物品'),\r\n          React.createElement('span', { className: 'mcart-sub' },\r\n            item.source === 'project' ? '本项目' : item.namespace),\r\n          React.createElement('span', { className: 'mcart-note mcart-grow' },\r\n            itemFetchError === '' ? '点一格就放到上面的 3D 里看' : withVersion(itemFetchError)),\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n            onClick: () => { setItemOpen(false); setIconPick(null) } }, '收起')))\r\n        const options = []\r\n        const ours = projectNamespaceOf(activeProjectId())\r\n        if (ours !== '') {\r\n          options.push(React.createElement('option', { key: 'project', value: 'project' },\r\n            '本项目 ' + ours + '（' + (item.source === 'project' ? item.facts.length : '…') + '）'))\r\n        }\r\n        for (const entry of refSources) {\r\n          options.push(React.createElement('option', { key: 'ref:' + entry.name, value: 'ref:' + entry.name },\r\n            entry.name + '（' + entry.blocks + ' 个方块）'))\r\n        }\r\n        if (options.length === 0) {\r\n          options.push(React.createElement('option', { key: item.namespace, value: 'ref:' + item.namespace },\r\n            item.namespace))\r\n        }\r\n        rows.push(React.createElement('div', { className: 'mcart-src', key: 'source' },\r\n          React.createElement('span', { className: 'mcart-note' }, '来源'),\r\n          React.createElement('select', {\r\n            className: 'mcart-select',\r\n            value: item.source === 'project' ? 'project' : 'ref:' + item.namespace,\r\n            onChange: (event) => {\r\n              const value = String(event.target.value)\r\n              setIconPick(null)\r\n              setPreviewItem(null)\r\n              if (value === 'project') loadItems('project', ours === '' ? 'minecraft' : ours, 1, '', '', '')\r\n              else loadItems('reference', value.slice(4), 1, '', '', '')\r\n            },\r\n          }, options),\r\n          React.createElement('input', {\r\n            className: 'mcart-input', placeholder: '搜物品名或 id',\r\n            value: item.filter,\r\n            onChange: (event) => setItem(Object.assign({}, item, { filter: event.target.value, page: 1 })),\r\n          })))\r\n\r\n        const formCounts = countsOf(item.facts, (entry) => entry.form, (entry) => entry.formLabel || entry.form)\r\n        const forms = Object.keys(formCounts).sort((a, b) => formCounts[b].count - formCounts[a].count)\r\n        if (forms.length > 0 && itemSearch() === '') {\r\n          const chips = [React.createElement('button', {\r\n            key: '__all', type: 'button', className: 'mcart-btn mcart-tool',\r\n            'data-on': item.form === '' ? '1' : '0',\r\n            onClick: () => setItem(Object.assign({}, item, { form: '', family: '', page: 1 })),\r\n          }, '全部 ' + item.facts.length)]\r\n          for (const key of forms) {\r\n            chips.push(React.createElement('button', {\r\n              key: key, type: 'button', className: 'mcart-btn mcart-tool',\r\n              'data-on': item.form === key ? '1' : '0',\r\n              onClick: () => setItem(Object.assign({}, item, { form: key, family: '', page: 1 })),\r\n            }, formCounts[key].label + ' ' + formCounts[key].count))\r\n          }\r\n          rows.push(React.createElement('div', { className: 'mcart-tabs', key: 'forms' },\r\n            React.createElement('span', { className: 'mcart-note' }, '展示形式'), chips))\r\n        }\r\n        const within = item.form === '' ? item.facts\r\n          : item.facts.filter((entry) => entry.form === item.form)\r\n        const familyCounts = countsOf(within, (entry) => entry.family, (entry) => entry.family)\r\n        const families = Object.keys(familyCounts).sort((a, b) => familyCounts[b].count - familyCounts[a].count)\r\n        if (families.length > 1 && itemSearch() === '') {\r\n          const chips = [React.createElement('button', {\r\n            key: '__all', type: 'button', className: 'mcart-btn mcart-tool',\r\n            'data-on': item.family === '' ? '1' : '0',\r\n            onClick: () => setItem(Object.assign({}, item, { family: '', page: 1 })),\r\n          }, '全部 ' + within.length)]\r\n          for (const key of families) {\r\n            chips.push(React.createElement('button', {\r\n              key: key, type: 'button', className: 'mcart-btn mcart-tool',\r\n              'data-on': item.family === key ? '1' : '0',\r\n              onClick: () => setItem(Object.assign({}, item, { family: key, page: 1 })),\r\n            }, key + ' ' + familyCounts[key].count))\r\n          }\r\n          rows.push(React.createElement('div', { className: 'mcart-tabs', key: 'families' },\r\n            React.createElement('span', { className: 'mcart-note' }, '细分'), chips))\r\n        }\r\n\r\n        const view = itemView()\r\n        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'pager' },\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: view.page <= 1,\r\n            onClick: () => setItem(Object.assign({}, item, { page: view.page - 1 })) }, '‹ 上一页'),\r\n          React.createElement('span', { className: 'mcart-note' },\r\n            '第 ' + view.page + ' / ' + view.pages + ' 页 · 共 ' + view.total + ' 个'),\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: view.page >= view.pages,\r\n            onClick: () => setItem(Object.assign({}, item, { page: view.page + 1 })) }, '下一页 ›')))\r\n\r\n        const slots = []\r\n        for (const entry of view.list) {\r\n          const key = itemKey(item.namespace, entry.id)\r\n          const url = itemUrls[key]\r\n          const recipe = itemRecipes[key]\r\n          const blank = recipe !== undefined && recipe !== null && recipe.shape === 'none'\r\n          const lacking = recipe !== undefined && recipe !== null && recipe.missing === true\r\n          const lackReason = lacking\r\n            ? (recipe.error || recipe.reason || '参考目录里取不到这个物品') : ''\r\n          slots.push(React.createElement('button', {\r\n            key: entry.id, type: 'button', className: 'mcart-slot',\r\n            'data-on': iconPick !== null && iconPick.id === entry.id ? '1' : '0',\r\n            'data-missing': lacking ? '1' : '0',\r\n            title: entry.name + '\\n' + entry.id + '\\n' + (entry.formLabel || entry.form || '')\r\n              + (lacking ? '\\n缺：' + lackReason\r\n                : (blank ? '\\n这个物品是代码画的，没有可用的图标模型' : '')),\r\n            style: url === undefined || url === null ? {} : { backgroundImage: 'url(' + url + ')' },\r\n            onClick: () => pickItem(entry),\r\n          }, lacking\r\n            ? React.createElement('span', { className: 'mcart-slotq mcart-slotmissing', title: lackReason }, '缺')\r\n            : (blank ? React.createElement('span', { className: 'mcart-slotq' }, '?') : null)))\r\n        }\r\n        rows.push(React.createElement('div', { className: 'mcart-hotbar', key: 'slots' }, slots))\r\n\r\n        const picked = iconPick === null ? null\r\n          : view.list.filter((entry) => entry.id === iconPick.id)[0]\r\n        if (picked !== undefined && picked !== null) {\r\n          const recipe = itemRecipes[itemKey(iconPick.namespace, iconPick.id)]\r\n          const frames = recipe === undefined || recipe === null ? 0 : (recipe.frames || []).length\r\n          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'chosen' },\r\n            React.createElement('span', { className: 'mcart-note mcart-grow' },\r\n              picked.name + '（' + picked.id + '）· ' + (picked.formLabel || picked.form || '')\r\n              + (frames > 1 ? ' · ' + frames + ' 帧（原版按 overrides 换模型）' : '')\r\n              + (recipe !== undefined && recipe !== null && recipe.error ? ' · ' + String(recipe.error) : ''))))\r\n        }\r\n        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'msg' },\r\n          React.createElement('span', { className: 'mcart-note mcart-grow' }, item.msg === null ? '' : withVersion(item.msg))))\r\n        return React.createElement('div', { className: 'mcart-card', key: 'items' }, rows)\r\n      }\r\n\r\n      function facesForScene() {\r\n        const out = {}\r\n        for (const quad of (scene === null ? [] : (scene.quads || []))) {\r\n          if (quad.pick) continue\r\n          if (typeof quad.tex !== 'string' || typeof quad.face !== 'string') continue\r\n          if (out[quad.tex] === undefined) out[quad.tex] = []\r\n          if (out[quad.tex].indexOf(quad.face) < 0) out[quad.tex].push(quad.face)\r\n        }\r\n        return out\r\n      }\r\n\r\n\r\n      function widestTexture(ids, byTexture) {\r\n        let best = 0\r\n        for (let i = 1; i < ids.length; i++) {\r\n          const here = (byTexture[ids[i]] || []).length\r\n          const there = (byTexture[ids[best]] || []).length\r\n          if (here > there) best = i\r\n        }\r\n        return best\r\n      }\r\n\r\n      function makeEdit(ids, index, facesByTexture) {\r\n        const frame = decoded[ids[index]]\r\n        const copy = new Uint8ClampedArray(frame.data)\r\n        const byTexture = facesByTexture || {}\r\n        return {\r\n          ids: ids, index: index, w: frame.width, h: frame.height,\r\n          pixels: copy, palette: paletteOf(copy, 32), tool: 'pencil', color: null,\r\n          faces: byTexture[ids[index]] || [],\r\n          facesByTexture: byTexture,\r\n        }\r\n      }\r\n\r\n\r\n      function itemAsset() {\r\n        if (scene !== null || item === null || hudOn === '') return null\r\n        return { namespace: item.namespace, id: hudOn, source: item.source,\r\n          recipe: pickedRecipe, title: hudPicked === '' ? hudOn : hudPicked }\r\n      }\r\n\r\n      function openEditor() {\r\n        const asset = itemAsset()\r\n        if (scene === null && asset === null) return\r\n        if (asset !== null) {\r\n          setVoxel(null)\r\n          const ids = asset.recipe === null ? []\r\n            : idsOf(asset.recipe).filter((id) => decoded[id] !== undefined)\r\n          if (ids.length === 0) {\r\n            setEdit(null)\r\n            setItemMsg(asset.title + ' 还没有解码成功的贴图，改不了')\r\n            return\r\n          }\r\n          setItemMsg(null)\r\n          setEditMsg(null)\r\n          setUndo([])\r\n          painting.active = false\r\n          setEdit(makeEdit(ids, widestTexture(ids, {}), {}))\r\n          return\r\n        }\r\n        if (scene.kind === 'biome' || scene.kind === 'structure') { openVoxel(); return }\r\n        if (scene.kind !== 'block' && scene.kind !== 'entity') {\r\n          setEditMsg('这个类型还不能改：' + String(scene.kind))\r\n          return\r\n        }\r\n        setVoxel(null)\r\n        const ids = idsOf(scene).filter((id) => decoded[id] !== undefined)\r\n        if (ids.length === 0) {\r\n          setEdit(null)\r\n          setEditMsg('这个资产没有解码成功的贴图，改不了')\r\n          return\r\n        }\r\n        setEditMsg(null)\r\n        setUndo([])\r\n        painting.active = false\r\n        const byTexture = facesForScene()\r\n        setEdit(makeEdit(ids, widestTexture(ids, byTexture), byTexture))\r\n      }\r\n\r\n      function closeEditor() {\r\n        painting.active = false\r\n        setEdit(null)\r\n        setUndo([])\r\n        setEditMsg(null)\r\n      }\r\n\r\n      function undoOnce() {\r\n        if (edit === null || undo.length === 0) return\r\n        const previous = undo[undo.length - 1]\r\n        setUndo(undo.slice(0, undo.length - 1))\r\n        setEdit(Object.assign({}, edit, { pixels: new Uint8ClampedArray(previous) }))\r\n      }\r\n\r\n      function pushUndo() {\r\n        if (edit === null || edit.pixels === undefined) return\r\n        const next = undo.concat([new Uint8ClampedArray(edit.pixels)])\r\n        setUndo(next.length > EDIT_UNDO ? next.slice(next.length - EDIT_UNDO) : next)\r\n      }\r\n\r\n      function pixelAt(event, target) {\r\n        return texturePoint(event.currentTarget.getBoundingClientRect(), target,\r\n          event.clientX, event.clientY)\r\n      }\r\n\r\n      function applyTool(x, y, first) {\r\n        if (edit === null || edit.pixels === undefined) return\r\n        const w = edit.w, h = edit.h, pixels = edit.pixels\r\n        if (x < 0 || y < 0 || x >= w || y >= h) return\r\n        if (edit.tool === 'picker') {\r\n          const picked = readPixel(pixels, w, x, y)\r\n          setEdit(Object.assign({}, edit, { color: picked[3] === 0 ? null : picked }))\r\n          return\r\n        }\r\n        if (first === true) pushUndo()\r\n        if (edit.tool === 'fill') {\r\n          const from = readPixel(pixels, w, x, y)\r\n          const to = edit.color || [0, 0, 0, 255]\r\n          if (!sameColour(from, to)) {\r\n            const stack = [[x, y]]\r\n            const visited = {}\r\n            while (stack.length > 0) {\r\n              const point = stack.pop()\r\n              const cx = point[0], cy = point[1]\r\n              if (cx < 0 || cy < 0 || cx >= w || cy >= h) continue\r\n              const key = cy * w + cx\r\n              if (visited[key] === true) continue\r\n              visited[key] = true\r\n              if (!sameColour(readPixel(pixels, w, cx, cy), from)) continue\r\n              writePixel(pixels, w, cx, cy, to)\r\n              stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1])\r\n            }\r\n          }\r\n        } else if (edit.tool === 'eraser') {\r\n          writePixel(pixels, w, x, y, [0, 0, 0, 0])\r\n        } else {\r\n          writePixel(pixels, w, x, y, edit.color || [0, 0, 0, 255])\r\n        }\r\n        setEdit(Object.assign({}, edit))\r\n      }\r\n\r\n      function saveEdit() {\r\n        if (edit === null || edit.pixels === undefined || editBusy) return\r\n        if (editScratch === null) { setEditMsg('画布还没准备好'); return }\r\n        const target = edit.ids[edit.index]\r\n        if (!safeTextureHandle(target)) {\r\n          setEditMsg('这条贴图句柄不是项目包里的相对路径，没有写盘：' + String(target)\r\n            + '（只写项目自己的包；要改原版/模组贴图，先在项目包里放一张同名贴图）')\r\n          return\r\n        }\r\n        setEditBusy(true)\r\n        setEditMsg(null)\r\n        editScratch.width = edit.w\r\n        editScratch.height = edit.h\r\n        const paint = editScratch.getContext('2d')\r\n        const frame = paint.createImageData(edit.w, edit.h)\r\n        frame.data.set(edit.pixels)\r\n        paint.putImageData(frame, 0, 0)\r\n        const url = editScratch.toDataURL('image/png')\r\n        if (String(url).indexOf('data:image/png') !== 0) {\r\n          setEditBusy(false)\r\n          setEditMsg('画布没有给出 PNG（拿到 ' + String(url).slice(0, 24) + '…），没有写盘')\r\n          return\r\n        }\r\n        const base64 = url.slice(url.indexOf(',') + 1)\r\n        host.call('atlas.saveTexture', {\r\n          root: root, project: activeProjectId(), path: target, base64: base64,\r\n        }).then((result) => {\r\n          setEditBusy(false)\r\n          if (result === null || result === undefined || result.error !== undefined) {\r\n            setEditMsg('保存失败：' + String(result && result.error ? result.error : '没有返回结果'))\r\n            return\r\n          }\r\n          decoded[target] = { width: edit.w, height: edit.h, data: edit.pixels }\r\n          delete failedTex[target]\r\n          lastDrawKey = ''\r\n          setEdit(Object.assign({}, edit, { palette: paletteOf(edit.pixels, 32) }))\r\n          setEditMsg('已保存 ' + target.split('/').pop() + '（' + result.bytes + ' 字节）')\r\n          setEditTick(editTick + 1)\r\n        }).catch((error) => {\r\n          setEditBusy(false)\r\n          setEditMsg('保存失败：' + String(error && error.message ? error.message : error))\r\n        })\r\n      }\r\n\r\n      function editorCard() {\r\n        if (edit === null && editMsg === null) return null\r\n        const rows = []\r\n        if (edit === null) {\r\n          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'lost' },\r\n            React.createElement('span', { className: 'mcart-bad mcart-grow' }, String(editMsg)),\r\n            React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n              onClick: () => setEditMsg(null) }, '知道了')))\r\n          return React.createElement('div', { className: 'mcart-card', key: 'editor' }, rows)\r\n        }\r\n        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },\r\n          React.createElement('span', { className: 'mcart-title' }, '改贴图'),\r\n          React.createElement('span', { className: 'mcart-sub' },\r\n            faceLabel(edit.faces) + ' · ' + edit.w + '×' + edit.h)))\r\n        if (edit.ids.length > 1) {\r\n          rows.push(React.createElement('div', { className: 'mcart-tabs', key: 'tabs' },\r\n            edit.ids.map((id, index) => React.createElement('button', {\r\n              key: id, type: 'button', className: 'mcart-btn mcart-tool',\r\n              'data-on': index === edit.index ? '1' : '0',\r\n              onClick: () => {\r\n                setUndo([]); setEditMsg(null); painting.active = false\r\n                setEdit(makeEdit(edit.ids, index, edit.facesByTexture))\r\n              },\r\n            }, faceLabel((edit.facesByTexture || {})[id]) + ' · ' + id.split('/').pop().replace(/\\.png$/, '')))))\r\n        }\r\n        rows.push(React.createElement('div', { className: 'mcart-tools', key: 'tools' },\r\n          [['pencil', '铅笔'], ['eraser', '橡皮'], ['fill', '油漆桶'], ['picker', '吸管']].map((pair) =>\r\n            React.createElement('button', {\r\n              key: pair[0], type: 'button', className: 'mcart-btn mcart-tool',\r\n              'data-on': edit.tool === pair[0] ? '1' : '0',\r\n              onClick: () => setEdit(Object.assign({}, edit, { tool: pair[0] })),\r\n            }, pair[1])),\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: undo.length === 0,\r\n            onClick: undoOnce }, '撤销')))\r\n        const current = edit.color || [0, 0, 0, 255]\r\n        const inPalette = edit.palette.some((c) => sameColour(c, current))\r\n        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'current' },\r\n          React.createElement('input', {\r\n            type: 'color', className: 'mcart-picker', value: hexOf(current),\r\n            title: '取色板以外随便挑',\r\n            onChange: (event) => setEdit(Object.assign({}, edit,\r\n              { color: fromHex(event.target.value, current[3]) })),\r\n          }),\r\n          React.createElement('button', {\r\n            className: 'mcart-btn', type: 'button', disabled: inPalette,\r\n            title: '把当前颜色加进色板',\r\n            onClick: () => setEdit(Object.assign({}, edit,\r\n              { palette: addToPalette(edit.palette, current, EDIT_PALETTE) })),\r\n          }, inPalette ? '已在色板' : '＋ 色板'),\r\n          React.createElement('input', {\r\n            type: 'range', className: 'mcart-alpha', min: 0, max: 255, value: current[3],\r\n            onChange: (event) => setEdit(Object.assign({}, edit,\r\n              { color: [current[0], current[1], current[2], Number(event.target.value)] })),\r\n          }),\r\n          React.createElement('span', { className: 'mcart-note' }, hexOf(current)),\r\n          React.createElement('span', { className: 'mcart-note mcart-grow' },\r\n            '不透明度 ' + current[3] + ' · 撤销 ' + undo.length)))\r\n        rows.push(React.createElement('div', { className: 'mcart-swatches', key: 'swatches' },\r\n          edit.palette.map((colour) => React.createElement('button', {\r\n            key: colour.join(','), type: 'button', className: 'mcart-swatch',\r\n            style: { background: cssColour(colour) }, title: cssColour(colour),\r\n            onClick: () => setEdit(Object.assign({}, edit, { color: colour })),\r\n          }))))\r\n        rows.push(React.createElement('canvas', {\r\n          key: 'canvas', className: 'mcart-edit-canvas',\r\n          ref: (node) => setEditCanvas(node),\r\n          onPointerDown: (event) => {\r\n            const point = pixelAt(event, edit)\r\n            if (point === null) return\r\n            painting.active = true\r\n            if (event.currentTarget.setPointerCapture) {\r\n              try { event.currentTarget.setPointerCapture(event.pointerId) } catch (error) { /* not fatal */ }\r\n            }\r\n            applyTool(point[0], point[1], true)\r\n          },\r\n          onPointerMove: (event) => {\r\n            if (!painting.active) return\r\n            const point = pixelAt(event, edit)\r\n            if (point !== null) applyTool(point[0], point[1], false)\r\n          },\r\n          onPointerUp: () => { painting.active = false },\r\n          onPointerLeave: () => { painting.active = false },\r\n        }))\r\n        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'foot' },\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: editBusy,\r\n            onClick: saveEdit }, editBusy ? '保存中…' : '保存'),\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: closeEditor }, '关闭'),\r\n          React.createElement('span', { className: 'mcart-note mcart-grow' },\r\n            (edit.ids[edit.index] || '').split('/').pop())))\r\n        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'msg' },\r\n          React.createElement('span', { className: 'mcart-note mcart-grow' }, editMsg === null ? '' : withVersion(editMsg))))\r\n        return React.createElement('div', { className: 'mcart-card', key: 'editor' }, rows)\r\n      }\r\n\r\n      React.useEffect(() => {\r\n        if (edit === null || edit.pixels === undefined) return\r\n        if (editCanvas === null || editScratch === null) return\r\n        editScratch.width = edit.w\r\n        editScratch.height = edit.h\r\n        const source = editScratch.getContext('2d')\r\n        const frame = source.createImageData(edit.w, edit.h)\r\n        frame.data.set(edit.pixels)\r\n        source.putImageData(frame, 0, 0)\r\n        const zoom = Math.max(2, Math.min(EDIT_ZOOM, 320 / Math.max(edit.w, edit.h)))\r\n        editCanvas.width = edit.w * zoom\r\n        editCanvas.height = edit.h * zoom\r\n        const view = editCanvas.getContext('2d')\r\n        view.imageSmoothingEnabled = false\r\n        view.clearRect(0, 0, editCanvas.width, editCanvas.height)\r\n        view.drawImage(editScratch, 0, 0, editCanvas.width, editCanvas.height)\r\n        view.strokeStyle = 'rgba(127,127,127,.30)'\r\n        view.lineWidth = 1\r\n        for (let x = 0; x <= edit.w; x++) {\r\n          view.beginPath(); view.moveTo(x * zoom + 0.5, 0); view.lineTo(x * zoom + 0.5, editCanvas.height); view.stroke()\r\n        }\r\n        for (let y = 0; y <= edit.h; y++) {\r\n          view.beginPath(); view.moveTo(0, y * zoom + 0.5); view.lineTo(editCanvas.width, y * zoom + 0.5); view.stroke()\r\n        }\r\n      })\r\n\r\n      function complain() {\r\n        if (scene !== null) {\r\n          setPending({ path: scene.ref || '', title: scene.title || '' })\r\n          return\r\n        }\r\n        const asset = itemAsset()\r\n        if (asset === null) return\r\n        const path = asset.recipe === null || asset.recipe.modelPath === undefined\r\n          ? '' : String(asset.recipe.modelPath)\r\n        if (path === '') {\r\n          setItemMsg(asset.title + ' 在参考的 jar 里，没有可以引用的文件')\r\n          return\r\n        }\r\n        setItemMsg(null)\r\n        setPending({ path: path, title: asset.title })\r\n      }\r\n\r\n\r\n      function diagnosticCard() {\r\n        if (diag === null) return null\r\n        const info = diag.diag\r\n        const all = diagLines(info, diag.error)\r\n        const full = diagText(info, diag.error)\r\n        const rows = []\r\n        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },\r\n          React.createElement('span', { className: 'mcart-title' }, '画不出来 · 报告'),\r\n          React.createElement('span', { className: 'mcart-sub' }, versionTag()),\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n            onClick: () => copyReport(full) }, '复制报告'),\r\n          all.length > DIAG_SHOW ? React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n            onClick: () => setDiagOpen(diagOpen !== true) }, diagOpen === true ? '收起' : '展开全部') : null,\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n            onClick: () => { setDiag(null); setCopied('') } }, '关掉')))\r\n        if (diag.repeat === true) {\r\n          rows.push(React.createElement('div', { className: 'mcart-hint', key: 'repeat' },\r\n            '同一条报告：屏幕上只留这一条，不重复刷屏。'))\r\n        }\r\n        const shown = diag.repeat === true ? all.slice(0, 3)\r\n          : (diagOpen === true ? all.slice(0, DIAG_LINES) : all.slice(0, DIAG_SHOW))\r\n        rows.push(React.createElement('pre', { className: 'mcart-report', key: 'text' }, shown.join('\\n')))\r\n        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'ai' },\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n            onClick: () => placeReport(true) }, '把报告放进输入框'),\r\n          React.createElement('span', { className: 'mcart-note mcart-grow' }, statusText(autoStatus)),\r\n          React.createElement('label', { className: 'mcart-switch' },\r\n            React.createElement('input', { type: 'checkbox', checked: autoReportOn === true,\r\n              onChange: (event) => { setAutoReport(event.target.checked); setAutoTick(autoTick + 1) } }),\r\n            React.createElement('span', null, '出错时自动放进输入框'))))\r\n        rows.push(React.createElement('div', { className: 'mcart-reportnote', key: 'note' },\r\n          copied === ''\r\n            ? '上面这段可以选中复制，或点「复制报告」/「把报告放进输入框」。面板不会自动发送；面板不会把它发进任何会话。'\r\n            : copied))\r\n        return React.createElement('div', { className: 'mcart-card', key: 'diag' }, rows)\r\n      }\r\n\r\n      function settingsCard() {\r\n        if (settings === null) return null\r\n        const rows = []\r\n        if (settings.loading === true) {\r\n          rows.push(React.createElement('div', { className: 'mcart-note', key: 'l' }, '读取设置…'))\r\n        } else if (settings.error !== undefined) {\r\n          rows.push(React.createElement('div', { className: 'mcart-err', key: 'e' }, String(settings.error)))\r\n        } else {\r\n          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },\r\n            React.createElement('span', { className: 'mcart-title' }, '设置'),\r\n            React.createElement('span', { className: 'mcart-sub' }, settings.title || settings.project || ''),\r\n          ))\r\n          rows.push(React.createElement('div', { className: 'mcart-note', key: 'reflabel' }, '参考目录'))\r\n          rows.push(React.createElement('div', { className: 'mcart-path', key: 'refpath' }, settings.directory || '（未设置）'))\r\n          const dirButtons = [\r\n            React.createElement('button', { className: 'mcart-btn', type: 'button', key: 'pick', disabled: picking,\r\n              onClick: () => runPicker(settings.directory || root, (picked) => patchSettings({ directory: picked }, true)) },\r\n              picking ? '对话框已打开…' : '选择目录…'),\r\n          ]\r\n          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'dirbuttons' }, dirButtons))\r\n          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'dirinput' },\r\n            React.createElement('input', {\r\n              className: 'mcart-input mcart-grow', type: 'text',\r\n              placeholder: '参考目录路径，例如 C:\\\\Users\\\\你\\\\AppData\\\\Roaming\\\\.minecraft',\r\n              value: dirDraft,\r\n              onChange: (event) => setDirDraft(String(event.target.value)),\r\n              onKeyDown: (event) => { if (event.key === 'Enter') applyDirDraft() },\r\n            }),\r\n            React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n              disabled: dirDraft.trim() === '', onClick: () => applyDirDraft() }, '用这个路径'),\r\n          ))\r\n          rows.push(React.createElement('div', { className: 'mcart-hint', key: 'dirhint' },\r\n            '对话框弹不出来时可以在这里贴路径（.minecraft、版本目录、mods 目录，或单个 jar 都行）。'))\r\n          if (settings.directory !== '' && settings.directory !== undefined) {\r\n            if (settings.scanError !== null && settings.scanError !== undefined) {\r\n              rows.push(React.createElement('div', { className: 'mcart-err', key: 'scanerr' }, '没读到里面的资源：' + String(settings.scanError)))\r\n            } else {\r\n              rows.push(React.createElement('div', { className: 'mcart-hint', key: 'shape' },\r\n                '识别为 ' + (settings.shape || '？') + ' · ' + (settings.textures || 0) + ' 张贴图 · '\r\n                + ((settings.sources || []).length) + ' 个资源文件'))\r\n            }\r\n          }\r\n          for (const hint of (settings.directory === '' || settings.directory === undefined ? (settings.detected || []) : []).slice(0, 4)) {\r\n            rows.push(React.createElement('div', { className: 'mcart-bar', key: 'det' + hint },\r\n              React.createElement('span', { className: 'mcart-note mcart-grow' }, '检测到 ' + hint),\r\n              React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n                onClick: () => patchSettings({ directory: hint }, true) }, '用它'),\r\n            ))\r\n          }\r\n          if ((settings.directory === '' || settings.directory === undefined) && (settings.detected || []).length === 0) {\r\n            rows.push(React.createElement('div', { className: 'mcart-hint', key: 'nodir' },\r\n              '没设置就不参考外部资源。可以指向 .minecraft、某个版本目录、mods 目录，或单个 jar。'))\r\n            rows.push(React.createElement('div', { className: 'mcart-hint', key: 'nodir2' },\r\n              '没有自动检测到游戏目录 —— 直接把路径贴进上面的输入框也一样能用。'))\r\n          }\r\n\r\n          rows.push(React.createElement('label', { className: 'mcart-switch', key: 'gen' },\r\n            React.createElement('input', { type: 'checkbox', checked: settings.includeGenerated !== false,\r\n              onChange: (event) => patchSettings({ includeGenerated: event.target.checked }) }),\r\n            React.createElement('span', null, '参考本目录已生成内容'),\r\n          ))\r\n          rows.push(React.createElement('div', { className: 'mcart-hint', key: 'genhint' }, '有助于保持生成风格一致'))\r\n\r\n          rows.push(React.createElement('label', { className: 'mcart-switch', key: 'mods' },\r\n            React.createElement('input', { type: 'checkbox', checked: settings.includeMods !== false,\r\n              onChange: (event) => patchSettings({ includeMods: event.target.checked }) }),\r\n            React.createElement('span', null, '参考目录中的模组资源文件'),\r\n          ))\r\n\r\n          if (settings.includeMods !== false) {\r\n            const mods = settings.mods || []\r\n            const missing = settings.directory === '' || settings.directory === undefined\r\n            const message = missing ? '还没指定参考目录'\r\n              : (mods.length === 0 ? '参考目录里没有找到任何资源命名空间' : ('发现 ' + mods.length + ' 个命名空间'))\r\n            rows.push(React.createElement('div', { className: 'mcart-bar', key: 'modbar' },\r\n              React.createElement('span', { className: 'mcart-note' }, message),\r\n              mods.length === 0 ? null : React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n                onClick: () => setModsOpen(!modsOpen) }, modsOpen ? '收起 ▴' : '展开 ▾'),\r\n            ))\r\n            if (modsOpen) {\r\n              const list = []\r\n              for (const item of mods) {\r\n                const from = (item.from || []).slice(0, 2).join('、')\r\n                list.push(React.createElement('label', { className: 'mcart-switch', key: item.name },\r\n                  React.createElement('input', { type: 'checkbox', checked: item.on === true,\r\n                    onChange: (event) => toggleMod(item.name, event.target.checked) }),\r\n                  React.createElement('span', { className: 'mcart-grow' }, item.name,\r\n                    from === '' ? null : React.createElement('span', { className: 'mcart-id' }, from)),\r\n                  React.createElement('span', { className: 'mcart-id' }, item.count + ' 张贴图'),\r\n                ))\r\n              }\r\n              rows.push(React.createElement('div', { className: 'mcart-mods', key: 'modlist' }, list))\r\n            }\r\n          }\r\n\r\n          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'foot' },\r\n            React.createElement('span', { className: 'mcart-note mcart-grow' }, settings.file || ''),\r\n            React.createElement('span', { className: 'mcart-bad' }, saveState === null ? '' : saveState),\r\n          ))\r\n          rows.push(React.createElement('label', { className: 'mcart-switch', key: 'autoreport' },\r\n            React.createElement('input', { type: 'checkbox', checked: autoReportOn === true,\r\n              onChange: (event) => { setAutoReport(event.target.checked); setAutoTick(autoTick + 1) } }),\r\n            React.createElement('span', null, '出错时自动把报告放进输入框'),\r\n          ))\r\n          rows.push(React.createElement('div', { className: 'mcart-hint', key: 'autoreporthint' },\r\n            '只是草稿：不会自动发送，输入框里已经有你写的字时也不动它。'))\r\n          if (savedSettings !== null && savedSettings.path !== '') {\r\n            rows.push(React.createElement('div', { className: 'mcart-bar', key: 'tell' },\r\n              React.createElement('span', { className: 'mcart-note mcart-grow' },\r\n                '已保存，要让 AI 按新设置重做的话：'),\r\n              React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n                onClick: () => setPending({ path: savedSettings.path, note: savedSettings.note }) },\r\n                '告诉 AI'),\r\n              React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n                onClick: () => setSavedSettings(null) }, '不用了'),\r\n            ))\r\n          }\r\n        }\r\n        if (notice !== null) rows.push(React.createElement('div', { className: 'mcart-bad', key: 'notice' }, String(notice)))\r\n        if (failure !== null) rows.push(React.createElement('div', { className: 'mcart-err', key: 'failure' }, withVersion(failure)))\r\n        return React.createElement('div', { className: 'mcart-card', key: 'settings' }, rows)\r\n      }\r\n\r\n      if (root === '') {\r\n        const card = []\r\n        card.push(React.createElement('div', { className: 'mcart-note', key: 'hint' }, '未指定资产路径'))\r\n        card.push(React.createElement('div', { className: 'mcart-bar', key: 'input' },\r\n          React.createElement('input', {\r\n            className: 'mcart-input', placeholder: '/path/to/project',\r\n            value: draft, onChange: (event) => setDraft(event.target.value),\r\n            onKeyDown: (event) => { if (event.key === 'Enter' && draft !== '') commitRoot(draft) },\r\n          }),\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n            onClick: () => { if (draft !== '') commitRoot(draft) } }, '使用'),\r\n        ))\r\n\r\n        if (nearby !== null) {\r\n          if (nearby.loading === true) {\r\n            card.push(React.createElement('div', { className: 'mcart-note', key: 'scanning' }, '正在找本会话目录里的项目…'))\r\n          } else if (nearby.error !== null) {\r\n            card.push(React.createElement('div', { className: 'mcart-err', key: 'nerr' }, String(nearby.error)))\r\n          } else if (nearby.projects.length > 0) {\r\n            card.push(React.createElement('div', { className: 'mcart-note', key: 'found' }, '在 ' + nearby.cwd + ' 里找到：'))\r\n            const rows = []\r\n            for (const project of nearby.projects) {\r\n              rows.push(React.createElement('div', { className: 'mcart-row', key: project.root + '/' + project.id },\r\n                React.createElement('span', { className: 'mcart-grow' }, project.title,\r\n                  project.title === project.id ? null : React.createElement('span', { className: 'mcart-id' }, project.id)),\r\n                React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n                  onClick: () => openNearby(project.root, project.id) }, '打开'),\r\n              ))\r\n            }\r\n            card.push(React.createElement('div', { className: 'mcart-projects', key: 'projects' }, rows))\r\n          } else {\r\n            card.push(React.createElement('div', { className: 'mcart-note', key: 'none' },\r\n              '在 ' + nearby.cwd + ' 里没找到 mc 资产项目。'))\r\n          }\r\n        }\r\n\r\n        card.push(React.createElement('div', { className: 'mcart-bar', key: 'buttons' },\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: picking,\r\n            onClick: pickDirectory }, picking ? '对话框已打开…' : '选择目录…'),\r\n          nearby !== null && nearby.cwd !== '' ? React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n            onClick: () => commitRoot(nearby.cwd) }, '用本会话目录') : null,\r\n        ))\r\n\r\n        if (notice !== null) card.push(React.createElement('div', { className: 'mcart-bad', key: 'notice' }, String(notice)))\r\n        if (failure !== null) card.push(React.createElement('div', { className: 'mcart-err', key: 'failure' }, withVersion(failure)))\r\n        return React.createElement('div', { className: 'mcart-root' },\r\n          React.createElement('div', { className: 'mcart-bar' },\r\n            React.createElement('span', { className: 'mcart-title' }, 'MC 资产'),\r\n            React.createElement('span', { className: 'mcart-sub' }, inRightColumn ? '右侧栏' : '中央面板'),\r\n          ),\r\n          React.createElement('div', { className: 'mcart-card' }, card),\r\n        )\r\n      }\r\n\r\n      function guideCard() {\r\n        const id = String(newId).trim()\r\n        const valid = /^[a-z0-9_]{2,32}$/.test(id)\r\n        const reference = settings === null ? null : settings.directory\r\n        const rows = []\r\n        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },\r\n          React.createElement('span', { className: 'mcart-title' }, '开始一个新模组'),\r\n          React.createElement('span', { className: 'mcart-sub' }, '三步：目录 → 建项目 → 参考目录')))\r\n        rows.push(React.createElement('div', { className: 'mcart-note', key: 'why' },\r\n          '这个目录里还没有项目。一个模组 = 一个命名空间，所以这里只需要取一个名字：' +\r\n          '项目 id 与命名空间同名，之后不会给它长出第二个命名空间。'))\r\n        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'form' },\r\n          React.createElement('input', {\r\n            className: 'mcart-input', placeholder: '项目名，例如 my_mod（小写字母/数字/_）',\r\n            value: newId,\r\n            onChange: (event) => setNewId(String(event.target.value)),\r\n            onKeyDown: (event) => { if (event.key === 'Enter' && valid) createProject() },\r\n          }),\r\n          React.createElement('button', {\r\n            className: 'mcart-btn', type: 'button', disabled: !valid || busy,\r\n            onClick: () => createProject(),\r\n          }, busy ? '…' : '在这里新建项目')))\r\n        if (id !== '' && !valid) {\r\n          rows.push(React.createElement('div', { className: 'mcart-bad', key: 'badid' },\r\n            '只能用小写字母、数字、下划线，2-32 个字符'))\r\n        }\r\n        const here = emptyRoot === null ? root : emptyRoot\r\n        rows.push(React.createElement('div', { className: 'mcart-hint', key: 'where' }, '建在：' + here))\r\n        rows.push(React.createElement('div', { className: reference === null || reference === '' ? 'mcart-hint' : 'mcart-note', key: 'ref' },\r\n          reference === null || reference === ''\r\n            ? '建完下一步：点右上角 ⚙ 指定参考目录（面板会列出自动探测到的游戏目录）。不指定也能用，只是看不到原版/模组的参照。'\r\n            : '参考目录已经设好了：' + reference))\r\n        if (failure !== null) rows.push(React.createElement('div', { className: 'mcart-err', key: 'err' }, withVersion(failure)))\r\n        return React.createElement('div', { className: 'mcart-card', key: 'guide' }, rows)\r\n      }\r\n\r\n      function describeEnv() {\r\n        return host.call('atlas.env', {}).then((env) => {\r\n          if (env === null || env === undefined || env.services === undefined) return ''\r\n          const names = Object.keys(env.services)\r\n          const on = names.filter((key) => env.services[key] === true)\r\n          const off = names.filter((key) => env.services[key] !== true)\r\n          return '（宿主可用：' + (on.length === 0 ? '无' : on.join('、')) +\r\n            '；缺：' + (off.length === 0 ? '无' : off.join('、')) +\r\n            '；shell 方言：' + String(env.shellDialect === null || env.shellDialect === undefined ? '问不到' : env.shellDialect) + '）'\r\n        }).catch(() => '')\r\n      }\r\n\r\n      function createProject() {\r\n        const id = String(newId).trim()\r\n        if (!/^[a-z0-9_]{2,32}$/.test(id)) return\r\n        const here = emptyRoot === null ? root : emptyRoot\r\n        setBusy(true)\r\n        setFailure(null)\r\n        host.call('atlas.createProject', { root: here, id: id }).then((result) => {\r\n          setBusy(false)\r\n          if (result === null || result === undefined) { setFailure('新建项目没有返回任何东西'); return }\r\n          const bad = failureOf(result)\r\n          if (bad !== null) {\r\n            setFailure(String(bad))\r\n            describeEnv().then((text) => { if (text !== '') setFailure(String(bad) + ' ' + text) })\r\n            return\r\n          }\r\n          setEmptyRoot(null)\r\n          if (typeof result.via === 'string') {\r\n            setNotice('工程建好了：' + id + '（目录用 ' + result.via + ' 建的' +\r\n              (result.placeholder === true ? '，空目录里留了 .gitkeep 占位' : '') + '）')\r\n          }\r\n          scan(here, true, id)\r\n        }).catch((error) => { setBusy(false); setFailure(String(error && error.message ? error.message : error)) })\r\n      }\r\n\r\n      const projects = index === null ? [] : (index.projects || [])\r\n      const menu = []\r\n      for (const project of projects) {\r\n        menu.push(React.createElement('div', { className: 'mcart-group', key: 'p' + project.id }, project.title))\r\n        for (const category of CATEGORIES) {\r\n          const items = (project.items && project.items[category.key]) || []\r\n          if (items.length === 0) continue\r\n          menu.push(React.createElement('div', { className: 'mcart-group', key: 'p' + project.id + category.key },\r\n            category.label + ' · ' + items.length))\r\n          for (const item of items) {\r\n            const on = choice !== null && choice.project === project.id && choice.kind === category.key && choice.id === item.id\r\n            menu.push(React.createElement('button', {\r\n              key: project.id + '/' + category.key + '/' + item.id, type: 'button',\r\n              className: 'mcart-item', 'data-on': on ? '1' : '0',\r\n              onClick: () => open({ project: project.id, kind: category.key, id: item.id }, root),\r\n            }, item.title,\r\n              item.title === item.id ? null : React.createElement('span', { className: 'mcart-id' }, item.id)))\r\n          }\r\n        }\r\n      }\r\n\r\n      const stage = []\r\n      const animRows = []\r\n      if (!isAbsent(scene)) {\r\n        const ids = idsOf(scene)\r\n        const okCount = ids.filter((id) => decoded[id] !== undefined).length\r\n        const bad = ids.filter((id) => failedTex[id] === true).length\r\n        stage.push(React.createElement('div', { className: 'mcart-bar', key: 'row' },\r\n          React.createElement('span', { className: 'mcart-note' },\r\n            scene.quads.length + ' 面 · 贴图 ' + okCount + '/' + ids.length),\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n            onClick: () => { setYaw(0.72); setPitch(0.34); setZoom(1) } }, '重置'),\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: openEditor }, '✎ 手动修改'),\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: complain }, '@ 提意见'),\r\n        ))\r\n        if (bad > 0) stage.push(React.createElement('div', { className: 'mcart-bad', key: 'bad' }, bad + ' 张贴图解码失败'))\r\n        if (scene.errors && scene.errors.length > 0) {\r\n          stage.push(React.createElement('div', { className: 'mcart-bad', key: 'notes' }, withVersion(scene.errors.join('；'))))\r\n        }\r\n        const animIndex = scene === null ? {} : (scene.animations || {})\r\n        const animNotes = scene === null ? {} : (scene.animationNotes || {})\r\n        for (const id of Object.keys(animIndex).sort()) {\r\n          const tex = decoded[id]\r\n          const size = tex === undefined ? '还没解码' : (tex.width + '×' + tex.height)\r\n          const strip = tex === undefined ? null\r\n            : stripOf({ width: tex.width, height: tex.height, animation: animIndex[id] })\r\n          const row = animationRow(animIndex[id], animTicks * 50)\r\n          animRows.push(React.createElement('div', { className: 'mcart-hint', key: 'anim:' + id },\r\n            '动画 ' + id + ' · 解码 ' + size + ' · 声明 ' + String(animIndex[id].strip) + ' 行'\r\n            + ' · 判定 ' + (tex === undefined ? '等解码' : (strip === null ? '不是条带 ← 会糊' : '单帧 ' + strip))\r\n            + ' · 现在抽第 ' + String(row) + ' 行'))\r\n        }\r\n        for (const id of idsOf(scene)) {\r\n          if (animIndex[id] !== undefined) continue\r\n          const note = animNotes[id]\r\n          if (note !== undefined && note !== null && typeof note.text === 'string' && note.text !== '') {\r\n            animRows.push(React.createElement('div', { className: 'mcart-hint', key: 'noanim:' + id }, note.text))\r\n            continue\r\n          }\r\n          const tex = decoded[id]\r\n          if (tex === undefined) continue\r\n          if (!(tex.height > tex.width && tex.height % tex.width === 0)) continue\r\n          animRows.push(React.createElement('div', { className: 'mcart-hint', key: 'noanim:' + id },\r\n            '形状像条带但没有动画描述 ' + id + ' · 解码 ' + tex.width + '×' + tex.height\r\n            + ' ← 会糊；补一个 ' + String(id).split('/').pop() + '.png.mcmeta（animation 段里写明 frametime/frames）'))\r\n        }\r\n        if (scene.palette && scene.palette.length > 0) {\r\n          stage.push(React.createElement('div', { className: 'mcart-bar', key: 'palette' },\r\n            scene.palette.slice(0, 8).map((entry) => React.createElement('span', { className: 'mcart-chip', key: entry.block },\r\n              (entry.label || entry.block) + ' ×' + entry.count)),\r\n          ))\r\n        }\r\n      }\r\n      const pickedRecipe = hudOn === '' || item === null\r\n        ? null : (itemRecipes[itemKey(item.namespace, hudOn)] || null)\r\n      if (scene === null) {\r\n        const asset = itemAsset()\r\n        if (asset !== null) {\r\n          const ids = idsOf(asset.recipe)\r\n          const okCount = ids.filter((id) => decoded[id] !== undefined).length\r\n          stage.push(React.createElement('div', { className: 'mcart-bar', key: 'itemrow' },\r\n            React.createElement('span', { className: 'mcart-note' },\r\n              '物品 · 贴图 ' + okCount + '/' + ids.length\r\n              + (asset.source === 'project' ? '' : '（参考）')),\r\n            React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: openEditor }, '✎ 手动修改'),\r\n            React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: complain }, '@ 提意见'),\r\n          ))\r\n        }\r\n      }\r\n      const sceneDrawsNothing = scene === null || arrayOf(scene.quads).length === 0\r\n      const posterRecipe = sceneDrawsNothing && pickedRecipe !== null && pickedRecipe.missing !== true\r\n        ? pickedRecipe : null\r\n      const posterSide = Math.max(48, Math.min(size[0], size[1]) - 24)\r\n      stage.push(React.createElement('div', { className: 'mcart-viewport', key: 'viewport' },\r\n        React.createElement('canvas', {\r\n        key: 'canvas', className: 'mcart-canvas',\r\n        style: { height: viewH + 'px' },\r\n        ref: (node) => { canvasGeneration += 1; setCanvas(node) },\r\n        onPointerDown: (event) => {\r\n          drag.active = true\r\n          drag.moved = 0\r\n          drag.x = event.clientX\r\n          drag.y = event.clientY\r\n          if (event.currentTarget.setPointerCapture) {\r\n            try { event.currentTarget.setPointerCapture(event.pointerId) } catch (error) { /* not fatal */ }\r\n          }\r\n        },\r\n        onPointerMove: (event) => {\r\n          if (!drag.active) {\r\n            if (voxel !== null) {\r\n              const target = voxelTargetAt(event)\r\n              if (target === null) { if (hover !== null) setHover(null) }\r\n              else if (hover === null || hover.cell !== target.cell || hover.face !== target.face) setHover(target)\r\n            }\r\n            return\r\n          }\r\n          const dx = event.clientX - drag.x\r\n          const dy = event.clientY - drag.y\r\n          drag.x = event.clientX\r\n          drag.y = event.clientY\r\n          drag.moved += Math.abs(dx) + Math.abs(dy)\r\n          setYaw((previous) => previous - dx * 0.011)\r\n          setPitch((previous) => Math.max(-1.35, Math.min(1.35, previous + dy * 0.011)))\r\n        },\r\n        onPointerUp: (event) => {\r\n          const dragDistance = drag.moved\r\n          drag.active = false\r\n          if (dragDistance > 4 || voxel === null) return\r\n          voxelClick(event, event.button === 2 ? 'place' : 'remove')\r\n        },\r\n        onContextMenu: (event) => { if (event.preventDefault) event.preventDefault() },\r\n        onPointerLeave: () => { drag.active = false },\r\n      }),\r\n        React.createElement('div', { className: 'mcart-zoom' },\r\n          React.createElement('button', { className: 'mcart-btn mcart-zoombtn', type: 'button',\r\n            title: '放大', onClick: () => zoomBy(1.15) }, '＋'),\r\n          React.createElement('button', { className: 'mcart-btn mcart-zoombtn', type: 'button',\r\n            title: '缩小', onClick: () => zoomBy(1 / 1.15) }, '－'),\r\n          React.createElement('button', { className: 'mcart-btn mcart-zoombtn', type: 'button',\r\n            title: '复位视角（旋转与缩放一起）',\r\n            onClick: () => { setYaw(0.72); setPitch(0.34); setZoom(1) } }, '⟲'),\r\n        ),\r\n        posterRecipe === null ? null : React.createElement('canvas', {\r\n          key: 'poster', className: 'mcart-poster',\r\n          width: posterSide, height: posterSide,\r\n          style: { width: posterSide + 'px', height: posterSide + 'px' },\r\n          title: hudPicked,\r\n          ref: (node) => setPosterCanvas(node),\r\n        }),\r\n        hudBar()))\r\n\r\n      stage.push(React.createElement('div', { className: 'mcart-grip', key: 'grip',\r\n        title: '上下拖动调整 3D + 物品栏的高度，双击复位',\r\n        onDoubleClick: () => setViewH(VIEW_H),\r\n        onPointerDown: (event) => {\r\n          gripDrag.active = true\r\n          gripDrag.y = event.clientY\r\n          gripDrag.origin = viewH\r\n          if (event.currentTarget.setPointerCapture) {\r\n            try { event.currentTarget.setPointerCapture(event.pointerId) } catch (error) { /* not fatal */ }\r\n          }\r\n        },\r\n        onPointerMove: (event) => {\r\n          if (!gripDrag.active) return\r\n          setViewH(clampViewH(gripDrag.origin + (event.clientY - gripDrag.y)))\r\n        },\r\n        onPointerUp: () => { gripDrag.active = false },\r\n        onPointerCancel: () => { gripDrag.active = false },\r\n      }, React.createElement('span', { className: 'mcart-gripbar' })))\r\n\r\n      const iconNotes = []\r\n      if (itemMsg !== null) iconNotes.push(String(itemMsg))\r\n      const pickedNote = slotNote(pickedRecipe)\r\n      if (pickedNote !== null) iconNotes.push(pickedNote)\r\n      if (previewItem !== null && previewItem.localOnly === true) {\r\n        iconNotes.push((hudPicked === '' ? previewItem.id : hudPicked)\r\n          + ' 没有方块模型（它是物品，不是方块），所以 3D 里没有东西可看；它的样子就是物品栏里那一格')\r\n      }\r\n      if (scene !== null && arrayOf(scene.quads).length === 0) {\r\n        iconNotes.push(posterRecipe === null\r\n          ? '这一条 3D 里一个面都没有，也没有可用的图标 —— 上面那句\"取不到 / 画不出来\"就是原因'\r\n          : '这一条 3D 里一个面都没有（模型或贴图那一段是空的）；取景框里画的是它的 2D 图标')\r\n      }\r\n      if (choice !== null && choice.kind !== 'block') {\r\n        iconNotes.push(choice.kind === 'entity'\r\n          ? '实体在游戏里没有物品图标（刷怪蛋的蛋色写在代码里，包里没有）'\r\n          : (choice.kind === 'biome' ? '群系' : '多方块结构') + '在游戏里不是物品')\r\n      }\r\n      if (iconNotes.length > 0) {\r\n        stage.push(React.createElement('div', { className: 'mcart-note', key: 'iconnote' }, iconNotes.join('；')))\r\n      }\r\n\r\n      if (animRows.length > 0) {\r\n        stage.push(React.createElement('div', { className: 'mcart-mods', key: 'anims' }, animRows))\r\n      }\r\n\r\n      const sources = []\r\n      const allTextures = Object.assign({}, scene === null ? {} : scene.textures,\r\n        ghost === null || ghost.textures === undefined ? {} : ghost.textures)\r\n      for (const recipe of iconRecipesInUse()) {\r\n        if (recipe.textures !== undefined && recipe.textures !== null) Object.assign(allTextures, recipe.textures)\r\n      }\r\n      if (scene !== null || item !== null) {\r\n        for (const id of Object.keys(allTextures)) {\r\n          if (decoded[id] !== undefined) continue\r\n          sources.push(React.createElement('img', {\r\n            key: id, src: allTextures[id], alt: '', style: { display: 'none' },\r\n            ref: (node) => {\r\n              if (node === null || node === undefined) delete imageNodes[id]\r\n              else imageNodes[id] = node\r\n            },\r\n            onLoad: () => setTick(tick + 1),\r\n            onError: () => { failedTex[id] = true; setTick(tick + 1) },\r\n          }))\r\n        }\r\n      }\r\n\r\n      return React.createElement('div', { className: 'mcart-root' },\r\n        React.createElement('div', { className: 'mcart-bar' },\r\n          React.createElement('span', { className: 'mcart-title' }, 'MC 资产'),\r\n          React.createElement('span', { className: 'mcart-sub' },\r\n            busy ? '加载中…' : (inRightColumn ? '右侧栏' : '中央面板')),\r\n          React.createElement('button', { className: 'mcart-btn mcart-tool', type: 'button',\r\n            title: '物品浏览器：来源、搜索、展示形式都在这里；下面那排物品栏跟着一起筛',\r\n            'data-on': itemOpen ? '1' : '0',\r\n            onClick: openItems }, itemOpen ? '收起列表' : '物品列表'),\r\n          React.createElement('button', { className: 'mcart-icon', type: 'button', title: '设置',\r\n            onClick: openSettings }, settings === null ? '⚙' : '⚙▾'),\r\n        ),\r\n        settings === null ? null : settingsCard(),\r\n        emptyRoot === null ? null : guideCard(),\r\n        React.createElement('div', { className: 'mcart-bar' },\r\n          React.createElement('span', { className: 'mcart-path' }, root),\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n            onClick: () => { setRoot(''); setIndex(null); setItem(null); setItemOpen(false); setIconPick(null); setPreviewItem(null); setHudPage(1); setScene(null); setSettings(null); setEdit(null); setVoxel(null); setHover(null); setGhost(null) } }, '换项目'),\r\n          React.createElement('button', { className: 'mcart-btn', type: 'button',\r\n            onClick: () => { forgetTextures(); setTexEpoch(texEpoch + 1); scan(root, true, null) } }, '刷新'),\r\n        ),\r\n        failure === null ? null : React.createElement('div', { className: 'mcart-err' }, withVersion(failure)),\r\n        diagnosticCard(),\r\n        React.createElement('div', { className: 'mcart-list' }, menu),\r\n        editorCard(),\r\n        voxelCard(),\r\n        itemOpen ? itemCard() : null,\r\n        React.createElement('div', { className: 'mcart-stage' }, stage),\r\n        React.createElement('div', { style: { display: 'none' } },\r\n          React.createElement('canvas', { ref: setScratch, width: 256, height: 256 }),\r\n          React.createElement('canvas', { ref: setEditScratch, width: 16, height: 16 }),\r\n          sources,\r\n        ),\r\n      )\r\n    }\r\n\r\n    function TabTitle() {\r\n      return React.createElement('span', null, 'MC 资产')\r\n    }\r\n\r\n    function ReferenceBar(props) {\r\n      const current = usePending()\r\n      const draft = props.useInput !== undefined ? props.useInput((state) => state.draft) : ''\r\n      try {\r\n        if (props.inputActions !== undefined && props.inputActions !== null\r\n          && typeof props.inputActions.setDraft === 'function') {\r\n          const first = typeof composer.write !== 'function'\r\n          composer.write = props.inputActions.setDraft\r\n          if (first) composerCaptured()\r\n        }\r\n        composer.draft = draft === undefined || draft === null ? '' : String(draft)\r\n      } catch (error) { /* 壳给的 props 形状不对也不该把引用条弄没 */ }\r\n      if (current === null || current.path === '') return null\r\n      const note = current.note === undefined || current.note === null ? '' : String(current.note)\r\n      return React.createElement('div', { className: 'mcart-ref' },\r\n        React.createElement('span', null, '引用给 AI'),\r\n        React.createElement('span', { className: 'mcart-ref-path' }, '@' + current.path),\r\n        note === '' ? null : React.createElement('span', { className: 'mcart-ref-path' }, note),\r\n        React.createElement('button', {\r\n          className: 'mcart-btn', type: 'button',\r\n          onClick: () => {\r\n            const text = draft === undefined || draft === null ? '' : String(draft)\r\n            const base = text.length > 0 ? text.replace(/\\s+$/, '') + ' ' : ''\r\n            const tail = '@' + current.path + (note === '' ? ' ' : ' ' + note)\r\n            if (props.inputActions !== undefined) props.inputActions.setDraft(base + tail + ' ')\r\n            setPending(null)\r\n          },\r\n        }, '插入输入框'),\r\n        React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: () => setPending(null) }, '取消'),\r\n      )\r\n    }\r\n\r\n    slots.inject('conversation.input.dock', () => slots.register(\r\n      { name: 'conversation.input.dock', id: 'mc-art-ref', order: 15 },\r\n      (props) => React.createElement(ReferenceBar, { useInput: props.useInput, inputActions: props.inputActions }),\r\n    ))\r\n\r\n    let placement = null\r\n    const leftStops = []\r\n    function placeLeft() {\r\n      if (placement !== null) return\r\n      placement = 'left'\r\n      const keep = []\r\n      slots.inject('main', () => {\r\n        const stop = slots.register({ name: 'main', key: 'mcarts' },\r\n          () => React.createElement(PanelBoundary, null, React.createElement(Atlas, { sessionId: '' })))\r\n        keep.push(stop)\r\n        return stop\r\n      })\r\n      slots.inject('sidebar.panellist', () => {\r\n        const stop = slots.register({ name: 'sidebar.panellist', id: 'mcarts', order: 12, label: 'MC 资产' },\r\n          () => React.createElement('span', null, 'MC'))\r\n        keep.push(stop)\r\n        return stop\r\n      })\r\n      leftStops.push(() => { for (const stop of keep) { try { if (typeof stop === 'function') stop() } catch (error) {  } } })\r\n    }\r\n    function placeRight() {\r\n      if (placement === 'right') return\r\n      const rightTabs = ctx.get('sidebarRightTabs')\r\n      if (rightTabs === undefined) return\r\n      if (placement === 'left') {\r\n        for (const stop of leftStops) { try { stop() } catch (error) {  } }\r\n        leftStops.length = 0\r\n      }\r\n      placement = 'right'\r\n      ctx.effect(() => rightTabs.register({\r\n        id: TAB_ID,\r\n        kind: TAB_ID,\r\n        priority: 'extension',\r\n        title: () => 'MC 资产',\r\n        guide: [{\r\n          id: TAB_ID + '.open',\r\n          order: 40,\r\n          title: () => 'MC 资产预览',\r\n          description: () => '在右侧栏里看这个项目的方块 / 实体 / 群系 / 多方块结构',\r\n        }],\r\n      }))\r\n      registerPane()\r\n    }\r\n\r\n\r\n    function registerPane() {\r\n      slots.inject('sidebar.right.pane.tab', () => slots.register(\r\n        { name: 'sidebar.right.pane.tab', key: TAB_ID },\r\n        (props) => React.createElement(PanelBoundary, null,\r\n          React.createElement(Atlas, { sessionId: props.sessionId })),\r\n      ))\r\n      slots.inject('sidebar.right.pane.tab.title', () => slots.register(\r\n        { name: 'sidebar.right.pane.tab.title', key: TAB_ID },\r\n        () => React.createElement(TabTitle, null),\r\n      ))\r\n    }\r\n\r\n    if (inRightColumn) placeRight()\r\n    else {\r\n      placeLeft()\r\n      if (typeof ctx.inject === 'function') {\r\n        try {\r\n          ctx.inject(['sidebarRightTabs'], () => { if (rightColumnReady()) placeRight() })\r\n        } catch (error) {  }\r\n      }\r\n    }\r\n  },\r\n}\r\n"
 
     // 三个垫片，对齐动态插件里注入的那三个名字。
     function ensureStyles(css) {
@@ -41,8 +40,3594 @@ window.__ModuleLoader__.load({
       },
     }
 
-    var plugin = new Function('React', 'host', 'styles', 'console', 'PANEL_VERSION', SOURCE)(
-      React, host, styles, console, "0.2.9")
+    // 源码**内联**成函数体，不做运行时求值：浏览器的沙箱禁掉了求值型加载
+    // （0.2.1 起），而这一半正是被那个禁令打死的。静态函数体在同样的沙箱里执行。
+    var plugin = (function (React, host, styles, console, PANEL_VERSION) {
+    // >>> mcart:embedded-source
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+const mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k]
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+const vlen = (a) => Math.sqrt(dot(a, a))
+function unit(a) { const n = vlen(a); return n < 1e-12 ? [0, 0, 0] : mul(a, 1 / n) }
+
+
+function rotateAbout(point, origin, axis, degrees) {
+  if (!degrees) return point
+  const angle = (degrees * Math.PI) / 180
+  const p = sub(point, origin)
+  const c = Math.cos(angle)
+  const s = Math.sin(angle)
+  let r
+  if (axis === 'x') r = [p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c]
+  else if (axis === 'y') r = [p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c]
+  else r = [p[0] * c - p[1] * s, p[0] * s + p[1] * c, p[2]]
+  return add(r, origin)
+}
+
+
+function boxOfQuads(quads) {
+  const min = [Infinity, Infinity, Infinity]
+  const max = [-Infinity, -Infinity, -Infinity]
+  for (const quad of quads || []) for (const p of quad.p) for (let i = 0; i < 3; i++) {
+    if (p[i] < min[i]) min[i] = p[i]
+    if (p[i] > max[i]) max[i] = p[i]
+  }
+  if (!isFinite(min[0])) return { min: [-1, -1, -1], max: [1, 1, 1] }
+  return { min: min, max: max }
+}
+
+function makeCamera(position, target, width, height, fovY) {
+  const forward = unit(sub(target, position))
+  const right = unit(cross(forward, [0, 1, 0]))
+  const up = cross(right, forward)
+  const focal = height / 2 / Math.tan(fovY / 2)
+  return {
+    project: function (point) {
+      const offset = sub(point, position)
+      const x = dot(offset, right)
+      const y = dot(offset, up)
+      const z = dot(offset, forward)
+      if (z <= 0.02) return null
+      return [width / 2 + (x * focal) / z, height / 2 - (y * focal) / z, z]
+    },
+  }
+}
+
+function orbitCamera(box, yaw, pitch, zoom, width, height, fovY) {
+  const centre = mul(add(box.min, box.max), 0.5)
+  const radius = Math.max(vlen(sub(box.max, box.min)) / 2, 0.05)
+  const fit = radius / Math.sin(fovY / 2) / zoom
+  const cp = Math.cos(pitch)
+  const direction = [Math.sin(yaw) * cp, Math.sin(pitch), Math.cos(yaw) * cp]
+  return makeCamera(add(centre, mul(direction, fit * 1.05)), centre, width, height, fovY)
+}
+
+const EMPTY_ANIMATIONS = {}
+
+function animationRow(animation, timeMs) {
+  if (animation === undefined || animation === null) return 0
+  const order = Array.isArray(animation.order) && animation.order.length > 0 ? animation.order : null
+  const frames = order === null ? animation.frames : order.length
+  if (!(frames > 1)) return 0
+  const ticks = Math.max(1, animation.frametime || 1)
+  const step = Math.floor((timeMs || 0) / (ticks * 50))
+  const index = ((step % frames) + frames) % frames
+  return order === null ? index : order[index]
+}
+
+function stripOf(texture) {
+  const animation = texture === undefined ? undefined : texture.animation
+  if (animation === undefined || animation === null) return null
+  const strip = animation.strip
+  if (!(strip > 1) || texture.width <= 0) return null
+  if (texture.height !== strip * texture.width) return null
+  return strip
+}
+
+function renderScene(options) {
+  const width = options.width
+  const height = options.height
+  const background = options.background
+  const camera = options.camera
+  const colour = options.colour === undefined ? new Float64Array(width * height * 4) : options.colour
+  const depth = options.depth === undefined ? new Float64Array(width * height) : options.depth
+  const overlay = options.overlay === undefined ? null : options.overlay
+  const tint = options.tint === undefined ? null : options.tint
+  const backgroundAlpha = options.backgroundAlpha === undefined ? 1 : options.backgroundAlpha
+  const orthographic = options.orthographic === true
+  if (overlay === null) {
+    for (let i = 0; i < width * height; i++) {
+      colour[i * 4] = background[0] / 255
+      colour[i * 4 + 1] = background[1] / 255
+      colour[i * 4 + 2] = background[2] / 255
+      colour[i * 4 + 3] = backgroundAlpha
+      depth[i] = Infinity
+    }
+  }
+  const pick = options.pick === undefined ? null : options.pick
+  for (let quadIndex = 0; quadIndex < options.quads.length; quadIndex++) {
+    const quad = options.quads[quadIndex]
+    const texture = options.textures[quad.tex]
+    if (texture === undefined) continue
+    const mode = quad.mode || 'opaque'
+    const shade = quad.shade === undefined ? 1 : quad.shade
+    for (const indices of [[0, 1, 2], [0, 2, 3]]) {
+      const points = [quad.p[indices[0]], quad.p[indices[1]], quad.p[indices[2]]]
+      const uvs = [quad.uv[indices[0]], quad.uv[indices[1]], quad.uv[indices[2]]]
+      const screen = []
+      let visible = true
+      for (const point of points) {
+        const projected = camera.project(point)
+        if (projected === null) { visible = false; break }
+        screen.push(projected)
+      }
+      if (!visible) continue
+      const s0 = screen[0], s1 = screen[1], s2 = screen[2]
+      const minx = Math.max(0, Math.floor(Math.min(s0[0], s1[0], s2[0])))
+      const maxx = Math.min(width - 1, Math.ceil(Math.max(s0[0], s1[0], s2[0])))
+      const miny = Math.max(0, Math.floor(Math.min(s0[1], s1[1], s2[1])))
+      const maxy = Math.min(height - 1, Math.ceil(Math.max(s0[1], s1[1], s2[1])))
+      if (minx > maxx || miny > maxy) continue
+      const area = (s1[0] - s0[0]) * (s2[1] - s0[1]) - (s2[0] - s0[0]) * (s1[1] - s0[1])
+      if (Math.abs(area) < 1e-9) continue
+      const tw = texture.width
+      const th = texture.height
+      const data = texture.data
+      const blend = mode === 'blend'
+      const animation = (options.animations || EMPTY_ANIMATIONS)[quad.tex]
+      const strip = stripOf({ width: tw, height: th, animation: animation })
+      const row = strip === null ? 0 : animationRow(animation, options.timeMs)
+      for (let y = miny; y <= maxy; y++) {
+        const gy = y + 0.5
+        for (let x = minx; x <= maxx; x++) {
+          const gx = x + 0.5
+          const w0 = ((s1[0] - gx) * (s2[1] - gy) - (s2[0] - gx) * (s1[1] - gy)) / area
+          const w1 = ((s2[0] - gx) * (s0[1] - gy) - (s0[0] - gx) * (s2[1] - gy)) / area
+          const w2 = 1 - w0 - w1
+          if (w0 < -1e-6 || w1 < -1e-6 || w2 < -1e-6) continue
+          let zs, u, v
+          if (orthographic) {
+            zs = w0 * s0[2] + w1 * s1[2] + w2 * s2[2]
+            if (!(zs > 1e-9)) continue
+            u = w0 * uvs[0][0] + w1 * uvs[1][0] + w2 * uvs[2][0]
+            v = w0 * uvs[0][1] + w1 * uvs[1][1] + w2 * uvs[2][1]
+          } else {
+            const inv = w0 / s0[2] + w1 / s1[2] + w2 / s2[2]
+            if (!(inv > 1e-9)) continue
+            zs = 1 / inv
+            u = (w0 * uvs[0][0] / s0[2] + w1 * uvs[1][0] / s1[2] + w2 * uvs[2][0] / s2[2]) / inv
+            v = (w0 * uvs[0][1] / s0[2] + w1 * uvs[1][1] / s1[2] + w2 * uvs[2][1] / s2[2]) / inv
+          }
+          let tx = Math.trunc(u * tw)
+          let ty = strip === null ? Math.trunc(v * th) : row * tw + Math.trunc(v * tw)
+          if (tx < 0) tx = 0; else if (tx > tw - 1) tx = tw - 1
+          if (ty < 0) ty = 0; else if (ty > th - 1) ty = th - 1
+          const index = (ty * tw + tx) * 4
+          const alpha = data[index + 3] / 255
+          if (overlay === null) {
+            if (blend) {
+              if (!(alpha > 0)) continue
+              if (!(zs <= depth[y * width + x])) continue
+            } else {
+              if (!(alpha >= 0.5)) continue
+              if (!(zs < depth[y * width + x])) continue
+            }
+            depth[y * width + x] = zs
+            if (pick !== null) pick[y * width + x] = quadIndex
+          } else if (!(zs <= depth[y * width + x] + 1e-6)) {
+            continue
+          }
+          const target = (y * width + x) * 4
+          const r = tint === null ? (data[index] / 255) * shade : tint[0]
+          const g = tint === null ? (data[index + 1] / 255) * shade : tint[1]
+          const b = tint === null ? (data[index + 2] / 255) * shade : tint[2]
+          if (overlay !== null) {
+            colour[target] = r * overlay + colour[target] * (1 - overlay)
+            colour[target + 1] = g * overlay + colour[target + 1] * (1 - overlay)
+            colour[target + 2] = b * overlay + colour[target + 2] * (1 - overlay)
+          } else if (blend) {
+            colour[target] = r * alpha + colour[target] * (1 - alpha)
+            colour[target + 1] = g * alpha + colour[target + 1] * (1 - alpha)
+            colour[target + 2] = b * alpha + colour[target + 2] * (1 - alpha)
+          } else {
+            colour[target] = r
+            colour[target + 1] = g
+            colour[target + 2] = b
+          }
+          colour[target + 3] = 1
+        }
+      }
+    }
+  }
+  const bytes = new Uint8ClampedArray(width * height * 4)
+  for (let i = 0; i < bytes.length; i++) {
+    const value = Math.round(colour[i] * 255)
+    bytes[i] = value < 0 ? 0 : (value > 255 ? 255 : value)
+  }
+  return bytes
+}
+
+
+const FACE_AXIS = { down: 'y', up: 'y', north: 'z', south: 'z', west: 'x', east: 'x' }
+const FACE_OPPOSITE = { down: 'up', up: 'down', north: 'south', south: 'north', west: 'east', east: 'west' }
+const HORIZONTAL_FACES = { north: true, south: true, west: true, east: true }
+
+const VALUE_LABEL = {
+  down: '下', up: '上', north: '北', south: '南', west: '西', east: '东',
+  x: 'X 轴', y: 'Y 轴', z: 'Z 轴', none: '无',
+  true: '是', false: '否',
+  top: '上半', bottom: '下半',
+  straight: '直', inner_left: '内左', inner_right: '内右',
+  outer_left: '外左', outer_right: '外右',
+  save: '保存', load: '读取', corner: '角', data: '数据',
+}
+const AXIS_LABEL = {
+  facing: '朝向', axis: '朝向（轴）', half: '上下', rotation: '旋转',
+  conditional: '有条件', shape: '形状', mode: '模式',
+  powered: '通电', locked: '锁定', delay: '延迟', open: '开合',
+}
+
+function labelOfValue(value) { return VALUE_LABEL[value] === undefined ? String(value) : VALUE_LABEL[value] }
+function labelOfAxis(name) { return AXIS_LABEL[name] === undefined ? String(name) : AXIS_LABEL[name] }
+
+function withKey(table, name, value) {
+  const next = Object.assign({}, table || {})
+  next[name] = value
+  return next
+}
+function withoutKey(table, name) {
+  const next = Object.assign({}, table || {})
+  delete next[name]
+  return next
+}
+
+
+function canonicalVariant(parts) {
+  return Object.keys(parts).sort().map((name) => name + '=' + parts[name]).join(',')
+}
+
+
+function deriveVariant(axes, face, hitY, flip) {
+  const out = {}
+  const horizontal = HORIZONTAL_FACES[face] === true
+  for (const axis of axes) {
+    const name = axis.name
+    if (name === 'axis') {
+      if (FACE_AXIS[face] !== undefined) out[name] = FACE_AXIS[face]
+      continue
+    }
+    if (name === 'facing') {
+      const value = flip && horizontal ? FACE_OPPOSITE[face] : face
+      if (value !== undefined && axis.values.indexOf(value) >= 0) out[name] = value
+      continue
+    }
+    if (name === 'half') {
+      const value = face === 'down' ? 'top' : (face === 'up' ? 'bottom' : (hitY > 0.5 ? 'top' : 'bottom'))
+      if (axis.values.indexOf(value) >= 0) out[name] = value
+      continue
+    }
+  }
+  return out
+}
+
+
+function variantFor(axes, keys, defaults, face, hitY, flip, overrides) {
+  if (!Array.isArray(axes) || axes.length === 0) return null
+  const derived = deriveVariant(axes, face, hitY, flip)
+  const fallback = defaults || {}
+  const parts = {}
+  for (const axis of axes) {
+    const hand = (overrides || {})[axis.name]
+    const value = hand !== undefined ? hand : (derived[axis.name] !== undefined ? derived[axis.name] : fallback[axis.name])
+    if (value !== undefined) parts[axis.name] = value
+  }
+  if (Object.keys(parts).length !== axes.length) return null
+  const key = canonicalVariant(parts)
+  return (keys || []).indexOf(key) >= 0 ? key : null
+}
+
+
+function aroundOf(cells, at) {
+  const out = []
+  if (!Array.isArray(cells) || !Array.isArray(at)) return out
+  for (const cell of cells) {
+    if (cell === null || typeof cell !== 'object' || !Array.isArray(cell.at)) continue
+    if (typeof cell.block !== 'string' || cell.block === '') continue
+    const d = [cell.at[0] - at[0], cell.at[1] - at[1], cell.at[2] - at[2]]
+    if (d[0] === 0 && d[1] === 0 && d[2] === 0) continue
+    if (Math.abs(d[0]) > 1 || Math.abs(d[1]) > 1 || Math.abs(d[2]) > 1) continue
+    const item = { d: d, block: cell.block }
+    if (typeof cell.variant === 'string' && cell.variant !== '') item.variant = cell.variant
+    out.push(item)
+  }
+  return out
+}
+
+
+const GUI_FACE_SHADE = { up: 1.0, east: 0.637, north: 0.435,
+  down: 0.4, south: 0.4, west: 0.4 }
+const GUI_FACE_SHADE_FLAT = { up: 1.0, east: 0.417, north: 0.624,
+  down: 0.4, south: 0.841, west: 0.543 }
+
+
+function guiItemRotation(quads, rotation, table) {
+  const yaw = rotation === undefined || rotation === null ? 0 : (rotation[1] || 0)
+  const pitch = rotation === undefined || rotation === null ? 0 : (rotation[0] || 0)
+  const shade = table === undefined || table === null ? GUI_FACE_SHADE : table
+  return quads.map((quad) => {
+    let p = quad.p
+    if (yaw) p = p.map((point) => rotateAbout(point, [0.5, 0.5, 0.5], 'y', yaw))
+    if (pitch) p = p.map((point) => rotateAbout(point, [0.5, 0.5, 0.5], 'x', pitch))
+    const lit = quad.shaded === false ? (quad.shade === undefined ? 1.0 : quad.shade)
+      : (shade[quad.face] === undefined ? 1.0 : shade[quad.face])
+    return { p: p, uv: quad.uv, tex: quad.tex, shade: lit, mode: quad.mode,
+      face: quad.face, shaded: quad.shaded }
+  })
+}
+
+
+function iconCamera(quads, width, height, fill) {
+  const box = boxOfQuads(quads)
+  const spanX = Math.max(box.max[0] - box.min[0], 1e-6)
+  const spanY = Math.max(box.max[1] - box.min[1], 1e-6)
+  const ppu = Math.min(width, height) * (fill === undefined ? 0.98 : fill) / Math.max(spanX, spanY)
+  const centre = [(box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2]
+  const mid = (box.min[2] + box.max[2]) / 2
+  return {
+    project: function (point) {
+      return [width / 2 + (point[0] - centre[0]) * ppu,
+        height / 2 - (point[1] - centre[1]) * ppu,
+        mid + 1 - point[2] + 0.5]
+    },
+  }
+}
+
+
+function drawItemIcon(canvas, recipe, frameIndex, decoded) {
+  const width = canvas.width, height = canvas.height
+  const paint = canvas.getContext('2d')
+  paint.clearRect(0, 0, width, height)
+  if (recipe === null || recipe === undefined) return
+  if (recipe.shape === 'iso') {
+    const hasDisplay = recipe.display !== null && recipe.display !== undefined
+    const rotation = hasDisplay ? (recipe.display.rotation || [0, 0, 0]) : [0, 0, 0]
+    const quads = guiItemRotation(recipe.quads || [], rotation,
+      hasDisplay ? GUI_FACE_SHADE : GUI_FACE_SHADE_FLAT)
+    if (quads.length === 0) return
+    const bytes = renderScene({ width: width, height: height,
+      background: [0, 0, 0], backgroundAlpha: 0, orthographic: true,
+      camera: iconCamera(quads, width, height, 0.98), quads: quads,
+      textures: decoded, animations: recipe.animations || {},
+      timeMs: animTicks * 50 })
+    const frame = paint.createImageData(width, height)
+    frame.data.set(bytes)
+    paint.putImageData(frame, 0, 0)
+    return
+  }
+  const frames = recipe.frames && recipe.frames.length > 0 ? recipe.frames : null
+  const layers = frames === null ? (recipe.layers || [])
+    : (frames[((frameIndex || 0) % frames.length + frames.length) % frames.length].layers || [])
+  const out = new Uint8ClampedArray(width * height * 4)
+  for (const id of layers) {
+    const texture = decoded === undefined ? undefined : decoded[id]
+    if (texture === undefined || texture.data === undefined) continue
+    const sw = texture.width
+    const sh = texture.height
+    if (!(sw > 0 && sh > 0)) continue
+    const animation = (recipe.animations || {})[id]
+    const strip = stripOf({ width: sw, height: sh, animation: animation })
+    const top = strip === null ? 0 : animationRow(animation, animTicks * 50) * sw
+    const rows = strip === null ? sh : sw
+    for (let y = 0; y < height; y++) {
+      const sy = top + Math.floor((y * rows) / height)
+      if (sy < 0 || sy >= sh) continue
+      for (let x = 0; x < width; x++) {
+        const sx = Math.floor((x * sw) / width)
+        const from = (sy * sw + sx) * 4
+        const alpha = texture.data[from + 3] / 255
+        if (alpha <= 0) continue
+        const to = (y * width + x) * 4
+        out[to] = texture.data[from] * alpha + out[to] * (1 - alpha)
+        out[to + 1] = texture.data[from + 1] * alpha + out[to + 1] * (1 - alpha)
+        out[to + 2] = texture.data[from + 2] * alpha + out[to + 2] * (1 - alpha)
+        out[to + 3] = Math.max(out[to + 3], texture.data[from + 3])
+      }
+    }
+  }
+  const frame = paint.createImageData(width, height)
+  frame.data.set(out)
+  paint.putImageData(frame, 0, 0)
+}
+
+
+function clearViewport(canvas, width, height) {
+  canvas.width = width
+  canvas.height = height
+  const paint = canvas.getContext('2d')
+  if (paint !== null && paint !== undefined) paint.clearRect(0, 0, width, height)
+}
+
+
+function itemIconUrl(recipe, decoded, size) {
+  if (recipe === null || recipe === undefined) return null
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  drawItemIcon(canvas, recipe, 0, decoded)
+  return canvas.toDataURL('image/png')
+}
+
+
+function faceHitY(quad, pixelX, pixelY, camera) {
+  if (quad === undefined || camera === undefined || camera === null) return 0.5
+  const screen = []
+  for (const point of quad.p) {
+    const projected = camera.project(point)
+    if (projected === null) return 0.5
+    screen.push(projected)
+  }
+  for (const triangle of [[0, 1, 2], [0, 2, 3]]) {
+    const a = screen[triangle[0]], b = screen[triangle[1]], c = screen[triangle[2]]
+    const area = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])
+    if (Math.abs(area) < 1e-9) continue
+    const w0 = ((b[0] - pixelX) * (c[1] - pixelY) - (c[0] - pixelX) * (b[1] - pixelY)) / area
+    const w1 = ((c[0] - pixelX) * (a[1] - pixelY) - (a[0] - pixelX) * (c[1] - pixelY)) / area
+    const w2 = 1 - w0 - w1
+    if (w0 < -0.02 || w1 < -0.02 || w2 < -0.02) continue
+    const weights = [w0, w1, w2]
+    let y = 0
+    for (let i = 0; i < 3; i++) y += quad.p[triangle[i]][1] * weights[i]
+    const ys = quad.p.map((point) => point[1])
+    const min = Math.min(ys[0], ys[1], ys[2], ys[3])
+    const max = Math.max(ys[0], ys[1], ys[2], ys[3])
+    return max - min < 1e-6 ? 0.5 : (y - min) / (max - min)
+  }
+  return 0.5
+}
+
+
+function variantSummary(axes, props) {
+  const parts = []
+  for (const axis of axes) {
+    const value = props[axis.name]
+    if (value === undefined) continue
+    parts.push(labelOfAxis(axis.name) + ' ' + labelOfValue(value))
+  }
+  return parts.length === 0 ? '按方块默认' : parts.join(' · ')
+}
+
+const CSS = [
+  '.mcart-root{display:flex;flex-direction:column;gap:8px;padding:10px;height:100%;box-sizing:border-box;overflow-y:auto;overflow-x:hidden;font-size:12px}',
+  '.mcart-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}',
+  '.mcart-title{font-size:13px;font-weight:600}',
+  '.mcart-sub{opacity:.6;font-size:11px}',
+  '.mcart-path{opacity:.75;font-size:11px;word-break:break-all;flex:1;min-width:0}',
+  '.mcart-list{overflow:auto;border:1px solid rgba(127,127,127,.25);border-radius:8px;padding:4px;max-height:220px}',
+  '.mcart-group{font-size:10px;letter-spacing:.05em;text-transform:uppercase;opacity:.55;padding:6px 6px 2px}',
+  '.mcart-item{display:block;width:100%;text-align:left;background:none;border:0;border-radius:6px;color:inherit;font:inherit;font-size:12px;padding:4px 6px;cursor:pointer}',
+  '.mcart-item:hover{background:rgba(127,127,127,.16)}',
+  '.mcart-item[data-on="1"]{background:rgba(127,127,127,.28);font-weight:600}',
+  '.mcart-id{font-size:10px;opacity:.45;margin-left:4px}',
+  '.mcart-stage{flex:none;display:flex;flex-direction:column;gap:6px}',
+  '.mcart-canvas{width:100%;height:240px;display:block;border-radius:8px;background:#1a181c;border:1px solid rgba(127,127,127,.25);cursor:grab;touch-action:none}',
+  '.mcart-canvas:active{cursor:grabbing}',
+  '.mcart-btn{background:rgba(127,127,127,.14);border:1px solid rgba(127,127,127,.3);border-radius:6px;color:inherit;font:inherit;font-size:11px;padding:3px 8px;cursor:pointer;flex:none}',
+  '.mcart-btn:hover{background:rgba(127,127,127,.26)}',
+  '.mcart-btn[disabled]{opacity:.35;cursor:default}',
+  '.mcart-icon{background:none;border:0;color:inherit;font:inherit;font-size:13px;line-height:1;padding:2px 6px;border-radius:6px;cursor:pointer}',
+  '.mcart-icon:hover{background:rgba(127,127,127,.2)}',
+  '.mcart-input{flex:1;min-width:0;background:rgba(0,0,0,.18);border:1px solid rgba(127,127,127,.3);border-radius:6px;color:inherit;font:inherit;font-size:11px;padding:4px 6px}',
+  '.mcart-card{border:1px solid rgba(127,127,127,.22);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;background:rgba(127,127,127,.04)}',
+  '.mcart-row{display:flex;align-items:center;gap:6px;border-radius:6px;padding:2px 4px}',
+  '.mcart-row:hover{background:rgba(127,127,127,.14)}',
+  '.mcart-grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.mcart-projects{max-height:190px;overflow:auto;display:flex;flex-direction:column;gap:1px;border:1px solid rgba(127,127,127,.18);border-radius:8px;padding:3px}',
+  '.mcart-switch{display:flex;align-items:flex-start;gap:6px;cursor:pointer;padding:2px 0}',
+  '.mcart-switch input{margin:1px 0 0 0;flex:none}',
+  '.mcart-hint{font-size:10px;opacity:.5;margin-left:19px}',
+  '.mcart-mods{border:1px solid rgba(127,127,127,.18);border-radius:8px;padding:3px 6px;display:flex;flex-direction:column;gap:1px;max-height:160px;overflow:auto}',
+  '.mcart-chip{font-size:10px;padding:1px 6px;border-radius:999px;background:rgba(127,127,127,.16)}',
+  '.mcart-note{opacity:.66;font-size:11px}',
+  '.mcart-bad{font-size:11px;color:#e0a06c;word-break:break-all}',
+  '.mcart-err{font-size:11px;color:#e06c6c;word-break:break-all}',
+  '.mcart-edit{display:flex;flex-direction:column;gap:6px}',
+  '.mcart-edit-canvas{display:block;width:100%;height:auto;max-height:52vh;object-fit:contain;image-rendering:pixelated;border-radius:4px;background:#111;cursor:crosshair;touch-action:none}',
+  '.mcart-tools{display:flex;gap:4px;flex-wrap:wrap;align-items:center}',
+  '.mcart-tool[data-on="1"]{background:rgba(127,127,127,.42);font-weight:600}',
+  '.mcart-swatches{display:flex;gap:3px;flex-wrap:wrap;max-height:56px;overflow:auto}',
+  '.mcart-swatch{width:16px;height:16px;border-radius:3px;border:1px solid rgba(127,127,127,.5);cursor:pointer;padding:0;flex:none}',
+  '.mcart-color{width:22px;height:22px;border-radius:4px;border:1px solid rgba(127,127,127,.5);flex:none}',
+  '.mcart-tabs{display:flex;gap:4px;flex-wrap:wrap;align-items:center}',
+  '.mcart-picker{width:36px;height:24px;padding:0;border:1px solid rgba(127,127,127,.5);border-radius:4px;background:none;flex:none}',
+  '.mcart-alpha{flex:1;min-width:60px}',
+  '.mcart-select{flex:1;min-width:0;background:rgba(0,0,0,.18);border:1px solid rgba(127,127,127,.3);border-radius:6px;color:inherit;font:inherit;font-size:11px;padding:3px 4px}',
+  '.mcart-hotbar{display:flex;gap:3px;flex-wrap:wrap;max-height:124px;overflow:auto}',
+  '.mcart-slot{width:26px;height:26px;border:1px solid rgba(127,127,127,.4);border-radius:4px;background:none;background-size:cover;image-rendering:pixelated;padding:0;flex:none;cursor:pointer}',
+  '.mcart-slot:hover{background-color:rgba(127,127,127,.22)}',
+  '.mcart-slot[data-on="1"]{outline:2px solid currentColor;outline-offset:1px}',
+  '.mcart-slotq{font-size:13px;line-height:1;opacity:.6}',
+  '.mcart-slotmissing{font-size:10px;font-weight:600;opacity:.95;color:#e0a06c;letter-spacing:0}',
+  '.mcart-slot[data-missing="1"],.mcart-hudslot[data-missing="1"]{border-color:rgba(224,160,108,.75);background:rgba(224,160,108,.12)}',
+  '.mcart-icon[data-on="1"]{background:rgba(127,127,127,.3)}',
+  '.mcart-viewport{position:relative;flex:none}',
+  '.mcart-zoom{position:absolute;right:6px;top:6px;display:flex;gap:3px;opacity:.72}',
+  '.mcart-zoom:hover{opacity:1}',
+  '.mcart-zoombtn{width:22px;height:22px;padding:0;display:flex;align-items:center;justify-content:center;font-size:12px;line-height:1;background:rgba(20,20,24,.62);border-color:rgba(200,200,210,.45)}',
+  '.mcart-hud{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;gap:4px;padding:0 6px 6px;pointer-events:none}',
+  '.mcart-hudname{font-size:11px;padding:1px 8px;border-radius:999px;background:rgba(20,20,24,.72);border:1px solid rgba(200,200,210,.28);text-shadow:0 1px 2px rgba(0,0,0,.85)}',
+  '.mcart-hudbar{display:flex;align-items:center;gap:3px;padding:3px;border-radius:8px;background:rgba(20,20,24,.64);border:1px solid rgba(200,200,210,.32);pointer-events:auto}',
+  '.mcart-hudslot{width:34px;height:34px;padding:0;flex:none;display:flex;align-items:center;justify-content:center;border-radius:4px;border:1px solid rgba(120,120,130,.45);background:rgba(0,0,0,.32);cursor:pointer}',
+  '.mcart-hudslot:hover{border-color:rgba(240,240,250,.8);background:rgba(255,255,255,.14)}',
+  '.mcart-hudslot[data-on="1"]{border-color:#f2f2f6;box-shadow:inset 0 0 0 1px #f2f2f6,0 0 6px rgba(0,0,0,.6)}',
+  '.mcart-hudicon{width:30px;height:30px;display:block;image-rendering:pixelated}',
+  '.mcart-hudempty{background:rgba(0,0,0,.22);border-color:rgba(120,120,130,.26);cursor:default}',
+  '.mcart-hudpage{width:16px;height:34px;padding:0;flex:none;font:inherit;font-size:12px;line-height:1;color:inherit;background:none;border:0;cursor:pointer;opacity:.7}',
+  '.mcart-hudpage:hover{opacity:1}',
+  '.mcart-hudpage[disabled]{opacity:.22;cursor:default}',
+  '.mcart-poster{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);image-rendering:pixelated;pointer-events:none}',
+  '.mcart-grip{display:flex;align-items:center;justify-content:center;height:13px;cursor:ns-resize;touch-action:none}',
+  '.mcart-gripbar{width:46px;height:4px;border-radius:999px;background:rgba(127,127,127,.42)}',
+  '.mcart-grip:hover .mcart-gripbar{background:rgba(210,210,220,.8)}',
+  '.mcart-grip:active .mcart-gripbar{background:rgba(235,235,245,.95)}',
+  '.mcart-src{display:flex;align-items:center;gap:6px}',
+  '.mcart-ref{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 6px;padding:6px 10px;border-radius:8px;background:rgba(127,127,127,.14);border:1px solid rgba(127,127,127,.3);font-size:12px}',
+  '.mcart-ref-path{opacity:.66;word-break:break-all}',
+  '.mcart-report{white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,.22);border:1px solid rgba(127,127,127,.28);border-radius:6px;padding:6px 8px;margin:2px 0;font-size:11px;line-height:1.5;max-height:280px;overflow:auto;user-select:text;font-family:inherit}',
+  '.mcart-reportnote{font-size:10px;opacity:.55;word-break:break-all}',
+].join('')
+
+const CATEGORIES = [
+  { key: 'biome', label: '群系' },
+  { key: 'structure', label: '结构' },
+  { key: 'entity', label: '实体' },
+  { key: 'block', label: '方块' },
+]
+
+const TAB_ID = 'mc-art.atlas'
+
+let lastProject = ''
+const decoded = {}
+const failedTex = {}
+const indexes = {}
+const imageNodes = {}
+const drag = { active: false, x: 0, y: 0, moved: 0 }
+let pickBuffer = null
+let ghostAsk = ''
+const icons = {}
+const iconTried = {}
+const itemRecipes = {}
+const itemUrls = {}
+let itemFetchError = ''
+
+
+function forgetTextures() {
+  for (const key of Object.keys(decoded)) delete decoded[key]
+  for (const key of Object.keys(failedTex)) delete failedTex[key]
+  for (const key of Object.keys(itemUrls)) delete itemUrls[key]
+  for (const key of Object.keys(icons)) delete icons[key]
+  for (const key of Object.keys(iconTried)) delete iconTried[key]
+  for (const key of Object.keys(itemRecipes)) delete itemRecipes[key]
+  itemFetchError = ''
+}
+const hudCanvases = {}
+const TINT_REMOVE = [0.85, 0.2, 0.18]
+const painting = { active: false }
+
+const EDIT_ZOOM = 18
+const EDIT_UNDO = 24
+const EDIT_PALETTE = 64
+
+let hudFollowed = ''
+const VIEW_H = 240
+const VIEW_H_MIN = 140
+const VIEW_H_MAX = 760
+const gripDrag = { active: false, y: 0, origin: 0 }
+const clampViewH = (value) => Math.max(VIEW_H_MIN, Math.min(VIEW_H_MAX, Math.round(value)))
+
+function texturePoint(rect, target, clientX, clientY) {
+  if (rect === undefined || rect === null) return null
+  if (!(rect.width > 0) || !(rect.height > 0)) return null
+  if (!(target.w > 0) || !(target.h > 0)) return null
+  const scale = Math.min(rect.width / target.w, rect.height / target.h)
+  if (!(scale > 0)) return null
+  const left = rect.left + (rect.width - target.w * scale) / 2
+  const top = rect.top + (rect.height - target.h * scale) / 2
+  return [Math.floor((clientX - left) / scale), Math.floor((clientY - top) / scale)]
+}
+
+const PAGE_SIZE = 20
+const ICON_BATCH = 80
+const ITEM_PAGE = 40
+const HUD_SLOTS = 9
+
+
+
+const isAbsent = (value) => value === null || value === undefined
+const idsOf = (value) => (isAbsent(value) || !Array.isArray(value.textureIds) ? [] : value.textureIds)
+const objectOf = (value) => (isAbsent(value) || typeof value !== 'object' ? {} : value)
+const arrayOf = (value) => (Array.isArray(value) ? value : [])
+
+
+const sceneOf = (payload) => ({
+  kind: payload.kind,
+  id: payload.id,
+  title: payload.title,
+  project: payload.project,
+  quads: arrayOf(payload.quads),
+  textureIds: idsOf(payload),
+  textures: objectOf(payload.textures),
+  animations: objectOf(payload.animations),
+  animationNotes: objectOf(payload.animationNotes),
+  cells: isAbsent(payload.cells) ? null : payload.cells,
+  faceStep: payload.faceStep,
+  refs: arrayOf(payload.refs),
+  ref: isAbsent(payload.ref) ? null : payload.ref,
+  palette: arrayOf(payload.palette),
+  box: isAbsent(payload.box) ? null : payload.box,
+  errors: arrayOf(payload.errors),
+  preview: payload.preview === true,
+})
+
+function failureOf(reply) {
+  if (reply === null || reply === undefined) return '没有返回结果'
+  if (reply.error === undefined || reply.error === null) return null
+  return String(reply.error)
+}
+
+
+const DIAG_REASON = {
+  'project-model-missing': '项目包里缺这个模型文件（要补的是项目自己的文件，不是原版的）',
+  'vanilla-parent-missing': '原版母模型没取到（参考目录没设对，或那个 jar 里确实没有）',
+  'no-reference-directory': '还没有设置参考目录，原版/模组的模型取不到',
+  'reference-jar-missing': '参考目录里找不到对应的 jar',
+  'extractor-failed': '抽取器跑失败了（多半是 Python 探测或工具本身的毛病）',
+  'parent-cycle': '模型 parent 链成环了',
+  'textures-unresolved': '模型解析出来了，但面上引用的贴图取不到（典型：项目模型用了原版的 minecraft:block/…，而参考目录没设或取不到）',
+  'no-quads': '整条模型链都完整，但一个面都没产出（例如零厚度平面 + 贴图缺失）',
+  'unknown': '原因不明',
+}
+const DIAG_KIND = { project: '项目里缺', vanilla: '缺的原版母模型' }
+const DIAG_LINES = 20
+const DIAG_SHOW = 8
+
+
+function reasonLine(reason) {
+  const raw = typeof reason === 'string' ? reason : ''
+  if (raw !== '' && Object.prototype.hasOwnProperty.call(DIAG_REASON, raw)) {
+    return '原因：' + DIAG_REASON[raw] + '（' + raw + '）'
+  }
+  if (raw !== '') return '原因：' + raw + '（面板不认识这个 reason，把原值照贴出来）'
+  return '原因：unknown（宿主没有给 reason）'
+}
+
+const diagnosticOf = (payload) => {
+  const raw = payload === null || payload === undefined ? undefined : payload.diagnostic
+  if (raw === null || raw === undefined || typeof raw !== 'object') return null
+  return {
+    reason: typeof raw.reason === 'string' && raw.reason !== '' ? raw.reason : 'unknown',
+    block: typeof raw.block === 'string' ? raw.block : '',
+    missing: arrayOf(raw.missing).filter((entry) => entry !== null && typeof entry === 'object')
+      .map((entry) => ({
+        kind: entry.kind === 'vanilla' ? 'vanilla' : 'project',
+        name: typeof entry.name === 'string' ? entry.name : '',
+        fixPath: typeof entry.fixPath === 'string' ? entry.fixPath : '',
+      })),
+    tried: arrayOf(raw.tried).map((line) => String(line)),
+    referenceDirectory: typeof raw.referenceDirectory === 'string' ? raw.referenceDirectory : '',
+  }
+}
+
+
+function diagLines(diag, error) {
+  const lines = []
+  const head = error === null || error === undefined ? '' : String(error).trim()
+  if (head !== '') lines.push(head)
+  lines.push(reasonLine(diag.reason))
+  if (diag.block !== '') lines.push('方块：' + diag.block)
+  for (const entry of diag.missing) {
+    lines.push('· ' + (DIAG_KIND[entry.kind] || DIAG_KIND.project) + '：'
+      + (entry.name === '' ? '（没给名字）' : entry.name)
+      + (entry.fixPath === '' ? '' : ' —— 要动这个文件：' + entry.fixPath))
+  }
+  lines.push(diag.referenceDirectory === ''
+    ? '参考目录：没设。点右上角 ⚙ 把 .minecraft / 版本目录 / mods 目录的路径贴进去'
+    : '参考目录：' + diag.referenceDirectory)
+  if (diag.tried.length > 0) {
+    lines.push('已经试过：')
+    for (const line of diag.tried) lines.push('  - ' + String(line))
+  }
+  return lines
+}
+
+function diagText(diag, error) {
+  const all = diagLines(diag, error)
+  if (all.length <= DIAG_LINES) return all.join('\n')
+  return all.slice(0, DIAG_LINES).join('\n') + '\n…（还有 ' + (all.length - DIAG_LINES) + ' 行没画出来）'
+}
+
+
+function reportKeyOf(diag) {
+  return diag.reason + '|' + diag.block + '|'
+    + diag.missing.map((entry) => entry.kind + ':' + entry.name).join(',')
+}
+
+const versionTag = () => '（MC 资产面板 ' + String(PANEL_VERSION) + '）'
+
+
+function withVersion(text) {
+  const line = text === null || text === undefined ? '' : String(text)
+  if (line === '') return line
+  if (line.indexOf('MC 资产面板') >= 0) return line
+  if (!/(画不出|取不到|拿不到|失败|没有返回|没写盘)/.test(line)) return line
+  return line + versionTag()
+}
+
+
+function safeTextureHandle(id) {
+  const text = id === undefined || id === null ? '' : String(id)
+  if (text === '') return false
+  if (text.indexOf('\u0000') >= 0) return false
+  if (/^[a-zA-Z]:/.test(text)) return false
+  if (text.charAt(0) === '/' || text.charAt(0) === '\\') return false
+  if (text.split(/[\\/]/).indexOf('..') >= 0) return false
+  if (text.indexOf('..') >= 0) return false
+  return true
+}
+
+
+const ghostOf = (result, base) => ({
+  block: base.block,
+  at: base.at,
+  variant: base.variant,
+  loading: false,
+  quads: arrayOf(result.quads),
+  textures: objectOf(result.textures),
+  textureIds: idsOf(result),
+  animations: objectOf(result.animations),
+})
+function countsOf(list, keyOf, labelOf) {
+  const out = {}
+  for (const entry of list || []) {
+    const key = keyOf(entry) || ''
+    if (key === '') continue
+    if (out[key] === undefined) out[key] = { count: 0, label: labelOf(entry) || key }
+    out[key].count += 1
+  }
+  return out
+}
+
+function cssColour(colour) {
+  if (colour === null || colour === undefined) return 'transparent'
+  return 'rgba(' + colour[0] + ',' + colour[1] + ',' + colour[2] + ',' + (colour[3] / 255) + ')'
+}
+
+function hexOf(colour) {
+  const c = colour === null || colour === undefined ? [0, 0, 0, 255] : colour
+  const two = (v) => ('0' + Math.max(0, Math.min(255, Math.round(v))).toString(16)).slice(-2)
+  return '#' + two(c[0]) + two(c[1]) + two(c[2])
+}
+
+function fromHex(text, alpha) {
+  const raw = String(text === undefined || text === null ? '' : text).replace('#', '')
+  const a = alpha === undefined ? 255 : alpha
+  if (raw.length !== 6) return [0, 0, 0, a]
+  return [parseInt(raw.slice(0, 2), 16), parseInt(raw.slice(2, 4), 16), parseInt(raw.slice(4, 6), 16), a]
+}
+
+
+function faceLabel(faces) {
+  const list = faces === undefined || faces === null ? [] : faces
+  if (list.length === 0) return '贴图'
+  const top = list.indexOf('up') >= 0
+  const bottom = list.indexOf('down') >= 0
+  const side = list.some((face) => face === 'north' || face === 'south' || face === 'west' || face === 'east')
+  const parts = []
+  if (top) parts.push('顶面')
+  if (side) parts.push('侧面')
+  if (bottom) parts.push('底面')
+  return parts.length === 0 ? '贴图' : parts.join('+')
+}
+
+function sameColour(a, b) {
+  return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3]
+}
+
+
+function addToPalette(palette, colour, limit) {
+  if (colour === null || colour === undefined) return palette
+  if (palette.some((c) => sameColour(c, colour))) return palette
+  const next = palette.concat([colour])
+  return next.length > limit ? next.slice(next.length - limit) : next
+}
+
+function readPixel(pixels, width, x, y) {
+  const at = (y * width + x) * 4
+  return [pixels[at], pixels[at + 1], pixels[at + 2], pixels[at + 3]]
+}
+
+function writePixel(pixels, width, x, y, colour) {
+  const at = (y * width + x) * 4
+  pixels[at] = colour[0]
+  pixels[at + 1] = colour[1]
+  pixels[at + 2] = colour[2]
+  pixels[at + 3] = colour[3]
+}
+
+
+function paletteOf(pixels, limit) {
+  const seen = []
+  const known = {}
+  for (let i = 0; i < pixels.length; i += 4) {
+    if (pixels[i + 3] === 0) continue
+    const key = pixels[i] + ',' + pixels[i + 1] + ',' + pixels[i + 2] + ',' + pixels[i + 3]
+    if (known[key] === true) continue
+    known[key] = true
+    seen.push([pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]])
+    if (seen.length >= limit) break
+  }
+  return seen
+}
+
+let canvasGeneration = 0
+let lastDrawKey = ''
+let lastCamera = null
+let lastReportKey = ''
+
+const composer = { write: null, draft: '' }
+const composerWaiters = []
+let composerFilledKey = ''
+let autoReportOn = true
+let lastAutoVerdict = ''
+const AUTO_REPORT_KEY = 'dsh-mc-art.auto-report'
+try {
+  if (typeof localStorage !== 'undefined' && localStorage !== null && localStorage.getItem(AUTO_REPORT_KEY) === '0') {
+    autoReportOn = false
+  }
+} catch (error) { /* 沙箱里没有 storage：用默认值（开） */ }
+
+function setAutoReport(on) {
+  autoReportOn = on === true
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage !== null) {
+      localStorage.setItem(AUTO_REPORT_KEY, autoReportOn ? '1' : '0')
+    }
+  } catch (error) { /* 存不下不影响本次会话 */ }
+}
+
+
+function onComposerReady(callback) {
+  if (typeof composer.write === 'function') { callback(); return () => {} }
+  composerWaiters.push(callback)
+  return () => {
+    const at = composerWaiters.indexOf(callback)
+    if (at >= 0) composerWaiters.splice(at, 1)
+  }
+}
+function composerCaptured() {
+  const waiting = composerWaiters.slice()
+  composerWaiters.length = 0
+  for (const callback of waiting) {
+    try { callback() } catch (error) { /* 等的人自己有问题不该拖垮这里 */ }
+  }
+}
+
+
+function autoFillDraft(text, key, manual) {
+  const body = text === null || text === undefined ? '' : String(text)
+  const name = key === undefined || key === null ? '' : String(key)
+  if (body === '') { lastAutoVerdict = 'empty'; return 'empty' }
+  if (autoReportOn !== true && manual !== true) { lastAutoVerdict = 'off'; return 'off' }
+  if (manual !== true && name !== '' && composerFilledKey === name) { lastAutoVerdict = 'done'; return 'done' }
+  if (typeof composer.write !== 'function') { lastAutoVerdict = 'no-composer'; return 'no-composer' }
+  const current = String(composer.draft === undefined || composer.draft === null ? '' : composer.draft)
+  if (manual !== true && current.trim() !== '') { lastAutoVerdict = 'busy'; return 'busy' }
+  const base = manual === true && current.trim() !== '' ? current.replace(/\s+$/, '') + ' ' : ''
+  composer.write(base + body)
+  composerFilledKey = name
+  lastAutoVerdict = 'filled'
+  return 'filled'
+}
+
+
+function reportForAI(diag, error) {
+  return '这是「MC 资产面板」自动生成的报告（面板版本 ' + String(PANEL_VERSION)
+    + '；只放进草稿，没有发送，按回车之前都可以改）。'
+    + '\n' + diagText(diag, error)
+    + '\n请按这份报告直接修，不用再问我。'
+}
+
+function reportForBoundary(error) {
+  const message = error !== null && error !== undefined && error.message !== undefined
+    ? String(error.message) : String(error)
+  return '这是「MC 资产面板」自动生成的报告（面板版本 ' + String(PANEL_VERSION)
+    + '；只放进草稿，没有发送）。'
+    + '\n面板渲染失败：' + message
+    + '\n这一条没有结构化诊断（异常发生在渲染期）。请从这句话入手。'
+}
+let animTicks = 0
+
+const roots = {}
+const listeners = []
+let pending = null
+function setPending(next) {
+  pending = next
+  const copy = listeners.slice()
+  for (const listener of copy) listener()
+}
+function usePending() {
+  const pair = React.useState(pending)
+  React.useEffect(() => {
+    const listener = () => pair[1](pending)
+    listeners.push(listener)
+    return () => {
+      const at = listeners.indexOf(listener)
+      if (at >= 0) listeners.splice(at, 1)
+    }
+  }, [])
+  return pair[0]
+}
+
+return {
+  inject: ['timer', 'slots'],
+  apply(ctx) {
+    const slots = ctx.get('slots')
+    if (slots === undefined || slots === null) {
+      console.error('[mcart] slots 服务没就绪，面板不注册（这条要报给宿主，别静默）')
+      return
+    }
+    const timer = ctx.timer
+    ctx.effect(() => styles.insert(CSS))
+
+    const tabs = ctx.get('sidebarRightTabs')
+    const sidebarRight = ctx.get('sidebarRight')
+    function slotHasEntries(name) {
+      try {
+        if (typeof slots.entries !== 'function') return false
+        const list = slots.entries(name)
+        return Array.isArray(list) && list.length > 0
+      } catch (error) {
+        return false
+      }
+    }
+    function rightColumnReady() {
+      return ctx.get('sidebarRightTabs') !== undefined &&
+        (ctx.get('sidebarRight') !== undefined || slotHasEntries('sidebar.right.pane.tab'))
+    }
+    const tabsReady = ctx.get('sidebarRightTabs')
+    const sidebarRightReady = ctx.get('sidebarRight')
+    const inRightColumn = tabsReady !== undefined &&
+      (sidebarRightReady !== undefined || slotHasEntries('sidebar.right.pane.tab'))
+
+
+    const canUseBoundary = typeof React.Component === 'function'
+    const PanelBoundary = canUseBoundary
+      ? class PanelBoundary extends React.Component {
+        constructor(props) {
+          super(props)
+          this.state = { error: null }
+        }
+        static getDerivedStateFromError(error) {
+          return { error: error }
+        }
+        componentDidCatch(error) {
+          try { console.error('[mcart] 面板渲染失败', error) } catch (ignored) { /* 没有 console 也不能再炸 */ }
+          try {
+            autoFillDraft(reportForBoundary(error), 'boundary|'
+              + (error !== null && error !== undefined && error.message !== undefined ? String(error.message) : String(error)))
+          } catch (ignored) { /* 通知失败不该把"报错"这件事本身也弄没 */ }
+        }
+        render() {
+          if (this.state.error === null || this.state.error === undefined) return this.props.children
+          const message = this.state.error !== null && this.state.error.message !== undefined
+            ? this.state.error.message : this.state.error
+          const notice = lastAutoVerdict === 'filled' || lastAutoVerdict === 'done'
+            ? '已把这份报告放进输入框（只是草稿，没发送；按回车才会发）'
+            : (lastAutoVerdict === 'busy'
+              ? '输入框里已经有你写的字，没有动它 —— 报告在上面这段里，选中就能复制'
+              : (lastAutoVerdict === 'off'
+                ? '「出错时自动把报告放进输入框」现在是关的'
+                : (lastAutoVerdict === 'no-composer'
+                  ? '这个壳没有给输入框接口 —— 上面这段可以手动选中复制'
+                  : '刷新一次；如果仍是这一句，把它连同"MC 资产"面板发给我')))
+          return React.createElement('div', { className: 'mcart-root' },
+            React.createElement('div', { className: 'mcart-err' },
+              '面板渲染失败：' + String(message)),
+            React.createElement('div', { className: 'mcart-hint' },
+              notice + ' —— 版本：' + String(PANEL_VERSION)),
+          )
+        }
+      }
+      : function PanelBoundary(props) { return props.children }
+
+    function Atlas(props) {
+      if (typeof globalThis !== 'undefined' && globalThis.__MCART_FORCE_RENDER_ERROR__ === true) {
+        throw new Error('注入的渲染错误')
+      }
+      const sessionId = props.sessionId === undefined ? '' : String(props.sessionId)
+      const indexPair = React.useState(null)
+      const failurePair = React.useState(null)
+      const emptyPair = React.useState(null)
+      const newIdPair = React.useState('')
+      const noticePair = React.useState(null)
+      const nearbyPair = React.useState(null)
+      const choicePair = React.useState(null)
+      const scenePair = React.useState(null)
+      const tickPair = React.useState(0)
+      const yawPair = React.useState(0.72)
+      const pitchPair = React.useState(0.34)
+      const zoomPair = React.useState(1)
+      const canvasPair = React.useState(null)
+      const scratchPair = React.useState(null)
+      const sizePair = React.useState([340, 260])
+      const viewHPair = React.useState(VIEW_H)
+      const posterPair = React.useState(null)
+      const itemMsgPair = React.useState(null)
+      const savedSettingsPair = React.useState(null)
+      const busyPair = React.useState(false)
+      const pickingPair = React.useState(false)
+      const dirDraftPair = React.useState('')
+      const draftPair = React.useState('')
+      const settingsPair = React.useState(null)
+      const savePair = React.useState(null)
+      const modsOpenPair = React.useState(false)
+      const rootPair = React.useState(roots[sessionId] === undefined ? '' : roots[sessionId])
+      const index = indexPair[0], setIndex = indexPair[1]
+      const failure = failurePair[0], setFailure = failurePair[1]
+      const emptyRoot = emptyPair[0], setEmptyRoot = emptyPair[1]
+      const newId = newIdPair[0], setNewId = newIdPair[1]
+      const notice = noticePair[0], setNotice = noticePair[1]
+      const nearby = nearbyPair[0], setNearby = nearbyPair[1]
+      const choice = choicePair[0], setChoice = choicePair[1]
+      const scene = scenePair[0], setScene = scenePair[1]
+      const tick = tickPair[0], setTick = tickPair[1]
+      const yaw = yawPair[0], setYaw = yawPair[1]
+      const pitch = pitchPair[0], setPitch = pitchPair[1]
+      const zoom = zoomPair[0], setZoom = zoomPair[1]
+      const canvas = canvasPair[0], setCanvas = canvasPair[1]
+      const scratch = scratchPair[0], setScratch = scratchPair[1]
+      const size = sizePair[0], setSize = sizePair[1]
+      const viewH = viewHPair[0], setViewH = viewHPair[1]
+      const posterCanvas = posterPair[0], setPosterCanvas = posterPair[1]
+      const itemMsg = itemMsgPair[0], setItemMsg = itemMsgPair[1]
+      const savedSettings = savedSettingsPair[0], setSavedSettings = savedSettingsPair[1]
+      const busy = busyPair[0], setBusy = busyPair[1]
+      const picking = pickingPair[0], setPicking = pickingPair[1]
+      const dirDraft = dirDraftPair[0], setDirDraft = dirDraftPair[1]
+      const draft = draftPair[0], setDraft = draftPair[1]
+      const settings = settingsPair[0], setSettings = settingsPair[1]
+      const saveState = savePair[0], setSaveState = savePair[1]
+      const modsOpen = modsOpenPair[0], setModsOpen = modsOpenPair[1]
+      const root = rootPair[0], setRoot = rootPair[1]
+      const editPair = React.useState(null)
+      const undoPair = React.useState([])
+      const editTickPair = React.useState(0)
+      const editCanvasPair = React.useState(null)
+      const editScratchPair = React.useState(null)
+      const editBusyPair = React.useState(false)
+      const editMsgPair = React.useState(null)
+      const voxelPair = React.useState(null)
+      const hoverPair = React.useState(null)
+      const ghostPair = React.useState(null)
+      const iconTickPair = React.useState(0)
+      const texEpochPair = React.useState(0)
+      const diagPair = React.useState(null)
+      const diagOpenPair = React.useState(false)
+      const copiedPair = React.useState('')
+      const autoStatusPair = React.useState('')
+      const autoTickPair = React.useState(0)
+      const composerTickPair = React.useState(0)
+      const diag = diagPair[0], setDiag = diagPair[1]
+      const diagOpen = diagOpenPair[0], setDiagOpen = diagOpenPair[1]
+      const copied = copiedPair[0], setCopied = copiedPair[1]
+      const autoStatus = autoStatusPair[0], setAutoStatus = autoStatusPair[1]
+      const autoTick = autoTickPair[0], setAutoTick = autoTickPair[1]
+      const composerTick = composerTickPair[0], setComposerTick = composerTickPair[1]
+      const voxel = voxelPair[0], setVoxel = voxelPair[1]
+      const hover = hoverPair[0], setHover = hoverPair[1]
+      const ghost = ghostPair[0], setGhost = ghostPair[1]
+      const iconTick = iconTickPair[0], setIconTick = iconTickPair[1]
+      const texEpoch = texEpochPair[0], setTexEpoch = texEpochPair[1]
+      const edit = editPair[0], setEdit = editPair[1]
+      const undo = undoPair[0], setUndo = undoPair[1]
+      const editTick = editTickPair[0], setEditTick = editTickPair[1]
+      const editCanvas = editCanvasPair[0], setEditCanvas = editCanvasPair[1]
+      const editScratch = editScratchPair[0], setEditScratch = editScratchPair[1]
+      const editBusy = editBusyPair[0], setEditBusy = editBusyPair[1]
+      const editMsg = editMsgPair[0], setEditMsg = editMsgPair[1]
+      const refSourcesPair = React.useState([])
+      const refSources = refSourcesPair[0], setRefSources = refSourcesPair[1]
+      const itemPair = React.useState(null)
+      const item = itemPair[0], setItem = itemPair[1]
+      const iconPair = React.useState(null)
+      const iconPick = iconPair[0], setIconPick = iconPair[1]
+      const itemOpenPair = React.useState(false)
+      const itemOpen = itemOpenPair[0], setItemOpen = itemOpenPair[1]
+      const hudPagePair = React.useState(1)
+      const hudPage = hudPagePair[0], setHudPage = hudPagePair[1]
+      const previewPair = React.useState(null)
+      const previewItem = previewPair[0], setPreviewItem = previewPair[1]
+      const filterPair = React.useState('')
+      const filter = filterPair[0], setFilter = filterPair[1]
+      const pickGroupPair = React.useState('')
+      const pickGroup = pickGroupPair[0], setPickGroup = pickGroupPair[1]
+      const pickFamilyPair = React.useState('')
+      const pickFamily = pickFamilyPair[0], setPickFamily = pickFamilyPair[1]
+      const pickPagePair = React.useState(1)
+      const pickPage = pickPagePair[0], setPickPage = pickPagePair[1]
+
+      function activeProjectId() {
+        if (choice !== null && choice.project !== undefined && choice.project !== null) return choice.project
+        const projects = index === null ? [] : (index.projects || [])
+        return projects.length > 0 ? projects[0].id : null
+      }
+
+      function noteDiag(payload, error) {
+        const info = diagnosticOf(payload)
+        if (info === null) { setDiag(null); return }
+        const key = reportKeyOf(info)
+        const repeat = lastReportKey !== '' && lastReportKey === key
+        lastReportKey = key
+        setDiagOpen(false)
+        setCopied('')
+        setDiag({ diag: info, error: error === undefined || error === null ? '' : String(error), repeat: repeat, key: key })
+      }
+
+
+      function statusText(verdict) {
+        if (verdict === 'filled') return '已放进输入框（只是草稿，没发送；按回车之前都可以改）'
+        if (verdict === 'busy') return '输入框里已经有你写的字，没有动它 —— 要放就点左边的按钮'
+        if (verdict === 'done') return '同一条报告已经放进过输入框，没有再塞一遍'
+        if (verdict === 'off') return '「出错时自动把报告放进输入框」现在是关的'
+        if (verdict === 'no-composer') return '这个壳没有给输入框接口 —— 上面那段可以选中复制'
+        return '出错时会把这份报告放进输入框（只放草稿，不发送）'
+      }
+      function placeReport(manual) {
+        if (diag === null) return
+        const verdict = autoFillDraft(reportForAI(diag.diag, diag.error), 'diag|' + String(diag.key), manual === true)
+        setAutoStatus(verdict)
+      }
+
+      React.useEffect(() => onComposerReady(() => setComposerTick(composerTick + 1)), [])
+      React.useEffect(() => {
+        if (diag === null) return
+        const verdict = autoFillDraft(reportForAI(diag.diag, diag.error), 'diag|' + String(diag.key))
+        setAutoStatus(verdict)
+      }, [diag === null ? '' : String(diag.key), composerTick, autoTick])
+
+
+      function copyReport(text) {
+        const payload = String(text === undefined || text === null ? '' : text)
+        const done = (message) => { try { setCopied(message) } catch (ignored) { /* 不能因为一句提示再炸一次 */ } }
+        try {
+          const board = typeof navigator !== 'undefined' && navigator !== null ? navigator.clipboard : undefined
+          if (board !== undefined && board !== null && typeof board.writeText === 'function') {
+            const result = board.writeText(payload)
+            if (result !== undefined && result !== null && typeof result.then === 'function') {
+              result.then(() => done('已复制到剪贴板'), () => fallbackCopy(payload, done))
+            } else { done('已复制到剪贴板') }
+            return
+          }
+        } catch (error) { /* 没有剪贴板就走下面那条 */ }
+        fallbackCopy(payload, done)
+      }
+
+      function fallbackCopy(text, done) {
+        try {
+          if (typeof document !== 'undefined' && document !== null && typeof document.createElement === 'function') {
+            const area = document.createElement('textarea')
+            area.value = text
+            area.setAttribute('readonly', 'readonly')
+            if (document.body && typeof document.body.appendChild === 'function') document.body.appendChild(area)
+            if (typeof area.select === 'function') area.select()
+            const ok = typeof document.execCommand === 'function' ? document.execCommand('copy') : false
+            if (document.body && typeof document.body.removeChild === 'function') document.body.removeChild(area)
+            done(ok === false ? '没复制成 —— 请手动选中上面那段' : '已复制到剪贴板')
+            return
+          }
+        } catch (error) { /* 没有 DOM 不是错误 */ }
+        done('没复制成 —— 请手动选中上面那段')
+      }
+
+      function open(target, where) {
+        if (lastProject !== target.project) { forgetTextures(); setTexEpoch(texEpoch + 1) }
+        lastProject = target.project
+        setBusy(true)
+        setChoice(target)
+        setPreviewItem(null)
+        painting.active = false
+        setEdit(null)
+        setUndo([])
+        setEditMsg(null)
+        setVoxel(null)
+        setHover(null)
+        setGhost(null)
+        const want = { root: where, project: target.project, kind: target.kind, id: target.id, have: Object.keys(decoded) }
+        host.call('atlas.scene', want).then((result) => {
+          setBusy(false)
+          if (result === null || result === undefined) { setFailure('scene returned nothing'); return }
+          if (result.error !== undefined) {
+            setFailure(result.error)
+            noteDiag(result, result.error)
+            setScene(null)
+            return
+          }
+          setFailure(null)
+          lastReportKey = ''
+          setDiag(null)
+          for (const key of Object.keys(imageNodes)) delete imageNodes[key]
+          setScene(sceneOf(result))
+        }).catch((error) => { setBusy(false); setFailure(String(error && error.message ? error.message : error)) })
+      }
+
+      function firstOfProject(project) {
+        if (project === undefined || project === null) return null
+        for (const category of CATEGORIES) {
+          const items = (project.items && project.items[category.key]) || []
+          if (items.length > 0) return { project: project.id, kind: category.key, id: items[0].id }
+        }
+        return null
+      }
+
+      function firstPick(result) {
+        const projects = result.projects || []
+        for (const category of CATEGORIES) {
+          for (const project of projects) {
+            const items = (project.items && project.items[category.key]) || []
+            if (items.length > 0) return { project: project.id, kind: category.key, id: items[0].id }
+          }
+        }
+        return null
+      }
+
+      function scan(where, force, wantProject) {
+        if (where === undefined || where === '') { setIndex(null); return }
+        if (force !== true && indexes[where] !== undefined) {
+          const cached = indexes[where]
+          setIndex(cached)
+          setFailure(null)
+          const project = wantProject === undefined || wantProject === null ? null : (cached.projects || []).filter((p) => p.id === wantProject)[0]
+          const first = project !== null && project !== undefined ? firstOfProject(project) : firstPick(cached)
+          if (first !== null) open(first, where)
+          return
+        }
+        setBusy(true)
+        setFailure(null)
+        host.call('atlas.scan', { root: where }).then((result) => {
+          setBusy(false)
+          if (result === null || result === undefined) { setFailure('scan returned nothing'); return }
+          setIndex(result)
+          if (result.error !== undefined) { setFailure(result.error); return }
+          const projects = result.projects || []
+          if (projects.length === 0) {
+            setFailure(null)
+            setEmptyRoot(where)
+            setNewId(String(where).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '')
+            setScene(null)
+            return
+          }
+          setEmptyRoot(null)
+          setFailure(null)
+          indexes[where] = result
+          const project = wantProject === undefined || wantProject === null ? null : projects.filter((p) => p.id === wantProject)[0]
+          const first = project !== null && project !== undefined ? firstOfProject(project) : firstPick(result)
+          if (first !== null) open(first, where)
+        }).catch((error) => { setBusy(false); setFailure(String(error && error.message ? error.message : error)) })
+      }
+
+      function commitRoot(next) {
+        roots[sessionId] = next
+        setRoot(next)
+        setDraft('')
+        setNotice(null)
+        setSettings(null)
+        scan(next, false, null)
+      }
+
+      function openNearby(rootPath, projectId) {
+        roots[sessionId] = rootPath
+        setRoot(rootPath)
+        setNotice(null)
+        scan(rootPath, false, projectId)
+      }
+
+      function runPicker(start, onPicked) {
+        if (picking === true) return
+        setPicking(true)
+        setNotice('正在打开系统的目录选择器…（有的环境弹不出来；弹不出来就在下面的输入框里直接贴路径）')
+        host.call('atlas.pickDirectory', { start: start })
+          .then((result) => {
+            setPicking(false)
+            if (result === null || result === undefined) { setNotice('目录选择器没有返回结果。'); return }
+            if (result.error !== undefined) { setNotice(String(result.error)); return }
+            if (result.supported === false) {
+              setNotice(String(result.detail || '这个环境没有可用的目录选择器，') + '请把路径直接贴进下面的输入框。')
+              return
+            }
+            if (result.cancelled === true) { setNotice(null); return }
+            if (typeof result.path === 'string' && result.path.length > 0) { setNotice(null); onPicked(result.path); return }
+            setNotice('目录选择器没有返回路径。')
+          })
+          .catch((error) => {
+            setPicking(false)
+            setNotice('目录选择器失败：' + String(error && error.message ? error.message : error) +
+              '　请把路径直接贴进下面的输入框。')
+          })
+      }
+
+      function pickDirectory() {
+        runPicker(root !== '' ? root : (nearby !== null ? nearby.cwd : ''), commitRoot)
+      }
+
+      function applyDirDraft() {
+        const wanted = String(dirDraft).trim()
+        patchSettings({ directory: wanted }, true)
+      }
+
+      function loadSettings() {
+        const projectId = activeProjectId()
+        if (projectId === null) return
+        setSaveState(null)
+        setModsOpen(false)
+        setSettings({ loading: true })
+        host.call('atlas.settings', { root: root, project: projectId }).then((result) => {
+          if (result === null || result === undefined || result.error !== undefined) {
+            setSettings({ error: result !== null && result !== undefined && result.error !== undefined ? result.error : '设置读取失败' })
+            return
+          }
+          setSettings(Object.assign({ loading: false }, result))
+        }).catch((error) => setSettings({ error: String(error && error.message ? error.message : error) }))
+      }
+
+      function openSettings() {
+        if (settings !== null) { setSettings(null); return }
+        loadSettings()
+      }
+
+      function saveSettings(next, rescan) {
+        const modMap = {}
+        for (const item of next.mods || []) modMap[item.name] = item.on === true
+        setSaveState('保存中…')
+        host.call('atlas.saveSettings', {
+          root: root, project: next.project, directory: next.directory,
+          includeGenerated: next.includeGenerated, includeMods: next.includeMods, mods: modMap,
+        }).then((result) => {
+          const failed = result !== null && result !== undefined && result.error !== undefined
+          setSaveState(failed ? ('保存失败：' + result.error) : '已保存')
+          if (failed) { setSavedSettings(null); return }
+          const on = (next.mods || []).filter((item) => item.on === true).length
+          setSavedSettings({
+            path: result.path === undefined ? '' : String(result.path),
+            note: '参考目录改成了 ' + (next.directory === '' ? '（空）' : next.directory)
+              + '；' + on + '/' + (next.mods || []).length + ' 个 mod 开着，'
+              + (next.includeGenerated === false ? '不含' : '含') + '本项目自己的贴图。请按这个重做',
+          })
+          if (rescan === true) loadSettings()
+        }).catch((error) => {
+          setSavedSettings(null)
+          setSaveState('保存失败：' + String(error && error.message ? error.message : error))
+        })
+      }
+
+      function patchSettings(patch, rescan) {
+        if (settings === null) return
+        const next = Object.assign({}, settings, patch)
+        setSettings(next)
+        saveSettings(next, rescan)
+      }
+
+      function toggleMod(name, on) {
+        if (settings === null) return
+        const mods = (settings.mods || []).map((item) => (item.name === name ? Object.assign({}, item, { on: on }) : item))
+        const next = Object.assign({}, settings, { mods: mods })
+        setSettings(next)
+        saveSettings(next)
+      }
+
+      React.useEffect(() => {
+        if (root !== '') { scan(root, false, null); return }
+        host.call('atlas.session', { sessionId: sessionId })
+          .then((result) => {
+            const cwd = result !== null && result !== undefined && typeof result.cwd === 'string' && result.cwd.length > 0 ? result.cwd : null
+            if (cwd === null) return null
+            setNearby({ cwd: cwd, loading: true, projects: [], error: null })
+            return host.call('atlas.projects', { path: cwd })
+          })
+          .then((result) => {
+            if (result === null || result === undefined) return
+            if (result.error !== undefined) { setNearby({ cwd: result.base || '', loading: false, projects: [], error: result.error }); return }
+            setNearby({ cwd: result.base, loading: false, projects: result.projects || [], error: null })
+          })
+          .catch((error) => setNearby({ cwd: '', loading: false, projects: [], error: String(error && error.message ? error.message : error) }))
+      }, [])
+
+      React.useEffect(() => {
+        if (settings === null) return
+        setDirDraft(typeof settings.directory === 'string' ? settings.directory : '')
+      }, [settings === null ? '' : String(settings.directory)])
+
+      React.useEffect(() => {
+        if (canvas === null) return
+        const width = canvas.clientWidth || 340
+        const height = canvas.clientHeight || 240
+        if (width !== size[0] || height !== size[1]) setSize([width, height])
+      })
+
+      React.useEffect(() => {
+        if (posterCanvas === null || posterRecipe === null) return
+        const frames = (posterRecipe.frames || []).length
+        const frame = frames > 1 ? Math.floor(animTicks / 2) % frames : 0
+        drawItemIcon(posterCanvas, posterRecipe, frame, decoded)
+      })
+
+      React.useEffect(() => {
+        if (canvas === null) return
+        function onWheel(event) {
+          event.preventDefault()
+          setZoom((previous) => Math.max(0.35, Math.min(3, previous * (event.deltaY > 0 ? 0.92 : 1.08))))
+        }
+        canvas.addEventListener('wheel', onWheel, { passive: false })
+        return () => canvas.removeEventListener('wheel', onWheel)
+      }, [canvas])
+
+      function zoomBy(factor) {
+        setZoom((previous) => Math.max(0.35, Math.min(3, previous * factor)))
+      }
+
+      function projectNamespaceOf(id) {
+        const projects = index === null ? [] : (index.projects || [])
+        const found = projects.filter((entry) => entry.id === id)[0]
+        return found === undefined ? '' : found.namespace
+      }
+
+      const hudView = () => {
+        const list = itemFiltered()
+        const pages = Math.max(1, Math.ceil(list.length / HUD_SLOTS))
+        const page = Math.min(Math.max(1, hudPage), pages)
+        return { list: list.slice((page - 1) * HUD_SLOTS, page * HUD_SLOTS),
+          page: page, pages: pages, total: list.length }
+      }
+      const hudOn = previewItem !== null ? previewItem.id
+        : (choice !== null && choice.kind === 'block' ? choice.id : '')
+      const hudPickedEntry = hudOn === '' ? undefined
+        : itemFiltered().filter((entry) => entry.id === hudOn)[0]
+      const hudPicked = previewItem !== null
+        ? (hudPickedEntry === undefined ? previewItem.id : hudPickedEntry.name)
+        : (hudPickedEntry !== undefined ? hudPickedEntry.name
+          : (choice === null ? '' : (choice.title || choice.id)))
+      const hudKey = item === null ? '' : [item.source, item.namespace, item.filter,
+        item.form, item.family].join('|')
+      React.useEffect(() => {
+        if (hudOn === '') return
+        const token = hudKey + '#' + hudOn
+        if (token === hudFollowed) return
+        hudFollowed = token
+        const at = itemFiltered().map((entry) => entry.id).indexOf(hudOn)
+        if (at < 0) return
+        const page = Math.floor(at / HUD_SLOTS) + 1
+        if (page !== hudView().page) setHudPage(page)
+      }, [hudKey, hudOn])
+      const hudAnimated = item !== null && itemFiltered().some((entry) => {
+        const recipe = itemRecipes[itemKey(item.namespace, entry.id)]
+        return recipe !== undefined && recipe !== null
+          && (((recipe.frames || []).length > 1) || Object.keys(recipe.animations || {}).length > 0)
+      })
+      const animating = (scene !== null && Object.keys(scene.animations || {}).length > 0)
+        || (ghost !== null && Object.keys(ghost.animations || {}).length > 0)
+        || hudAnimated
+      React.useEffect(() => {
+        if (!animating) return undefined
+        const dispose = timer.interval(() => {
+          animTicks += 1
+          setTick((previous) => previous + 1)
+        }, 50)
+        return () => { if (typeof dispose === 'function') dispose() }
+      }, [animating])
+
+      React.useEffect(() => {
+        const ours = projectNamespaceOf(activeProjectId())
+        if (ours === '') return
+        if (item === null) { loadItems('project', ours, 1, '', '', ''); return }
+        if (item.source === 'project' && item.namespace !== ours) loadItems('project', ours, 1, '', '', '')
+      }, [index === null ? '' : (index.projects || []).map((project) => project.id).join(','),
+        activeProjectId(), item === null ? '' : item.source + '|' + item.namespace])
+
+      React.useEffect(() => {
+        if (scene === null && item === null) return
+        const needed = idsOf(scene).slice()
+        const waiting = needed.slice()
+        if (ghost !== null && Array.isArray(ghost.textureIds)) {
+          for (const id of idsOf(ghost)) if (needed.indexOf(id) < 0) needed.push(id)
+        }
+        for (const recipe of iconRecipesInUse()) {
+          for (const id of idsOf(recipe)) if (needed.indexOf(id) < 0) needed.push(id)
+        }
+        let changed = false
+        if (scratch !== null) {
+          for (const id of needed) {
+            if (decoded[id] !== undefined || failedTex[id] === true) continue
+            const node = imageNodes[id]
+            if (node === undefined || node.complete !== true) continue
+            changed = true
+            if (!node.naturalWidth || !node.naturalHeight) { failedTex[id] = true; continue }
+            const neededWidth = Math.max(scratch.width, node.naturalWidth)
+            const neededHeight = Math.max(scratch.height, node.naturalHeight)
+            if (neededWidth !== scratch.width || neededHeight !== scratch.height) {
+              scratch.width = neededWidth
+              scratch.height = neededHeight
+            }
+            const paint = scratch.getContext('2d')
+            paint.clearRect(0, 0, scratch.width, scratch.height)
+            paint.drawImage(node, 0, 0)
+            const frame = paint.getImageData(0, 0, node.naturalWidth, node.naturalHeight)
+            decoded[id] = { width: frame.width, height: frame.height, data: frame.data }
+          }
+        }
+        if (changed) { setTick(tick + 1); return }
+        if (scene === null) {
+          if (canvas === null) return
+          const emptyKey = 'empty|' + size[0] + '|' + size[1] + '|' + canvasGeneration
+          if (emptyKey === lastDrawKey) return
+          lastDrawKey = emptyKey
+          clearViewport(canvas, size[0], size[1])
+          return
+        }
+        if (canvas === null) return
+        for (const id of waiting) {
+          if (decoded[id] === undefined && failedTex[id] !== true) return
+        }
+        const ghostKey = ghost === null ? '-' : (ghost.block + '@' + ghost.at.join(',') + ':' + ghost.quads.length)
+        const hoverKey = voxel === null || hover === null ? '-' : (hover.cell + ':' + hover.face)
+        const animations = Object.assign({}, scene.animations || {},
+          ghost === null || ghost.animations === undefined ? {} : ghost.animations)
+        const animTime = animTicks * 50
+        const animKey = Object.keys(animations).sort()
+          .map((id) => id + ':' + animationRow(animations[id], animTime)).join(',')
+        const key = [scene.kind, scene.id, scene.quads.length, size[0], size[1], canvasGeneration,
+          yaw.toFixed(4), pitch.toFixed(4), zoom.toFixed(4), ghostKey, hoverKey, animKey].join('|')
+        if (key === lastDrawKey) return
+        lastDrawKey = key
+        const box = scene.box || { min: [-1, -1, -1], max: [1, 1, 1] }
+        const camera = orbitCamera(box, yaw, pitch, zoom, size[0], size[1], Math.PI / 4)
+        lastCamera = camera
+        const buffer = new Int32Array(size[0] * size[1])
+        buffer.fill(-1)
+        const colourBuf = new Float64Array(size[0] * size[1] * 4)
+        const depthBuf = new Float64Array(size[0] * size[1])
+        const pass = { width: size[0], height: size[1], background: [26, 24, 28], camera: camera,
+          colour: colourBuf, depth: depthBuf, textures: decoded, animations: animations, timeMs: animTime }
+        const bytes = renderScene(Object.assign({ quads: scene.quads, pick: buffer }, pass))
+        pickBuffer = buffer
+        if (voxel !== null && hover !== null) {
+          const marked = scene.quads.filter((quad) => quad.pick !== undefined && quad.pick !== null
+            && quad.pick.cell === hover.cell)
+          if (marked.length > 0) {
+            renderScene(Object.assign({ quads: marked, overlay: 0.45, tint: TINT_REMOVE }, pass))
+          }
+          const ghostQuads = ghost === null || !Array.isArray(ghost.quads) ? [] : ghost.quads
+          const usable = ghostQuads.some((quad) => decoded[quad.tex] !== undefined)
+          if (usable) {
+            renderScene(Object.assign({ quads: ghostQuads, overlay: 0.5, tint: null }, pass))
+          }
+        }
+        for (let i = 0; i < bytes.length; i++) {
+          const value = Math.round(colourBuf[i] * 255)
+          bytes[i] = value < 0 ? 0 : (value > 255 ? 255 : value)
+        }
+        canvas.width = size[0]
+        canvas.height = size[1]
+        const paint = canvas.getContext('2d')
+        const frame = paint.createImageData(size[0], size[1])
+        frame.data.set(bytes)
+        paint.putImageData(frame, 0, 0)
+      })
+
+
+      function iconRecipesInUse() {
+        const out = []
+        if (item === null) return out
+        const seen = {}
+        const add = (entry) => {
+          const key = itemKey(item.namespace, entry.id)
+          if (seen[key] === true) return
+          const recipe = itemRecipes[key]
+          if (recipe === undefined || recipe === null) return
+          seen[key] = true
+          out.push(recipe)
+        }
+        for (const entry of hudView().list) add(entry)
+        for (const entry of itemView().list) add(entry)
+        return out
+      }
+
+      React.useEffect(() => {
+        if (item === null || item.facts.length === 0) return
+        ensureItemPage()
+      }, [item === null ? '' : [item.namespace, item.page, hudPage, item.filter, item.form,
+        item.family, item.facts.length].join('|'), texEpoch])
+
+      React.useEffect(() => {
+        if (item === null) return
+        let added = 0
+        for (const entry of itemView().list) {
+          const key = itemKey(item.namespace, entry.id)
+          if (itemUrls[key] !== undefined) continue
+          const recipe = itemRecipes[key]
+          if (recipe === undefined || recipe === null || recipe.shape === 'none') continue
+          let ready = true
+          for (const id of idsOf(recipe)) {
+            if (decoded[id] === undefined && failedTex[id] !== true) { ready = false; break }
+          }
+          if (!ready) continue
+          const url = itemIconUrl(recipe, decoded, 32)
+          if (url === null) continue
+          itemUrls[key] = url
+          added += 1
+        }
+        if (added > 0) setIconTick(iconTick + 1)
+      })
+
+      React.useEffect(() => {
+        if (item === null) return
+        for (const entry of hudView().list) {
+          const key = itemKey(item.namespace, entry.id)
+          const canvas = hudCanvases[key]
+          if (canvas === undefined || canvas === null) continue
+          const recipe = itemRecipes[key]
+          const frames = recipe === undefined || recipe === null ? 0 : (recipe.frames || []).length
+          const frame = frames > 1 ? Math.floor(animTicks / 2) % frames : 0
+          drawItemIcon(canvas, recipe, frame, decoded)
+        }
+      })
+
+
+      function slotNote(recipe) {
+        if (recipe === undefined || recipe === null) return null
+        if (recipe.missing === true) {
+          return '这一格没有图标：' + (recipe.error || recipe.reason || '参考目录里取不到这个物品')
+        }
+        if (recipe.shape === 'none') {
+          return '这个物品是代码画的，没有可用的图标模型'
+            + (recipe.error ? ' —— ' + String(recipe.error) : '')
+        }
+        if (recipe.shape === 'iso' && (recipe.display === null || recipe.display === undefined)) {
+          return '物品模型指向几何模型，模型链里没有 display.gui：游戏里物品栏也是这样画的。'
+            + '把它改成 item/generated（layer0 指向那张贴图）就有正常的平面图标了'
+        }
+        const absent = (recipe.missingModels || []).filter((name) => String(name).indexOf('内置:') !== 0)
+        if (absent.length > 0) return '模型链缺 ' + absent.join('、')
+        return null
+      }
+
+
+      function slotFacts(recipe) {
+        if (recipe === undefined || recipe === null) return '还没取到这个物品的图标'
+        if (recipe.missing === true) {
+          return '缺：' + (recipe.error || recipe.reason || '参考目录里取不到这个物品')
+        }
+        const parts = [recipe.shape === 'iso' ? '等距' : '平铺']
+        if (recipe.display !== null && recipe.display !== undefined) {
+          parts.push('display.gui ' + JSON.stringify(recipe.display.rotation))
+        }
+        const absent = []
+        const builtin = []
+        for (const name of (recipe.missingModels || [])) {
+          if (String(name).indexOf('内置:') === 0) builtin.push(String(name).slice(3))
+          else absent.push(String(name))
+        }
+        if (absent.length > 0) parts.push('模型链缺 ' + absent.join('、'))
+        if (builtin.length > 0) {
+          parts.push('原版母模型用了内置的 ' + builtin.join('、') + '（设了参考目录就从游戏里读）')
+        }
+        return parts.join(' · ')
+      }
+
+      function blockChoices() {
+        const out = []
+        const seen = {}
+        const add = (name, title) => {
+          if (typeof name !== 'string' || name === '' || seen[name] === true) return
+          seen[name] = true
+          out.push({ name: name, title: title || name })
+        }
+        const projects = index === null ? [] : (index.projects || [])
+        const current = activeProjectId()
+        const currentProject = projects.filter((item) => item.id === current)[0]
+        const fallback = currentProject === undefined ? '' : currentProject.namespace
+        const titleOf = {}
+        for (const project of projects) {
+          const named = project.id === current
+          for (const item of ((project.items && project.items.block) || [])) {
+            const qualified = project.namespace + ':' + item.id
+            titleOf[qualified] = named ? item.title : (project.title + ' · ' + item.title)
+            add(qualified, titleOf[qualified])
+          }
+        }
+        for (const cell of (scene !== null && Array.isArray(scene.cells) ? scene.cells : [])) {
+          const raw = String(cell.block)
+          const qualified = raw.indexOf(':') >= 0 || fallback === '' ? raw : (fallback + ':' + raw)
+          add(qualified, titleOf[qualified] || qualified)
+        }
+        return out
+      }
+
+      function openVoxel() {
+        if (scene === null || !Array.isArray(scene.cells)) {
+          setEditMsg('这个资产没有可编辑的格子')
+          return
+        }
+        const choices = blockChoices()
+        loadRefSources()
+        resetPick()
+        painting.active = false
+        setHover(null)
+        setGhost(null)
+        setEdit(null)
+        setFilter('')
+        setVoxel({
+          kind: scene.kind, id: scene.id, title: scene.title || scene.id,
+          cells: scene.cells.map((cell) => {
+            const kept = { block: cell.block, at: [cell.at[0], cell.at[1], cell.at[2]] }
+            if (typeof cell.variant === 'string' && cell.variant !== '') kept.variant = cell.variant
+            return kept
+          }),
+          block: choices.length > 0 ? choices[0].name : '', choices: choices,
+          source: 'project', variants: [], axes: [], defaults: {}, flip: false, overrides: {}, manual: false,
+          undo: [], busy: false, msg: null,
+        })
+      }
+
+      function loadRefSources() {
+        setRefSources([])
+        host.call('atlas.refNamespaces', { root: root, project: activeProjectId() })
+          .then((result) => {
+            if (result === null || result === undefined || result.error !== undefined) return
+            setRefSources(result.namespaces || [])
+          }).catch(() => { /* decoration: an empty picker is not fatal */ })
+      }
+
+      function itemKey(namespace, id) { return namespace + ':' + id }
+
+      function loadItems(source, namespace, page, filter, form, family) {
+        setItem({ source: source, namespace: namespace, facts: [],
+          page: page === undefined ? 1 : page,
+          filter: filter === undefined ? '' : filter, form: form === undefined ? '' : form,
+          family: family === undefined ? '' : family, busy: true, msg: null,
+          choices: item === null || item.choices === undefined ? [] : item.choices })
+        host.call('atlas.refItems', { root: root, project: activeProjectId(),
+          source: source, namespace: namespace })
+          .then((result) => {
+            const failed = failureOf(result)
+            if (failed !== null) {
+              setItem((previous) => Object.assign({}, previous, { busy: false,
+                msg: '取不到物品：' + failed }))
+              return
+            }
+            const facts = (result.items || []).filter((entry) => entry.parentOnly !== true)
+            setItem((previous) => Object.assign({}, previous, { busy: false, facts: facts,
+              version: result.version,
+              msg: facts.length + ' 个物品' + (result.version === undefined ? '' : ' · ' + result.version) }))
+          }).catch((error) => {
+            setItem((previous) => Object.assign({}, previous, { busy: false,
+              msg: '取不到物品：' + String(error && error.message ? error.message : error) }))
+          })
+      }
+
+      function openItems() {
+        if (itemOpen) { setItemOpen(false); return }
+        setItemOpen(true)
+        loadRefSources()
+        setIconPick(null)
+        const ours = projectNamespaceOf(activeProjectId())
+        const stale = item === null || item.facts.length === 0
+          || (item.source === 'project' && ours !== '' && item.namespace !== ours)
+        if (!stale) return
+        if (ours !== '') { loadItems('project', ours, 1, '', '', ''); return }
+        const namespace = refSources.length > 0 ? refSources[0].name : 'minecraft'
+        loadItems('reference', namespace, 1, '', '', '')
+      }
+
+
+      function itemSearch() {
+        return item === null ? '' : String(item.filter).trim().toLowerCase()
+      }
+
+
+      function itemFiltered() {
+        if (item === null) return []
+        const needle = itemSearch()
+        if (needle !== '') return item.facts.filter((entry) => String(entry.name).toLowerCase().indexOf(needle) >= 0
+          || String(entry.id).toLowerCase().indexOf(needle) >= 0)
+        return item.facts.filter((entry) => (item.form === '' || entry.form === item.form)
+          && (item.family === '' || entry.family === item.family))
+      }
+
+      function itemView() {
+        const list = itemFiltered()
+        const total = list.length
+        const pages = Math.max(1, Math.ceil(total / ITEM_PAGE))
+        const page = Math.min(Math.max(1, item.page), pages)
+        return { list: list.slice((page - 1) * ITEM_PAGE, page * ITEM_PAGE), page: page, pages: pages, total: total }
+      }
+
+      function ensureItemPage() {
+        if (item === null) return
+        const missing = []
+        const want = (list) => {
+          for (const entry of list) {
+            const key = itemKey(item.namespace, entry.id)
+            if (itemRecipes[key] === undefined && missing.indexOf(entry.id) < 0) missing.push(entry.id)
+          }
+        }
+        want(itemView().list)
+        want(hudView().list)
+        if (missing.length === 0) return
+        host.call('atlas.itemIcons', { root: root, project: activeProjectId(),
+          source: item.source, namespace: item.namespace, items: missing }).then((result) => {
+          const failed = failureOf(result)
+          if (failed !== null) {
+            itemFetchError = '取不到物品图标：' + failed
+            setIconTick(iconTick + 1)
+            return
+          }
+          itemFetchError = ''
+          let added = 0
+          for (const id of Object.keys(result.items || {})) {
+            const recipe = result.items[id]
+            const key = itemKey(item.namespace, id)
+            if (itemRecipes[key] !== undefined) continue
+            if (recipe === undefined || recipe === null) continue
+            itemRecipes[key] = recipe
+            added += 1
+          }
+          if (added > 0) setIconTick(iconTick + 1)
+        }).catch((error) => {
+          itemFetchError = '取不到物品图标：' + String(error && error.message ? error.message : error)
+          setIconTick(iconTick + 1)
+        })
+      }
+
+
+      function projectHasBlock(id) {
+        const project = index === null ? null
+          : (index.projects || []).filter((entry) => entry.id === activeProjectId())[0]
+        if (project === null || project === undefined) return false
+        return ((project.items && project.items.block) || []).some((entry) => entry.id === id)
+      }
+
+      function pickItem(entry) {
+        const namespace = item === null ? '' : item.namespace
+        setIconPick({ namespace: namespace, id: entry.id })
+        if (item !== null && item.source === 'project') {
+          if (!projectHasBlock(entry.id)) {
+            setPreviewItem({ source: 'project', namespace: namespace, id: entry.id, localOnly: true })
+            setScene(null)
+            setVoxel(null)
+            setHover(null)
+            setGhost(null)
+            setEdit(null)
+            setFailure(null)
+            return
+          }
+          setPreviewItem(null)
+          open({ project: activeProjectId(), kind: 'block', id: entry.id }, root)
+          return
+        }
+        openReferenceItem(entry)
+      }
+
+
+      function forgetSceneBecauseItem() {
+        painting.active = false
+        setScene(null)
+        setVoxel(null)
+        setHover(null)
+        setGhost(null)
+        setEdit(null)
+        setFailure(null)
+        lastDrawKey = ''
+      }
+
+      function openReferenceItem(entry) {
+        const reference = (item === null ? '' : item.namespace) + ':' + entry.id
+        setPreviewItem({ source: 'reference', namespace: item === null ? '' : item.namespace, id: entry.id })
+        host.call('atlas.preview', { root: root, project: activeProjectId(), block: reference,
+          at: [0, 0, 0], variant: null, have: Object.keys(decoded) }).then((result) => {
+          const failed = failureOf(result)
+          if (failed !== null) {
+            forgetSceneBecauseItem()
+            setItem((previous) => previous === null ? previous : Object.assign({}, previous,
+              { msg: '3D 取不到：' + failed }))
+            return
+          }
+          lastDrawKey = ''
+          setFailure(null)
+          setScene(sceneOf({ kind: 'block', id: reference, title: entry.name || entry.id,
+            quads: result.quads, textureIds: idsOf(result), textures: result.textures,
+            animations: result.animations, cells: null, palette: [], errors: [],
+            box: boxOfQuads(arrayOf(result.quads)), preview: true }))
+          setVoxel(null)
+          setHover(null)
+          setGhost(null)
+        }).catch((error) => {
+          forgetSceneBecauseItem()
+          setItem((previous) => previous === null ? previous : Object.assign({}, previous,
+            { msg: '3D 取不到：' + String(error && error.message ? error.message : error) }))
+        })
+      }
+
+      function pickSource(source) {
+        if (voxel === null) return
+        if (source === 'project') {
+          const choices = blockChoices()
+          setFilter('')
+          resetPick()
+          setVoxel(Object.assign({}, voxel, { source: 'project', choices: choices,
+            block: choices.length > 0 ? choices[0].name : '' }))
+          setGhost(null)
+          return
+        }
+        const namespace = source.slice(4)
+        setVoxel(Object.assign({}, voxel, { source: source, msg: '正在读取 ' + namespace + ' 的方块…' }))
+        host.call('atlas.refBlocks', { root: root, project: activeProjectId(), namespace: namespace })
+          .then((result) => {
+            if (result === null || result === undefined || result.error !== undefined) {
+              setVoxel(Object.assign({}, voxel, { msg: '取不到 ' + namespace + ' 的方块：'
+                + String(result && result.error ? result.error : '没有返回结果') }))
+              return
+            }
+            const choices = (result.blocks || []).map((item) => ({ name: namespace + ':' + item.id,
+              title: item.name, group: item.group || '', groupLabel: item.groupLabel || '',
+              family: item.family || '' }))
+            if (choices.length === 0) {
+              setVoxel(Object.assign({}, voxel, { msg: namespace + ' 里没有方块' }))
+              return
+            }
+            setFilter('')
+            resetPick()
+            setVoxel(Object.assign({}, voxel, { source: source, choices: choices,
+              block: choices[0].name, msg: '参考 ' + namespace + ' · ' + choices.length + ' 个方块' }))
+            setGhost(null)
+          }).catch((error) => {
+            setVoxel(Object.assign({}, voxel, { msg: '取不到方块：' + String(error && error.message ? error.message : error) }))
+          })
+      }
+
+      function searchMatch(item, needle) {
+        return String(item.title).toLowerCase().indexOf(needle) >= 0
+          || String(item.name).toLowerCase().indexOf(needle) >= 0
+      }
+
+      function groupOfItem(item) { return item.group || '' }
+      function familyOfItem(item) { return item.family || '其他' }
+
+
+      function countsBy(keyOf, within) {
+        const counts = {}
+        for (const item of (voxel === null ? [] : voxel.choices)) {
+          if (within !== null && within(item) !== true) continue
+          const value = keyOf(item) || ''
+          counts[value] = (counts[value] || 0) + 1
+        }
+        return counts
+      }
+
+
+      function choiceView() {
+        if (voxel === null) return { list: [], page: 1, pages: 1, total: 0 }
+        const needle = String(filter).trim().toLowerCase()
+        let list = voxel.choices
+        if (needle !== '') {
+          list = list.filter((item) => searchMatch(item, needle))
+        } else if (pickGroup !== '' || pickFamily !== '') {
+          list = list.filter((item) =>
+            (pickGroup === '' || groupOfItem(item) === pickGroup)
+            && (pickFamily === '' || familyOfItem(item) === pickFamily))
+        }
+        const total = list.length
+        const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+        const shownPage = Math.min(Math.max(1, pickPage), pages)
+        return { list: list.slice((shownPage - 1) * PAGE_SIZE, shownPage * PAGE_SIZE),
+          page: shownPage, pages: pages, total: total }
+      }
+
+      function resetPick() {
+        setPickGroup('')
+        setPickFamily('')
+        setPickPage(1)
+      }
+
+      function releaseRefs() {
+        const keep = []
+        for (const cell of (voxel === null ? [] : voxel.cells)) {
+          const raw = String(cell.block)
+          const colon = raw.indexOf(':')
+          let qualified = null
+          if (colon >= 0) qualified = raw
+          else if (voxel !== null && voxel.source !== 'project') qualified = voxel.source.slice(4) + ':' + raw
+          if (qualified === null) continue
+          keep.push(qualified)
+          if (typeof cell.variant === 'string' && cell.variant !== '') {
+            keep.push(qualified + '@' + cell.variant)
+          }
+        }
+        if (voxel !== null && voxel.source !== 'project' && voxel.block !== '') {
+          keep.push(voxel.block)
+          if (ghost !== null && ghost.block === voxel.block
+            && typeof ghost.variant === 'string' && ghost.variant !== '') {
+            keep.push(voxel.block + '@' + ghost.variant)
+          }
+        }
+        host.call('atlas.releaseRefs', { keep: keep }).catch(() => { /* cache only */ })
+      }
+
+      function voxelWith(cells, x, y, z, block, variant) {
+        const out = cells.filter((cell) => !(cell.at[0] === x && cell.at[1] === y && cell.at[2] === z))
+        if (block !== null && block !== '') {
+          const cell = { block: block, at: [x, y, z] }
+          if (typeof variant === 'string' && variant !== '') cell.variant = variant
+          out.push(cell)
+        }
+        return out
+      }
+
+
+      function voxelTargetAt(event) {
+        if (voxel === null || scene === null || canvas === null || pickBuffer === null) return null
+        const rect = canvas.getBoundingClientRect()
+        if (rect.width === 0 || rect.height === 0) return null
+        const px = Math.floor((event.clientX - rect.left) / rect.width * canvas.width)
+        const py = Math.floor((event.clientY - rect.top) / rect.height * canvas.height)
+        if (px < 0 || py < 0 || px >= canvas.width || py >= canvas.height) return null
+        const quadIndex = pickBuffer[py * canvas.width + px]
+        if (quadIndex === undefined || quadIndex < 0) return null
+        const quad = scene.quads[quadIndex]
+        const pick = quad === undefined ? undefined : quad.pick
+        if (pick === undefined || pick === null) return null
+        const cell = (scene.cells || [])[pick.cell]
+        if (cell === undefined) return null
+        const hitY = faceHitY(quad, px + 0.5, py + 0.5, lastCamera)
+        return { cell: pick.cell, face: pick.face, at: cell.at, block: cell.block, hitY: hitY }
+      }
+
+
+      function placementAt(target) {
+        if (target === null) return null
+        const step = (scene === null ? {} : (scene.faceStep || {}))[target.face]
+        if (step === undefined) return null
+        const at = [target.at[0] + step[0], target.at[1] + step[1], target.at[2] + step[2]]
+        const occupied = (voxel === null ? [] : voxel.cells).some((cell) =>
+          cell.at[0] === at[0] && cell.at[1] === at[1] && cell.at[2] === at[2])
+        return occupied ? null : at
+      }
+
+      React.useEffect(() => {
+        if (voxel === null) return
+        const source = voxel.source === undefined ? 'project' : voxel.source
+        const missing = []
+        for (const item of choiceView().list) {
+          if (icons[item.name] !== undefined || iconTried[item.name] === true) continue
+          if (missing.indexOf(item.name) < 0) missing.push(item.name)
+        }
+        if (missing.length === 0) return
+        const batch = missing.slice(0, ICON_BATCH)
+        for (const name of batch) iconTried[name] = true
+        let request
+        if (source === 'project') {
+          request = host.call('atlas.icons', { root: root, project: activeProjectId(), blocks: batch })
+        } else {
+          const namespace = String(source).slice(4)
+          const ids = batch.filter((name) => name.indexOf(namespace + ':') === 0)
+            .map((name) => name.slice(namespace.length + 1))
+          if (ids.length === 0) return
+          request = host.call('atlas.refIcons', { root: root, project: activeProjectId(),
+            namespace: namespace, blocks: ids })
+        }
+        request.then((result) => {
+          if (result === null || result === undefined || result.error !== undefined) {
+            for (const name of batch) delete iconTried[name]
+            return
+          }
+          let added = 0
+          for (const key of Object.keys(result.icons || {})) {
+            const icon = result.icons[key]
+            if (icon === undefined || icon === null) continue
+            icons[key] = icon
+            added += 1
+          }
+          for (const name of arrayOf(result.failed)) iconTried[name] = true
+          if (added > 0) setIconTick(iconTick + 1)
+        }).catch(() => {
+          for (const name of batch) delete iconTried[name]
+        })
+      }, [voxel === null ? '' : (voxel.source + '|' + voxel.kind + ':' + voxel.id + '|' + voxel.choices.length),
+        filter, pickGroup, pickFamily, pickPage, iconTick, texEpoch])
+
+      React.useEffect(() => {
+        if (voxel === null) { ghostAsk = ''; if (ghost !== null) setGhost(null); return }
+        const target = hover === null ? null : placementAt(hover)
+        if (target === null) { ghostAsk = ''; if (ghost !== null) setGhost(null); return }
+        const face = hover === null || hover.face === undefined ? 'north' : hover.face
+        const hitY = hover === null || hover.hitY === undefined ? 0.5 : hover.hitY
+        const wantVariant = variantFor(voxel.axes, voxel.variants, voxel.defaults, face, hitY,
+          voxel.flip === true, voxel.overrides)
+        const around = aroundOf(voxel.cells, target)
+        const wantKey = voxel.block + '|' + String(wantVariant) + '|' + target.join(',')
+          + '|' + JSON.stringify(around)
+        if (ghost !== null && ghostAsk === wantKey) return
+        ghostAsk = wantKey
+        setGhost({ block: voxel.block, at: target, variant: wantVariant, quads: [], textures: {},
+          textureIds: [], loading: true })
+        host.call('atlas.preview', {
+          root: root, project: activeProjectId(), block: voxel.block, at: target,
+          variant: wantVariant, have: Object.keys(decoded), around: around,
+        }).then((result) => {
+          if (result === null || result === undefined || result.error !== undefined) {
+            setGhost({ block: voxel.block, at: target, variant: wantVariant, quads: [], textures: {},
+              textureIds: [], error: String(result && result.error ? result.error : '没有返回结果') })
+            return
+          }
+          setGhost(ghostOf(result, { block: voxel.block, at: target, variant: wantVariant }))
+        }).catch((error) => {
+          setGhost({ block: voxel.block, at: target, variant: wantVariant, quads: [], textures: {},
+            textureIds: [], error: String(error && error.message ? error.message : error) })
+        })
+      })
+
+      const variantKey = voxel === null ? '' : (voxel.source + '|' + voxel.block)
+      React.useEffect(() => {
+        if (voxel === null || voxel.block === '') return undefined
+        let live = true
+        host.call('atlas.preview', {
+          root: root, project: activeProjectId(), block: voxel.block, at: [0, 0, 0],
+          variant: null, have: Object.keys(decoded),
+        }).then((result) => {
+          if (!live) return
+          const keys = result === null || result === undefined || !Array.isArray(result.variants)
+            ? [] : result.variants
+          const axes = result === null || result === undefined || !Array.isArray(result.axes)
+            ? [] : result.axes
+          const defaults = result === null || result === undefined || typeof result.defaults !== 'object'
+            || result.defaults === null ? {} : result.defaults
+          setVoxel((previous) => {
+            if (previous === null || previous.block !== voxel.block) return previous
+            if ((previous.variants || []).join(',') === keys.join(',')
+              && JSON.stringify(previous.axes || []) === JSON.stringify(axes)) return previous
+            return Object.assign({}, previous,
+              { variants: keys, axes: axes, defaults: defaults, flip: false, overrides: {}, manual: false })
+          })
+        }).catch(() => { /* the list is a convenience, not a requirement */ })
+        return () => { live = false }
+      }, [variantKey])
+
+      function refreshVoxel(state) {
+        host.call('atlas.scene', {
+          root: root, project: activeProjectId(), kind: state.kind, id: state.id,
+          cells: state.cells, have: Object.keys(decoded),
+          neighbours: state.neighbours !== false,
+        }).then((result) => {
+          if (result === null || result === undefined || result.error !== undefined) {
+            setVoxel(Object.assign({}, state, { busy: false,
+              msg: '预览失败：' + String(result && result.error ? result.error : '没有返回结果') }))
+            return
+          }
+          setVoxel(Object.assign({}, state, { busy: false }))
+          lastDrawKey = ''
+          setScene(sceneOf(result))
+          releaseRefs()
+        }).catch((error) => {
+          setVoxel(Object.assign({}, state, { busy: false, msg: '预览失败：' + String(error && error.message ? error.message : error) }))
+        })
+      }
+
+      function voxelApply(cells, note) {
+        if (voxel === null) return
+        const next = Object.assign({}, voxel, {
+          cells: cells, busy: true, msg: note,
+          undo: voxel.undo.concat([voxel.cells]).slice(-16),
+        })
+        setVoxel(next)
+        refreshVoxel(next)
+      }
+
+      function voxelUndo() {
+        if (voxel === null || voxel.undo.length === 0) return
+        const next = Object.assign({}, voxel, {
+          cells: voxel.undo[voxel.undo.length - 1],
+          undo: voxel.undo.slice(0, voxel.undo.length - 1),
+          msg: '撤销', busy: true,
+        })
+        setVoxel(next)
+        refreshVoxel(next)
+      }
+
+      function voxelSave() {
+        if (voxel === null || voxel.busy) return
+        setVoxel(Object.assign({}, voxel, { busy: true, msg: '保存中…' }))
+        host.call('atlas.saveVoxel', {
+          root: root, project: activeProjectId(), kind: voxel.kind, id: voxel.id, cells: voxel.cells,
+        }).then((result) => {
+          if (result === null || result === undefined || result.error !== undefined) {
+            setVoxel(Object.assign({}, voxel, { busy: false,
+              msg: '保存失败：' + String(result && result.error ? result.error : '没有返回结果') }))
+            return
+          }
+          delete indexes[root]
+          setVoxel(Object.assign({}, voxel, { busy: false,
+            msg: '已保存 ' + result.cells + ' 格 -> ' + String(result.file).split('/').pop() }))
+        }).catch((error) => {
+          setVoxel(Object.assign({}, voxel, { busy: false, msg: '保存失败：' + String(error && error.message ? error.message : error) }))
+        })
+      }
+
+      function voxelClick(event, action) {
+        if (voxel === null || scene === null || canvas === null || pickBuffer === null) return
+        const target = voxelTargetAt(event)
+        if (target === null) {
+          setVoxel(Object.assign({}, voxel, { msg: '那里是空的，点方块上' }))
+          return
+        }
+        const pick = { cell: target.cell, face: target.face }
+        const cell = (scene.cells || [])[pick.cell]
+        if (cell === undefined) {
+          setVoxel(Object.assign({}, voxel, { msg: '格子索引对不上了，刷新一下' }))
+          return
+        }
+        if (action === 'remove') {
+          voxelApply(voxelWith(voxel.cells, cell.at[0], cell.at[1], cell.at[2], null, null), '挖掉 ' + cell.block)
+          return
+        }
+        const step = (scene.faceStep || {})[pick.face]
+        if (step === undefined) {
+          setVoxel(Object.assign({}, voxel, { msg: '认不出这个面：' + String(pick.face) }))
+          return
+        }
+        const placed = variantFor(voxel.axes, voxel.variants, voxel.defaults, pick.face,
+          target.hitY === undefined ? 0.5 : target.hitY, voxel.flip === true, voxel.overrides)
+        voxelApply(voxelWith(voxel.cells, cell.at[0] + step[0], cell.at[1] + step[1], cell.at[2] + step[2],
+          voxel.block, placed), '放置 ' + voxel.block)
+      }
+
+      function voxelCard() {
+        if (voxel === null) return null
+        const rows = []
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },
+          React.createElement('span', { className: 'mcart-title' }, '搭建'),
+          React.createElement('span', { className: 'mcart-sub' }, (voxel.title || '') + ' · ' + voxel.cells.length + ' 格')))
+        rows.push(React.createElement('div', { className: 'mcart-src', key: 'filter' },
+          React.createElement('input', {
+            className: 'mcart-input', placeholder: '搜方块名或 id（共 ' + voxel.choices.length + ' 个）',
+            value: filter, onChange: (event) => { setFilter(event.target.value); setPickPage(1) },
+          }),
+          filter === '' ? null : React.createElement('button', { className: 'mcart-btn', type: 'button',
+            onClick: () => { setFilter(''); setPickPage(1) } }, '清空')))
+
+        const derivedOn = voxel.neighbours !== false
+        rows.push(React.createElement('div', { className: 'mcart-tabs', key: 'neighbours' },
+          React.createElement('span', { className: 'mcart-note' }, '连接'),
+          React.createElement('button', {
+            className: 'mcart-btn mcart-tool', type: 'button',
+            'data-on': derivedOn ? '1' : '0',
+            title: '墙/栅栏/玻璃板：原版按邻居决定画哪几段。关掉就是抽取器给的那份并集（全部画上），不是"算不出来"。',
+            onClick: () => {
+              const next = Object.assign({}, voxel, { neighbours: voxel.neighbours === false })
+              setVoxel(next)
+              refreshVoxel(next)
+            },
+          }, derivedOn ? '按邻居推导' : '全部画上')))
+
+        const axes = Array.isArray(voxel.axes) ? voxel.axes : []
+        if (axes.length > 0) {
+          const face = hover === null || hover.face === undefined ? null : hover.face
+          const hitY = hover === null || hover.hitY === undefined ? 0.5 : hover.hitY
+          const derived = face === null ? {} : deriveVariant(axes, face, hitY, voxel.flip === true)
+          const summary = []
+          summary.push(React.createElement('span', { className: 'mcart-note', key: '__what' },
+            face === null
+              ? '朝向由你点的那个面决定——悬停到方块上试试'
+              : '点 ' + labelOfValue(face) + ' 面 → ' + variantSummary(axes, derived)))
+          if (derived.facing !== undefined) {
+            summary.push(React.createElement('button', {
+              key: '__flip', type: 'button', className: 'mcart-btn mcart-tool',
+              'data-on': voxel.flip === true ? '1' : '0',
+              title: '熔炉这类是朝着你，楼梯/活板门那类正相反——盘上没写，只能你说了算',
+              onClick: () => setVoxel(Object.assign({}, voxel, { flip: voxel.flip !== true })),
+            }, '翻转 180°'))
+          }
+          if (Object.keys(voxel.overrides || {}).length > 0) {
+            summary.push(React.createElement('button', {
+              key: '__reset', type: 'button', className: 'mcart-btn mcart-tool',
+              onClick: () => setVoxel(Object.assign({}, voxel, { overrides: {} })),
+            }, '恢复自动'))
+          }
+          summary.push(React.createElement('button', {
+            key: '__manual', type: 'button', className: 'mcart-btn mcart-tool',
+            'data-on': voxel.manual === true ? '1' : '0',
+            onClick: () => setVoxel(Object.assign({}, voxel, { manual: voxel.manual !== true })),
+          }, voxel.manual === true ? '收起 ▴' : '手动 ▾'))
+          rows.push(React.createElement('div', { className: 'mcart-tabs', key: 'orientation' },
+            React.createElement('span', { className: 'mcart-note' }, '朝向'), summary))
+
+          if (voxel.manual === true) {
+            for (const axis of axes) {
+              const picked = (voxel.overrides || {})[axis.name]
+              const chips = [React.createElement('button', {
+                key: '__auto', type: 'button', className: 'mcart-btn mcart-tool',
+                'data-on': picked === undefined ? '1' : '0',
+                onClick: () => setVoxel(Object.assign({}, voxel,
+                  { overrides: withoutKey(voxel.overrides, axis.name) })),
+              }, '自动')]
+              for (const value of axis.values) {
+                chips.push(React.createElement('button', {
+                  key: value, type: 'button', className: 'mcart-btn mcart-tool',
+                  'data-on': picked === value ? '1' : '0',
+                  onClick: () => setVoxel(Object.assign({}, voxel,
+                    { overrides: withKey(voxel.overrides, axis.name, value) })),
+                }, labelOfValue(value)))
+              }
+              rows.push(React.createElement('div', { className: 'mcart-tabs', key: 'axis:' + axis.name },
+                React.createElement('span', { className: 'mcart-note' }, labelOfAxis(axis.name)), chips))
+            }
+            if (axes.some((axis) => axis.name === 'shape')) {
+              rows.push(React.createElement('div', { className: 'mcart-hint', key: 'shapenote' },
+                '形状（内角/外角）在原版里是看邻居算出来的，这里还没做——默认给你 straight，不是不敢算就说算了。'))
+            }
+            rows.push(React.createElement('div', { className: 'mcart-hint', key: 'oriennote' },
+              '不选就是自动。摆放时按你点的面和位置推导，幽灵预览里看到的就是要放上去的。'))
+          }
+        }
+
+        const needle = String(filter).trim().toLowerCase()
+        if (needle === '') {
+          const groupCounts = countsBy(groupOfItem, null)
+          const groupKeys = Object.keys(groupCounts).filter((key) => key !== '').sort()
+          if (groupKeys.length > 0) {
+            const chips = [React.createElement('button', {
+              key: '__all', type: 'button', className: 'mcart-btn mcart-tool',
+              'data-on': pickGroup === '' ? '1' : '0',
+              onClick: () => { setPickGroup(''); setPickFamily(''); setPickPage(1) },
+            }, '全部 ' + voxel.choices.length)]
+            for (const key of groupKeys) {
+              const label = (voxel.choices.filter((item) => groupOfItem(item) === key)[0] || {}).groupLabel || key
+              chips.push(React.createElement('button', {
+                key: key, type: 'button', className: 'mcart-btn mcart-tool',
+                'data-on': pickGroup === key ? '1' : '0',
+                onClick: () => { setPickGroup(key); setPickFamily(''); setPickPage(1) },
+              }, label + ' ' + groupCounts[key]))
+            }
+            rows.push(React.createElement('div', { className: 'mcart-tabs', key: 'groups' },
+              React.createElement('span', { className: 'mcart-note' }, '分类'), chips))
+          }
+          const familyCounts = countsBy(familyOfItem,
+            pickGroup === '' ? null : (item) => groupOfItem(item) === pickGroup)
+          const familyKeys = Object.keys(familyCounts).sort()
+          if (familyKeys.length > 1) {
+            const chips = [React.createElement('button', {
+              key: '__all', type: 'button', className: 'mcart-btn mcart-tool',
+              'data-on': pickFamily === '' ? '1' : '0',
+              onClick: () => { setPickFamily(''); setPickPage(1) },
+            }, '全部 ' + Object.keys(familyCounts).reduce((sum, key) => sum + familyCounts[key], 0))]
+            for (const key of familyKeys) {
+              chips.push(React.createElement('button', {
+                key: key, type: 'button', className: 'mcart-btn mcart-tool',
+                'data-on': pickFamily === key ? '1' : '0',
+                onClick: () => { setPickFamily(key); setPickPage(1) },
+              }, key + ' ' + familyCounts[key]))
+            }
+            rows.push(React.createElement('div', { className: 'mcart-tabs', key: 'families' },
+              React.createElement('span', { className: 'mcart-note' }, '形状'), chips))
+          }
+        }
+
+        const view = choiceView()
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'pager' },
+          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: view.page <= 1,
+            onClick: () => setPickPage(view.page - 1) }, '‹ 上一页'),
+          React.createElement('span', { className: 'mcart-note' },
+            '第 ' + view.page + ' / ' + view.pages + ' 页 · 共 ' + view.total + ' 个'),
+          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: view.page >= view.pages,
+            onClick: () => setPickPage(view.page + 1) }, '下一页 ›'),
+          React.createElement('input', {
+            className: 'mcart-input', type: 'number', min: 1, max: view.pages, value: view.page,
+            style: { maxWidth: '66px' },
+            onChange: (event) => setPickPage(Number(event.target.value) || 1),
+          })))
+
+        rows.push(React.createElement('div', { className: 'mcart-hotbar', key: 'hotbar' },
+          view.list.map((item) => React.createElement('button', {
+            key: item.name, type: 'button', className: 'mcart-slot',
+            'data-on': item.name === voxel.block ? '1' : '0',
+            title: item.title + '\n' + item.name,
+            style: icons[item.name] === undefined ? {} : { backgroundImage: 'url(' + icons[item.name] + ')' },
+            onClick: () => { setVoxel(Object.assign({}, voxel, { block: item.name })); setGhost(null) },
+          }))))
+        if (refSources.length > 0) {
+          const options = [React.createElement('option', { key: 'project', value: 'project' }, '本项目')]
+          for (const item of refSources) {
+            options.push(React.createElement('option', { key: 'ref:' + item.name, value: 'ref:' + item.name },
+              item.name + '（' + item.blocks + ' 个方块）'))
+          }
+          rows.push(React.createElement('div', { className: 'mcart-src', key: 'source' },
+            React.createElement('span', { className: 'mcart-note' }, '方块来源'),
+            React.createElement('select', {
+              className: 'mcart-select',
+              value: voxel.source === undefined ? 'project' : voxel.source,
+              onChange: (event) => pickSource(event.target.value),
+            }, options)))
+        }
+        const chosen = voxel.choices.filter((item) => item.name === voxel.block)[0]
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'chosen' },
+          React.createElement('span', { className: 'mcart-note mcart-grow' },
+            '手持：' + (chosen === undefined ? voxel.block : chosen.title) + '（' + voxel.block + '）')))
+        rows.push(React.createElement('div', { className: 'mcart-tools', key: 'tools' },
+          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: voxel.undo.length === 0 || voxel.busy,
+            onClick: voxelUndo }, '撤销 ' + voxel.undo.length),
+          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: voxel.busy,
+            onClick: voxelSave }, voxel.busy ? '…' : '保存'),
+          React.createElement('button', { className: 'mcart-btn', type: 'button',
+            onClick: () => { setVoxel(null); setHover(null); setGhost(null); painting.active = false } }, '关闭')))
+        rows.push(React.createElement('div', { className: 'mcart-hint', key: 'how' },
+          '像原版一样：左键破坏，右键放置；拖动仍然是旋转。半透明的方块就是将要放上去的位置，红色高亮是要破坏的那一格。'))
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'msg' },
+          React.createElement('span', { className: 'mcart-note mcart-grow' }, voxel.msg === null ? '' : withVersion(voxel.msg))))
+        if (ghost !== null && ghost.error !== undefined) {
+          rows.push(React.createElement('div', { className: 'mcart-err', key: 'ghosterr' }, withVersion('预览拿不到：' + String(ghost.error))))
+        }
+        return React.createElement('div', { className: 'mcart-card', key: 'voxel' }, rows)
+      }
+
+
+
+      function hudBar() {
+        const view = hudView()
+        const slots = []
+        for (const entry of view.list) {
+          const key = itemKey(item.namespace, entry.id)
+          const recipe = itemRecipes[key]
+          const note = slotNote(recipe)
+          const lacking = recipe !== undefined && recipe !== null && recipe.missing === true
+          slots.push(React.createElement('button', {
+            key: key, type: 'button', className: 'mcart-hudslot',
+            'data-on': hudOn === entry.id ? '1' : '0',
+            'data-missing': lacking ? '1' : '0',
+            title: entry.name + '（' + entry.id + '）'
+              + (entry.formLabel ? '\n' + entry.formLabel : '')
+              + '\n' + slotFacts(recipe) + (note === null ? '' : '\n' + note),
+            onClick: () => pickItem(entry),
+          }, React.createElement('canvas', {
+            className: 'mcart-hudicon', width: 32, height: 32,
+            ref: (node) => {
+              if (node === null || node === undefined) delete hudCanvases[key]
+              else hudCanvases[key] = node
+            },
+          }), lacking
+            ? React.createElement('span', { className: 'mcart-slotq mcart-slotmissing' }, '缺')
+            : null))
+        }
+        while (slots.length < HUD_SLOTS) {
+          slots.push(React.createElement('span', { key: 'empty:' + slots.length,
+            className: 'mcart-hudslot mcart-hudempty' }))
+        }
+        return React.createElement('div', { className: 'mcart-hud', key: 'hud' },
+          hudPicked === '' ? null : React.createElement('div', { className: 'mcart-hudname' },
+            hudPicked + (view.pages > 1 ? ' · ' + view.page + '/' + view.pages : '')),
+          React.createElement('div', { className: 'mcart-hudbar' },
+            view.pages > 1 ? React.createElement('button', { className: 'mcart-hudpage', type: 'button',
+              disabled: view.page <= 1, title: '上一页物品',
+              onClick: () => setHudPage(view.page - 1) }, '‹') : null,
+            slots,
+            view.pages > 1 ? React.createElement('button', { className: 'mcart-hudpage', type: 'button',
+              disabled: view.page >= view.pages,
+              title: '下一页物品（第 ' + view.page + ' / ' + view.pages + ' 页）',
+              onClick: () => setHudPage(view.page + 1) }, '›') : null))
+      }
+
+      function itemCard() {
+        if (item === null) return null
+        const rows = []
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },
+          React.createElement('span', { className: 'mcart-title' }, '物品'),
+          React.createElement('span', { className: 'mcart-sub' },
+            item.source === 'project' ? '本项目' : item.namespace),
+          React.createElement('span', { className: 'mcart-note mcart-grow' },
+            itemFetchError === '' ? '点一格就放到上面的 3D 里看' : withVersion(itemFetchError)),
+          React.createElement('button', { className: 'mcart-btn', type: 'button',
+            onClick: () => { setItemOpen(false); setIconPick(null) } }, '收起')))
+        const options = []
+        const ours = projectNamespaceOf(activeProjectId())
+        if (ours !== '') {
+          options.push(React.createElement('option', { key: 'project', value: 'project' },
+            '本项目 ' + ours + '（' + (item.source === 'project' ? item.facts.length : '…') + '）'))
+        }
+        for (const entry of refSources) {
+          options.push(React.createElement('option', { key: 'ref:' + entry.name, value: 'ref:' + entry.name },
+            entry.name + '（' + entry.blocks + ' 个方块）'))
+        }
+        if (options.length === 0) {
+          options.push(React.createElement('option', { key: item.namespace, value: 'ref:' + item.namespace },
+            item.namespace))
+        }
+        rows.push(React.createElement('div', { className: 'mcart-src', key: 'source' },
+          React.createElement('span', { className: 'mcart-note' }, '来源'),
+          React.createElement('select', {
+            className: 'mcart-select',
+            value: item.source === 'project' ? 'project' : 'ref:' + item.namespace,
+            onChange: (event) => {
+              const value = String(event.target.value)
+              setIconPick(null)
+              setPreviewItem(null)
+              if (value === 'project') loadItems('project', ours === '' ? 'minecraft' : ours, 1, '', '', '')
+              else loadItems('reference', value.slice(4), 1, '', '', '')
+            },
+          }, options),
+          React.createElement('input', {
+            className: 'mcart-input', placeholder: '搜物品名或 id',
+            value: item.filter,
+            onChange: (event) => setItem(Object.assign({}, item, { filter: event.target.value, page: 1 })),
+          })))
+
+        const formCounts = countsOf(item.facts, (entry) => entry.form, (entry) => entry.formLabel || entry.form)
+        const forms = Object.keys(formCounts).sort((a, b) => formCounts[b].count - formCounts[a].count)
+        if (forms.length > 0 && itemSearch() === '') {
+          const chips = [React.createElement('button', {
+            key: '__all', type: 'button', className: 'mcart-btn mcart-tool',
+            'data-on': item.form === '' ? '1' : '0',
+            onClick: () => setItem(Object.assign({}, item, { form: '', family: '', page: 1 })),
+          }, '全部 ' + item.facts.length)]
+          for (const key of forms) {
+            chips.push(React.createElement('button', {
+              key: key, type: 'button', className: 'mcart-btn mcart-tool',
+              'data-on': item.form === key ? '1' : '0',
+              onClick: () => setItem(Object.assign({}, item, { form: key, family: '', page: 1 })),
+            }, formCounts[key].label + ' ' + formCounts[key].count))
+          }
+          rows.push(React.createElement('div', { className: 'mcart-tabs', key: 'forms' },
+            React.createElement('span', { className: 'mcart-note' }, '展示形式'), chips))
+        }
+        const within = item.form === '' ? item.facts
+          : item.facts.filter((entry) => entry.form === item.form)
+        const familyCounts = countsOf(within, (entry) => entry.family, (entry) => entry.family)
+        const families = Object.keys(familyCounts).sort((a, b) => familyCounts[b].count - familyCounts[a].count)
+        if (families.length > 1 && itemSearch() === '') {
+          const chips = [React.createElement('button', {
+            key: '__all', type: 'button', className: 'mcart-btn mcart-tool',
+            'data-on': item.family === '' ? '1' : '0',
+            onClick: () => setItem(Object.assign({}, item, { family: '', page: 1 })),
+          }, '全部 ' + within.length)]
+          for (const key of families) {
+            chips.push(React.createElement('button', {
+              key: key, type: 'button', className: 'mcart-btn mcart-tool',
+              'data-on': item.family === key ? '1' : '0',
+              onClick: () => setItem(Object.assign({}, item, { family: key, page: 1 })),
+            }, key + ' ' + familyCounts[key].count))
+          }
+          rows.push(React.createElement('div', { className: 'mcart-tabs', key: 'families' },
+            React.createElement('span', { className: 'mcart-note' }, '细分'), chips))
+        }
+
+        const view = itemView()
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'pager' },
+          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: view.page <= 1,
+            onClick: () => setItem(Object.assign({}, item, { page: view.page - 1 })) }, '‹ 上一页'),
+          React.createElement('span', { className: 'mcart-note' },
+            '第 ' + view.page + ' / ' + view.pages + ' 页 · 共 ' + view.total + ' 个'),
+          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: view.page >= view.pages,
+            onClick: () => setItem(Object.assign({}, item, { page: view.page + 1 })) }, '下一页 ›')))
+
+        const slots = []
+        for (const entry of view.list) {
+          const key = itemKey(item.namespace, entry.id)
+          const url = itemUrls[key]
+          const recipe = itemRecipes[key]
+          const blank = recipe !== undefined && recipe !== null && recipe.shape === 'none'
+          const lacking = recipe !== undefined && recipe !== null && recipe.missing === true
+          const lackReason = lacking
+            ? (recipe.error || recipe.reason || '参考目录里取不到这个物品') : ''
+          slots.push(React.createElement('button', {
+            key: entry.id, type: 'button', className: 'mcart-slot',
+            'data-on': iconPick !== null && iconPick.id === entry.id ? '1' : '0',
+            'data-missing': lacking ? '1' : '0',
+            title: entry.name + '\n' + entry.id + '\n' + (entry.formLabel || entry.form || '')
+              + (lacking ? '\n缺：' + lackReason
+                : (blank ? '\n这个物品是代码画的，没有可用的图标模型' : '')),
+            style: url === undefined || url === null ? {} : { backgroundImage: 'url(' + url + ')' },
+            onClick: () => pickItem(entry),
+          }, lacking
+            ? React.createElement('span', { className: 'mcart-slotq mcart-slotmissing', title: lackReason }, '缺')
+            : (blank ? React.createElement('span', { className: 'mcart-slotq' }, '?') : null)))
+        }
+        rows.push(React.createElement('div', { className: 'mcart-hotbar', key: 'slots' }, slots))
+
+        const picked = iconPick === null ? null
+          : view.list.filter((entry) => entry.id === iconPick.id)[0]
+        if (picked !== undefined && picked !== null) {
+          const recipe = itemRecipes[itemKey(iconPick.namespace, iconPick.id)]
+          const frames = recipe === undefined || recipe === null ? 0 : (recipe.frames || []).length
+          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'chosen' },
+            React.createElement('span', { className: 'mcart-note mcart-grow' },
+              picked.name + '（' + picked.id + '）· ' + (picked.formLabel || picked.form || '')
+              + (frames > 1 ? ' · ' + frames + ' 帧（原版按 overrides 换模型）' : '')
+              + (recipe !== undefined && recipe !== null && recipe.error ? ' · ' + String(recipe.error) : ''))))
+        }
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'msg' },
+          React.createElement('span', { className: 'mcart-note mcart-grow' }, item.msg === null ? '' : withVersion(item.msg))))
+        return React.createElement('div', { className: 'mcart-card', key: 'items' }, rows)
+      }
+
+      function facesForScene() {
+        const out = {}
+        for (const quad of (scene === null ? [] : (scene.quads || []))) {
+          if (quad.pick) continue
+          if (typeof quad.tex !== 'string' || typeof quad.face !== 'string') continue
+          if (out[quad.tex] === undefined) out[quad.tex] = []
+          if (out[quad.tex].indexOf(quad.face) < 0) out[quad.tex].push(quad.face)
+        }
+        return out
+      }
+
+
+      function widestTexture(ids, byTexture) {
+        let best = 0
+        for (let i = 1; i < ids.length; i++) {
+          const here = (byTexture[ids[i]] || []).length
+          const there = (byTexture[ids[best]] || []).length
+          if (here > there) best = i
+        }
+        return best
+      }
+
+      function makeEdit(ids, index, facesByTexture) {
+        const frame = decoded[ids[index]]
+        const copy = new Uint8ClampedArray(frame.data)
+        const byTexture = facesByTexture || {}
+        return {
+          ids: ids, index: index, w: frame.width, h: frame.height,
+          pixels: copy, palette: paletteOf(copy, 32), tool: 'pencil', color: null,
+          faces: byTexture[ids[index]] || [],
+          facesByTexture: byTexture,
+        }
+      }
+
+
+      function itemAsset() {
+        if (scene !== null || item === null || hudOn === '') return null
+        return { namespace: item.namespace, id: hudOn, source: item.source,
+          recipe: pickedRecipe, title: hudPicked === '' ? hudOn : hudPicked }
+      }
+
+      function openEditor() {
+        const asset = itemAsset()
+        if (scene === null && asset === null) return
+        if (asset !== null) {
+          setVoxel(null)
+          const ids = asset.recipe === null ? []
+            : idsOf(asset.recipe).filter((id) => decoded[id] !== undefined)
+          if (ids.length === 0) {
+            setEdit(null)
+            setItemMsg(asset.title + ' 还没有解码成功的贴图，改不了')
+            return
+          }
+          setItemMsg(null)
+          setEditMsg(null)
+          setUndo([])
+          painting.active = false
+          setEdit(makeEdit(ids, widestTexture(ids, {}), {}))
+          return
+        }
+        if (scene.kind === 'biome' || scene.kind === 'structure') { openVoxel(); return }
+        if (scene.kind !== 'block' && scene.kind !== 'entity') {
+          setEditMsg('这个类型还不能改：' + String(scene.kind))
+          return
+        }
+        setVoxel(null)
+        const ids = idsOf(scene).filter((id) => decoded[id] !== undefined)
+        if (ids.length === 0) {
+          setEdit(null)
+          setEditMsg('这个资产没有解码成功的贴图，改不了')
+          return
+        }
+        setEditMsg(null)
+        setUndo([])
+        painting.active = false
+        const byTexture = facesForScene()
+        setEdit(makeEdit(ids, widestTexture(ids, byTexture), byTexture))
+      }
+
+      function closeEditor() {
+        painting.active = false
+        setEdit(null)
+        setUndo([])
+        setEditMsg(null)
+      }
+
+      function undoOnce() {
+        if (edit === null || undo.length === 0) return
+        const previous = undo[undo.length - 1]
+        setUndo(undo.slice(0, undo.length - 1))
+        setEdit(Object.assign({}, edit, { pixels: new Uint8ClampedArray(previous) }))
+      }
+
+      function pushUndo() {
+        if (edit === null || edit.pixels === undefined) return
+        const next = undo.concat([new Uint8ClampedArray(edit.pixels)])
+        setUndo(next.length > EDIT_UNDO ? next.slice(next.length - EDIT_UNDO) : next)
+      }
+
+      function pixelAt(event, target) {
+        return texturePoint(event.currentTarget.getBoundingClientRect(), target,
+          event.clientX, event.clientY)
+      }
+
+      function applyTool(x, y, first) {
+        if (edit === null || edit.pixels === undefined) return
+        const w = edit.w, h = edit.h, pixels = edit.pixels
+        if (x < 0 || y < 0 || x >= w || y >= h) return
+        if (edit.tool === 'picker') {
+          const picked = readPixel(pixels, w, x, y)
+          setEdit(Object.assign({}, edit, { color: picked[3] === 0 ? null : picked }))
+          return
+        }
+        if (first === true) pushUndo()
+        if (edit.tool === 'fill') {
+          const from = readPixel(pixels, w, x, y)
+          const to = edit.color || [0, 0, 0, 255]
+          if (!sameColour(from, to)) {
+            const stack = [[x, y]]
+            const visited = {}
+            while (stack.length > 0) {
+              const point = stack.pop()
+              const cx = point[0], cy = point[1]
+              if (cx < 0 || cy < 0 || cx >= w || cy >= h) continue
+              const key = cy * w + cx
+              if (visited[key] === true) continue
+              visited[key] = true
+              if (!sameColour(readPixel(pixels, w, cx, cy), from)) continue
+              writePixel(pixels, w, cx, cy, to)
+              stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1])
+            }
+          }
+        } else if (edit.tool === 'eraser') {
+          writePixel(pixels, w, x, y, [0, 0, 0, 0])
+        } else {
+          writePixel(pixels, w, x, y, edit.color || [0, 0, 0, 255])
+        }
+        setEdit(Object.assign({}, edit))
+      }
+
+      function saveEdit() {
+        if (edit === null || edit.pixels === undefined || editBusy) return
+        if (editScratch === null) { setEditMsg('画布还没准备好'); return }
+        const target = edit.ids[edit.index]
+        if (!safeTextureHandle(target)) {
+          setEditMsg('这条贴图句柄不是项目包里的相对路径，没有写盘：' + String(target)
+            + '（只写项目自己的包；要改原版/模组贴图，先在项目包里放一张同名贴图）')
+          return
+        }
+        setEditBusy(true)
+        setEditMsg(null)
+        editScratch.width = edit.w
+        editScratch.height = edit.h
+        const paint = editScratch.getContext('2d')
+        const frame = paint.createImageData(edit.w, edit.h)
+        frame.data.set(edit.pixels)
+        paint.putImageData(frame, 0, 0)
+        const url = editScratch.toDataURL('image/png')
+        if (String(url).indexOf('data:image/png') !== 0) {
+          setEditBusy(false)
+          setEditMsg('画布没有给出 PNG（拿到 ' + String(url).slice(0, 24) + '…），没有写盘')
+          return
+        }
+        const base64 = url.slice(url.indexOf(',') + 1)
+        host.call('atlas.saveTexture', {
+          root: root, project: activeProjectId(), path: target, base64: base64,
+        }).then((result) => {
+          setEditBusy(false)
+          if (result === null || result === undefined || result.error !== undefined) {
+            setEditMsg('保存失败：' + String(result && result.error ? result.error : '没有返回结果'))
+            return
+          }
+          decoded[target] = { width: edit.w, height: edit.h, data: edit.pixels }
+          delete failedTex[target]
+          lastDrawKey = ''
+          setEdit(Object.assign({}, edit, { palette: paletteOf(edit.pixels, 32) }))
+          setEditMsg('已保存 ' + target.split('/').pop() + '（' + result.bytes + ' 字节）')
+          setEditTick(editTick + 1)
+        }).catch((error) => {
+          setEditBusy(false)
+          setEditMsg('保存失败：' + String(error && error.message ? error.message : error))
+        })
+      }
+
+      function editorCard() {
+        if (edit === null && editMsg === null) return null
+        const rows = []
+        if (edit === null) {
+          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'lost' },
+            React.createElement('span', { className: 'mcart-bad mcart-grow' }, String(editMsg)),
+            React.createElement('button', { className: 'mcart-btn', type: 'button',
+              onClick: () => setEditMsg(null) }, '知道了')))
+          return React.createElement('div', { className: 'mcart-card', key: 'editor' }, rows)
+        }
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },
+          React.createElement('span', { className: 'mcart-title' }, '改贴图'),
+          React.createElement('span', { className: 'mcart-sub' },
+            faceLabel(edit.faces) + ' · ' + edit.w + '×' + edit.h)))
+        if (edit.ids.length > 1) {
+          rows.push(React.createElement('div', { className: 'mcart-tabs', key: 'tabs' },
+            edit.ids.map((id, index) => React.createElement('button', {
+              key: id, type: 'button', className: 'mcart-btn mcart-tool',
+              'data-on': index === edit.index ? '1' : '0',
+              onClick: () => {
+                setUndo([]); setEditMsg(null); painting.active = false
+                setEdit(makeEdit(edit.ids, index, edit.facesByTexture))
+              },
+            }, faceLabel((edit.facesByTexture || {})[id]) + ' · ' + id.split('/').pop().replace(/\.png$/, '')))))
+        }
+        rows.push(React.createElement('div', { className: 'mcart-tools', key: 'tools' },
+          [['pencil', '铅笔'], ['eraser', '橡皮'], ['fill', '油漆桶'], ['picker', '吸管']].map((pair) =>
+            React.createElement('button', {
+              key: pair[0], type: 'button', className: 'mcart-btn mcart-tool',
+              'data-on': edit.tool === pair[0] ? '1' : '0',
+              onClick: () => setEdit(Object.assign({}, edit, { tool: pair[0] })),
+            }, pair[1])),
+          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: undo.length === 0,
+            onClick: undoOnce }, '撤销')))
+        const current = edit.color || [0, 0, 0, 255]
+        const inPalette = edit.palette.some((c) => sameColour(c, current))
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'current' },
+          React.createElement('input', {
+            type: 'color', className: 'mcart-picker', value: hexOf(current),
+            title: '取色板以外随便挑',
+            onChange: (event) => setEdit(Object.assign({}, edit,
+              { color: fromHex(event.target.value, current[3]) })),
+          }),
+          React.createElement('button', {
+            className: 'mcart-btn', type: 'button', disabled: inPalette,
+            title: '把当前颜色加进色板',
+            onClick: () => setEdit(Object.assign({}, edit,
+              { palette: addToPalette(edit.palette, current, EDIT_PALETTE) })),
+          }, inPalette ? '已在色板' : '＋ 色板'),
+          React.createElement('input', {
+            type: 'range', className: 'mcart-alpha', min: 0, max: 255, value: current[3],
+            onChange: (event) => setEdit(Object.assign({}, edit,
+              { color: [current[0], current[1], current[2], Number(event.target.value)] })),
+          }),
+          React.createElement('span', { className: 'mcart-note' }, hexOf(current)),
+          React.createElement('span', { className: 'mcart-note mcart-grow' },
+            '不透明度 ' + current[3] + ' · 撤销 ' + undo.length)))
+        rows.push(React.createElement('div', { className: 'mcart-swatches', key: 'swatches' },
+          edit.palette.map((colour) => React.createElement('button', {
+            key: colour.join(','), type: 'button', className: 'mcart-swatch',
+            style: { background: cssColour(colour) }, title: cssColour(colour),
+            onClick: () => setEdit(Object.assign({}, edit, { color: colour })),
+          }))))
+        rows.push(React.createElement('canvas', {
+          key: 'canvas', className: 'mcart-edit-canvas',
+          ref: (node) => setEditCanvas(node),
+          onPointerDown: (event) => {
+            const point = pixelAt(event, edit)
+            if (point === null) return
+            painting.active = true
+            if (event.currentTarget.setPointerCapture) {
+              try { event.currentTarget.setPointerCapture(event.pointerId) } catch (error) { /* not fatal */ }
+            }
+            applyTool(point[0], point[1], true)
+          },
+          onPointerMove: (event) => {
+            if (!painting.active) return
+            const point = pixelAt(event, edit)
+            if (point !== null) applyTool(point[0], point[1], false)
+          },
+          onPointerUp: () => { painting.active = false },
+          onPointerLeave: () => { painting.active = false },
+        }))
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'foot' },
+          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: editBusy,
+            onClick: saveEdit }, editBusy ? '保存中…' : '保存'),
+          React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: closeEditor }, '关闭'),
+          React.createElement('span', { className: 'mcart-note mcart-grow' },
+            (edit.ids[edit.index] || '').split('/').pop())))
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'msg' },
+          React.createElement('span', { className: 'mcart-note mcart-grow' }, editMsg === null ? '' : withVersion(editMsg))))
+        return React.createElement('div', { className: 'mcart-card', key: 'editor' }, rows)
+      }
+
+      React.useEffect(() => {
+        if (edit === null || edit.pixels === undefined) return
+        if (editCanvas === null || editScratch === null) return
+        editScratch.width = edit.w
+        editScratch.height = edit.h
+        const source = editScratch.getContext('2d')
+        const frame = source.createImageData(edit.w, edit.h)
+        frame.data.set(edit.pixels)
+        source.putImageData(frame, 0, 0)
+        const zoom = Math.max(2, Math.min(EDIT_ZOOM, 320 / Math.max(edit.w, edit.h)))
+        editCanvas.width = edit.w * zoom
+        editCanvas.height = edit.h * zoom
+        const view = editCanvas.getContext('2d')
+        view.imageSmoothingEnabled = false
+        view.clearRect(0, 0, editCanvas.width, editCanvas.height)
+        view.drawImage(editScratch, 0, 0, editCanvas.width, editCanvas.height)
+        view.strokeStyle = 'rgba(127,127,127,.30)'
+        view.lineWidth = 1
+        for (let x = 0; x <= edit.w; x++) {
+          view.beginPath(); view.moveTo(x * zoom + 0.5, 0); view.lineTo(x * zoom + 0.5, editCanvas.height); view.stroke()
+        }
+        for (let y = 0; y <= edit.h; y++) {
+          view.beginPath(); view.moveTo(0, y * zoom + 0.5); view.lineTo(editCanvas.width, y * zoom + 0.5); view.stroke()
+        }
+      })
+
+      function complain() {
+        if (scene !== null) {
+          setPending({ path: scene.ref || '', title: scene.title || '' })
+          return
+        }
+        const asset = itemAsset()
+        if (asset === null) return
+        const path = asset.recipe === null || asset.recipe.modelPath === undefined
+          ? '' : String(asset.recipe.modelPath)
+        if (path === '') {
+          setItemMsg(asset.title + ' 在参考的 jar 里，没有可以引用的文件')
+          return
+        }
+        setItemMsg(null)
+        setPending({ path: path, title: asset.title })
+      }
+
+
+      function diagnosticCard() {
+        if (diag === null) return null
+        const info = diag.diag
+        const all = diagLines(info, diag.error)
+        const full = diagText(info, diag.error)
+        const rows = []
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },
+          React.createElement('span', { className: 'mcart-title' }, '画不出来 · 报告'),
+          React.createElement('span', { className: 'mcart-sub' }, versionTag()),
+          React.createElement('button', { className: 'mcart-btn', type: 'button',
+            onClick: () => copyReport(full) }, '复制报告'),
+          all.length > DIAG_SHOW ? React.createElement('button', { className: 'mcart-btn', type: 'button',
+            onClick: () => setDiagOpen(diagOpen !== true) }, diagOpen === true ? '收起' : '展开全部') : null,
+          React.createElement('button', { className: 'mcart-btn', type: 'button',
+            onClick: () => { setDiag(null); setCopied('') } }, '关掉')))
+        if (diag.repeat === true) {
+          rows.push(React.createElement('div', { className: 'mcart-hint', key: 'repeat' },
+            '同一条报告：屏幕上只留这一条，不重复刷屏。'))
+        }
+        const shown = diag.repeat === true ? all.slice(0, 3)
+          : (diagOpen === true ? all.slice(0, DIAG_LINES) : all.slice(0, DIAG_SHOW))
+        rows.push(React.createElement('pre', { className: 'mcart-report', key: 'text' }, shown.join('\n')))
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'ai' },
+          React.createElement('button', { className: 'mcart-btn', type: 'button',
+            onClick: () => placeReport(true) }, '把报告放进输入框'),
+          React.createElement('span', { className: 'mcart-note mcart-grow' }, statusText(autoStatus)),
+          React.createElement('label', { className: 'mcart-switch' },
+            React.createElement('input', { type: 'checkbox', checked: autoReportOn === true,
+              onChange: (event) => { setAutoReport(event.target.checked); setAutoTick(autoTick + 1) } }),
+            React.createElement('span', null, '出错时自动放进输入框'))))
+        rows.push(React.createElement('div', { className: 'mcart-reportnote', key: 'note' },
+          copied === ''
+            ? '上面这段可以选中复制，或点「复制报告」/「把报告放进输入框」。面板不会自动发送；面板不会把它发进任何会话。'
+            : copied))
+        return React.createElement('div', { className: 'mcart-card', key: 'diag' }, rows)
+      }
+
+      function settingsCard() {
+        if (settings === null) return null
+        const rows = []
+        if (settings.loading === true) {
+          rows.push(React.createElement('div', { className: 'mcart-note', key: 'l' }, '读取设置…'))
+        } else if (settings.error !== undefined) {
+          rows.push(React.createElement('div', { className: 'mcart-err', key: 'e' }, String(settings.error)))
+        } else {
+          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },
+            React.createElement('span', { className: 'mcart-title' }, '设置'),
+            React.createElement('span', { className: 'mcart-sub' }, settings.title || settings.project || ''),
+          ))
+          rows.push(React.createElement('div', { className: 'mcart-note', key: 'reflabel' }, '参考目录'))
+          rows.push(React.createElement('div', { className: 'mcart-path', key: 'refpath' }, settings.directory || '（未设置）'))
+          const dirButtons = [
+            React.createElement('button', { className: 'mcart-btn', type: 'button', key: 'pick', disabled: picking,
+              onClick: () => runPicker(settings.directory || root, (picked) => patchSettings({ directory: picked }, true)) },
+              picking ? '对话框已打开…' : '选择目录…'),
+          ]
+          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'dirbuttons' }, dirButtons))
+          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'dirinput' },
+            React.createElement('input', {
+              className: 'mcart-input mcart-grow', type: 'text',
+              placeholder: '参考目录：%APPDATA%\\.minecraft\\versions\\<版本号>',
+              value: dirDraft,
+              onChange: (event) => setDirDraft(String(event.target.value)),
+              onKeyDown: (event) => { if (event.key === 'Enter') applyDirDraft() },
+            }),
+            React.createElement('button', { className: 'mcart-btn', type: 'button',
+              disabled: dirDraft.trim() === '', onClick: () => applyDirDraft() }, '用这个路径'),
+          ))
+          rows.push(React.createElement('div', { className: 'mcart-hint', key: 'dirhint' },
+            '对话框弹不出来时可以在这里贴路径（.minecraft、版本目录、mods 目录，或单个 jar 都行）。'))
+          if (settings.directory !== '' && settings.directory !== undefined) {
+            if (settings.scanError !== null && settings.scanError !== undefined) {
+              rows.push(React.createElement('div', { className: 'mcart-err', key: 'scanerr' }, '没读到里面的资源：' + String(settings.scanError)))
+            } else {
+              rows.push(React.createElement('div', { className: 'mcart-hint', key: 'shape' },
+                '识别为 ' + (settings.shape || '？') + ' · ' + (settings.textures || 0) + ' 张贴图 · '
+                + ((settings.sources || []).length) + ' 个资源文件'))
+            }
+          }
+          for (const hint of (settings.directory === '' || settings.directory === undefined ? (settings.detected || []) : []).slice(0, 4)) {
+            rows.push(React.createElement('div', { className: 'mcart-bar', key: 'det' + hint },
+              React.createElement('span', { className: 'mcart-note mcart-grow' }, '检测到 ' + hint),
+              React.createElement('button', { className: 'mcart-btn', type: 'button',
+                onClick: () => patchSettings({ directory: hint }, true) }, '用它'),
+            ))
+          }
+          if ((settings.directory === '' || settings.directory === undefined) && (settings.detected || []).length === 0) {
+            rows.push(React.createElement('div', { className: 'mcart-hint', key: 'nodir' },
+              '没设置就不参考外部资源。可以指向 .minecraft、某个版本目录、mods 目录，或单个 jar。'))
+            rows.push(React.createElement('div', { className: 'mcart-hint', key: 'nodir2' },
+              '没有自动检测到游戏目录 —— 直接把路径贴进上面的输入框也一样能用。'))
+          }
+
+          rows.push(React.createElement('label', { className: 'mcart-switch', key: 'gen' },
+            React.createElement('input', { type: 'checkbox', checked: settings.includeGenerated !== false,
+              onChange: (event) => patchSettings({ includeGenerated: event.target.checked }) }),
+            React.createElement('span', null, '参考本目录已生成内容'),
+          ))
+          rows.push(React.createElement('div', { className: 'mcart-hint', key: 'genhint' }, '有助于保持生成风格一致'))
+
+          rows.push(React.createElement('label', { className: 'mcart-switch', key: 'mods' },
+            React.createElement('input', { type: 'checkbox', checked: settings.includeMods !== false,
+              onChange: (event) => patchSettings({ includeMods: event.target.checked }) }),
+            React.createElement('span', null, '参考目录中的模组资源文件'),
+          ))
+
+          if (settings.includeMods !== false) {
+            const mods = settings.mods || []
+            const missing = settings.directory === '' || settings.directory === undefined
+            const message = missing ? '还没指定参考目录'
+              : (mods.length === 0 ? '参考目录里没有找到任何资源命名空间' : ('发现 ' + mods.length + ' 个命名空间'))
+            rows.push(React.createElement('div', { className: 'mcart-bar', key: 'modbar' },
+              React.createElement('span', { className: 'mcart-note' }, message),
+              mods.length === 0 ? null : React.createElement('button', { className: 'mcart-btn', type: 'button',
+                onClick: () => setModsOpen(!modsOpen) }, modsOpen ? '收起 ▴' : '展开 ▾'),
+            ))
+            if (modsOpen) {
+              const list = []
+              for (const item of mods) {
+                const from = (item.from || []).slice(0, 2).join('、')
+                list.push(React.createElement('label', { className: 'mcart-switch', key: item.name },
+                  React.createElement('input', { type: 'checkbox', checked: item.on === true,
+                    onChange: (event) => toggleMod(item.name, event.target.checked) }),
+                  React.createElement('span', { className: 'mcart-grow' }, item.name,
+                    from === '' ? null : React.createElement('span', { className: 'mcart-id' }, from)),
+                  React.createElement('span', { className: 'mcart-id' }, item.count + ' 张贴图'),
+                ))
+              }
+              rows.push(React.createElement('div', { className: 'mcart-mods', key: 'modlist' }, list))
+            }
+          }
+
+          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'foot' },
+            React.createElement('span', { className: 'mcart-note mcart-grow' }, settings.file || ''),
+            React.createElement('span', { className: 'mcart-bad' }, saveState === null ? '' : saveState),
+          ))
+          rows.push(React.createElement('label', { className: 'mcart-switch', key: 'autoreport' },
+            React.createElement('input', { type: 'checkbox', checked: autoReportOn === true,
+              onChange: (event) => { setAutoReport(event.target.checked); setAutoTick(autoTick + 1) } }),
+            React.createElement('span', null, '出错时自动把报告放进输入框'),
+          ))
+          rows.push(React.createElement('div', { className: 'mcart-hint', key: 'autoreporthint' },
+            '只是草稿：不会自动发送，输入框里已经有你写的字时也不动它。'))
+          if (savedSettings !== null && savedSettings.path !== '') {
+            rows.push(React.createElement('div', { className: 'mcart-bar', key: 'tell' },
+              React.createElement('span', { className: 'mcart-note mcart-grow' },
+                '已保存，要让 AI 按新设置重做的话：'),
+              React.createElement('button', { className: 'mcart-btn', type: 'button',
+                onClick: () => setPending({ path: savedSettings.path, note: savedSettings.note }) },
+                '告诉 AI'),
+              React.createElement('button', { className: 'mcart-btn', type: 'button',
+                onClick: () => setSavedSettings(null) }, '不用了'),
+            ))
+          }
+        }
+        if (notice !== null) rows.push(React.createElement('div', { className: 'mcart-bad', key: 'notice' }, String(notice)))
+        if (failure !== null) rows.push(React.createElement('div', { className: 'mcart-err', key: 'failure' }, withVersion(failure)))
+        return React.createElement('div', { className: 'mcart-card', key: 'settings' }, rows)
+      }
+
+      if (root === '') {
+        const card = []
+        card.push(React.createElement('div', { className: 'mcart-note', key: 'hint' }, '未指定资产路径'))
+        card.push(React.createElement('div', { className: 'mcart-bar', key: 'input' },
+          React.createElement('input', {
+            className: 'mcart-input', placeholder: '/path/to/project',
+            value: draft, onChange: (event) => setDraft(event.target.value),
+            onKeyDown: (event) => { if (event.key === 'Enter' && draft !== '') commitRoot(draft) },
+          }),
+          React.createElement('button', { className: 'mcart-btn', type: 'button',
+            onClick: () => { if (draft !== '') commitRoot(draft) } }, '使用'),
+        ))
+
+        if (nearby !== null) {
+          if (nearby.loading === true) {
+            card.push(React.createElement('div', { className: 'mcart-note', key: 'scanning' }, '正在找本会话目录里的项目…'))
+          } else if (nearby.error !== null) {
+            card.push(React.createElement('div', { className: 'mcart-err', key: 'nerr' }, String(nearby.error)))
+          } else if (nearby.projects.length > 0) {
+            card.push(React.createElement('div', { className: 'mcart-note', key: 'found' }, '在 ' + nearby.cwd + ' 里找到：'))
+            const rows = []
+            for (const project of nearby.projects) {
+              rows.push(React.createElement('div', { className: 'mcart-row', key: project.root + '/' + project.id },
+                React.createElement('span', { className: 'mcart-grow' }, project.title,
+                  project.title === project.id ? null : React.createElement('span', { className: 'mcart-id' }, project.id)),
+                React.createElement('button', { className: 'mcart-btn', type: 'button',
+                  onClick: () => openNearby(project.root, project.id) }, '打开'),
+              ))
+            }
+            card.push(React.createElement('div', { className: 'mcart-projects', key: 'projects' }, rows))
+          } else {
+            card.push(React.createElement('div', { className: 'mcart-note', key: 'none' },
+              '在 ' + nearby.cwd + ' 里没找到 mc 资产项目。'))
+          }
+        }
+
+        card.push(React.createElement('div', { className: 'mcart-bar', key: 'buttons' },
+          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: picking,
+            onClick: pickDirectory }, picking ? '对话框已打开…' : '选择目录…'),
+          nearby !== null && nearby.cwd !== '' ? React.createElement('button', { className: 'mcart-btn', type: 'button',
+            onClick: () => commitRoot(nearby.cwd) }, '用本会话目录') : null,
+        ))
+
+        if (notice !== null) card.push(React.createElement('div', { className: 'mcart-bad', key: 'notice' }, String(notice)))
+        if (failure !== null) card.push(React.createElement('div', { className: 'mcart-err', key: 'failure' }, withVersion(failure)))
+        return React.createElement('div', { className: 'mcart-root' },
+          React.createElement('div', { className: 'mcart-bar' },
+            React.createElement('span', { className: 'mcart-title' }, 'MC 资产'),
+            React.createElement('span', { className: 'mcart-sub' }, inRightColumn ? '右侧栏' : '中央面板'),
+          ),
+          React.createElement('div', { className: 'mcart-card' }, card),
+        )
+      }
+
+      function guideCard() {
+        const id = String(newId).trim()
+        const valid = /^[a-z0-9_]{2,32}$/.test(id)
+        const reference = settings === null ? null : settings.directory
+        const rows = []
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },
+          React.createElement('span', { className: 'mcart-title' }, '开始一个新模组'),
+          React.createElement('span', { className: 'mcart-sub' }, '三步：目录 → 建项目 → 参考目录')))
+        rows.push(React.createElement('div', { className: 'mcart-note', key: 'why' },
+          '这个目录里还没有项目。一个模组 = 一个命名空间，所以这里只需要取一个名字：' +
+          '项目 id 与命名空间同名，之后不会给它长出第二个命名空间。'))
+        rows.push(React.createElement('div', { className: 'mcart-bar', key: 'form' },
+          React.createElement('input', {
+            className: 'mcart-input', placeholder: '项目名，例如 my_mod（小写字母/数字/_）',
+            value: newId,
+            onChange: (event) => setNewId(String(event.target.value)),
+            onKeyDown: (event) => { if (event.key === 'Enter' && valid) createProject() },
+          }),
+          React.createElement('button', {
+            className: 'mcart-btn', type: 'button', disabled: !valid || busy,
+            onClick: () => createProject(),
+          }, busy ? '…' : '在这里新建项目')))
+        if (id !== '' && !valid) {
+          rows.push(React.createElement('div', { className: 'mcart-bad', key: 'badid' },
+            '只能用小写字母、数字、下划线，2-32 个字符'))
+        }
+        const here = emptyRoot === null ? root : emptyRoot
+        rows.push(React.createElement('div', { className: 'mcart-hint', key: 'where' }, '建在：' + here))
+        rows.push(React.createElement('div', { className: reference === null || reference === '' ? 'mcart-hint' : 'mcart-note', key: 'ref' },
+          reference === null || reference === ''
+            ? '建完下一步：点右上角 ⚙ 指定参考目录（面板会列出自动探测到的游戏目录）。不指定也能用，只是看不到原版/模组的参照。'
+            : '参考目录已经设好了：' + reference))
+        if (failure !== null) rows.push(React.createElement('div', { className: 'mcart-err', key: 'err' }, withVersion(failure)))
+        return React.createElement('div', { className: 'mcart-card', key: 'guide' }, rows)
+      }
+
+      function describeEnv() {
+        return host.call('atlas.env', {}).then((env) => {
+          if (env === null || env === undefined || env.services === undefined) return ''
+          const names = Object.keys(env.services)
+          const on = names.filter((key) => env.services[key] === true)
+          const off = names.filter((key) => env.services[key] !== true)
+          return '（宿主可用：' + (on.length === 0 ? '无' : on.join('、')) +
+            '；缺：' + (off.length === 0 ? '无' : off.join('、')) +
+            '；shell 方言：' + String(env.shellDialect === null || env.shellDialect === undefined ? '问不到' : env.shellDialect) + '）'
+        }).catch(() => '')
+      }
+
+      function createProject() {
+        const id = String(newId).trim()
+        if (!/^[a-z0-9_]{2,32}$/.test(id)) return
+        const here = emptyRoot === null ? root : emptyRoot
+        setBusy(true)
+        setFailure(null)
+        host.call('atlas.createProject', { root: here, id: id }).then((result) => {
+          setBusy(false)
+          if (result === null || result === undefined) { setFailure('新建项目没有返回任何东西'); return }
+          const bad = failureOf(result)
+          if (bad !== null) {
+            setFailure(String(bad))
+            describeEnv().then((text) => { if (text !== '') setFailure(String(bad) + ' ' + text) })
+            return
+          }
+          setEmptyRoot(null)
+          if (typeof result.via === 'string') {
+            setNotice('工程建好了：' + id + '（目录用 ' + result.via + ' 建的' +
+              (result.placeholder === true ? '，空目录里留了 .gitkeep 占位' : '') + '）')
+          }
+          scan(here, true, id)
+        }).catch((error) => { setBusy(false); setFailure(String(error && error.message ? error.message : error)) })
+      }
+
+      const projects = index === null ? [] : (index.projects || [])
+      const menu = []
+      for (const project of projects) {
+        menu.push(React.createElement('div', { className: 'mcart-group', key: 'p' + project.id }, project.title))
+        for (const category of CATEGORIES) {
+          const items = (project.items && project.items[category.key]) || []
+          if (items.length === 0) continue
+          menu.push(React.createElement('div', { className: 'mcart-group', key: 'p' + project.id + category.key },
+            category.label + ' · ' + items.length))
+          for (const item of items) {
+            const on = choice !== null && choice.project === project.id && choice.kind === category.key && choice.id === item.id
+            menu.push(React.createElement('button', {
+              key: project.id + '/' + category.key + '/' + item.id, type: 'button',
+              className: 'mcart-item', 'data-on': on ? '1' : '0',
+              onClick: () => open({ project: project.id, kind: category.key, id: item.id }, root),
+            }, item.title,
+              item.title === item.id ? null : React.createElement('span', { className: 'mcart-id' }, item.id)))
+          }
+        }
+      }
+
+      const stage = []
+      const animRows = []
+      if (!isAbsent(scene)) {
+        const ids = idsOf(scene)
+        const okCount = ids.filter((id) => decoded[id] !== undefined).length
+        const bad = ids.filter((id) => failedTex[id] === true).length
+        stage.push(React.createElement('div', { className: 'mcart-bar', key: 'row' },
+          React.createElement('span', { className: 'mcart-note' },
+            scene.quads.length + ' 面 · 贴图 ' + okCount + '/' + ids.length),
+          React.createElement('button', { className: 'mcart-btn', type: 'button',
+            onClick: () => { setYaw(0.72); setPitch(0.34); setZoom(1) } }, '重置'),
+          React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: openEditor }, '✎ 手动修改'),
+          React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: complain }, '@ 提意见'),
+        ))
+        if (bad > 0) stage.push(React.createElement('div', { className: 'mcart-bad', key: 'bad' }, bad + ' 张贴图解码失败'))
+        if (scene.errors && scene.errors.length > 0) {
+          stage.push(React.createElement('div', { className: 'mcart-bad', key: 'notes' }, withVersion(scene.errors.join('；'))))
+        }
+        const animIndex = scene === null ? {} : (scene.animations || {})
+        const animNotes = scene === null ? {} : (scene.animationNotes || {})
+        for (const id of Object.keys(animIndex).sort()) {
+          const tex = decoded[id]
+          const size = tex === undefined ? '还没解码' : (tex.width + '×' + tex.height)
+          const strip = tex === undefined ? null
+            : stripOf({ width: tex.width, height: tex.height, animation: animIndex[id] })
+          const row = animationRow(animIndex[id], animTicks * 50)
+          animRows.push(React.createElement('div', { className: 'mcart-hint', key: 'anim:' + id },
+            '动画 ' + id + ' · 解码 ' + size + ' · 声明 ' + String(animIndex[id].strip) + ' 行'
+            + ' · 判定 ' + (tex === undefined ? '等解码' : (strip === null ? '不是条带 ← 会糊' : '单帧 ' + strip))
+            + ' · 现在抽第 ' + String(row) + ' 行'))
+        }
+        for (const id of idsOf(scene)) {
+          if (animIndex[id] !== undefined) continue
+          const note = animNotes[id]
+          if (note !== undefined && note !== null && typeof note.text === 'string' && note.text !== '') {
+            animRows.push(React.createElement('div', { className: 'mcart-hint', key: 'noanim:' + id }, note.text))
+            continue
+          }
+          const tex = decoded[id]
+          if (tex === undefined) continue
+          if (!(tex.height > tex.width && tex.height % tex.width === 0)) continue
+          animRows.push(React.createElement('div', { className: 'mcart-hint', key: 'noanim:' + id },
+            '形状像条带但没有动画描述 ' + id + ' · 解码 ' + tex.width + '×' + tex.height
+            + ' ← 会糊；补一个 ' + String(id).split('/').pop() + '.png.mcmeta（animation 段里写明 frametime/frames）'))
+        }
+        if (scene.palette && scene.palette.length > 0) {
+          stage.push(React.createElement('div', { className: 'mcart-bar', key: 'palette' },
+            scene.palette.slice(0, 8).map((entry) => React.createElement('span', { className: 'mcart-chip', key: entry.block },
+              (entry.label || entry.block) + ' ×' + entry.count)),
+          ))
+        }
+      }
+      const pickedRecipe = hudOn === '' || item === null
+        ? null : (itemRecipes[itemKey(item.namespace, hudOn)] || null)
+      if (scene === null) {
+        const asset = itemAsset()
+        if (asset !== null) {
+          const ids = idsOf(asset.recipe)
+          const okCount = ids.filter((id) => decoded[id] !== undefined).length
+          stage.push(React.createElement('div', { className: 'mcart-bar', key: 'itemrow' },
+            React.createElement('span', { className: 'mcart-note' },
+              '物品 · 贴图 ' + okCount + '/' + ids.length
+              + (asset.source === 'project' ? '' : '（参考）')),
+            React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: openEditor }, '✎ 手动修改'),
+            React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: complain }, '@ 提意见'),
+          ))
+        }
+      }
+      const sceneDrawsNothing = scene === null || arrayOf(scene.quads).length === 0
+      const posterRecipe = sceneDrawsNothing && pickedRecipe !== null && pickedRecipe.missing !== true
+        ? pickedRecipe : null
+      const posterSide = Math.max(48, Math.min(size[0], size[1]) - 24)
+      stage.push(React.createElement('div', { className: 'mcart-viewport', key: 'viewport' },
+        React.createElement('canvas', {
+        key: 'canvas', className: 'mcart-canvas',
+        style: { height: viewH + 'px' },
+        ref: (node) => { canvasGeneration += 1; setCanvas(node) },
+        onPointerDown: (event) => {
+          drag.active = true
+          drag.moved = 0
+          drag.x = event.clientX
+          drag.y = event.clientY
+          if (event.currentTarget.setPointerCapture) {
+            try { event.currentTarget.setPointerCapture(event.pointerId) } catch (error) { /* not fatal */ }
+          }
+        },
+        onPointerMove: (event) => {
+          if (!drag.active) {
+            if (voxel !== null) {
+              const target = voxelTargetAt(event)
+              if (target === null) { if (hover !== null) setHover(null) }
+              else if (hover === null || hover.cell !== target.cell || hover.face !== target.face) setHover(target)
+            }
+            return
+          }
+          const dx = event.clientX - drag.x
+          const dy = event.clientY - drag.y
+          drag.x = event.clientX
+          drag.y = event.clientY
+          drag.moved += Math.abs(dx) + Math.abs(dy)
+          setYaw((previous) => previous - dx * 0.011)
+          setPitch((previous) => Math.max(-1.35, Math.min(1.35, previous + dy * 0.011)))
+        },
+        onPointerUp: (event) => {
+          const dragDistance = drag.moved
+          drag.active = false
+          if (dragDistance > 4 || voxel === null) return
+          voxelClick(event, event.button === 2 ? 'place' : 'remove')
+        },
+        onContextMenu: (event) => { if (event.preventDefault) event.preventDefault() },
+        onPointerLeave: () => { drag.active = false },
+      }),
+        React.createElement('div', { className: 'mcart-zoom' },
+          React.createElement('button', { className: 'mcart-btn mcart-zoombtn', type: 'button',
+            title: '放大', onClick: () => zoomBy(1.15) }, '＋'),
+          React.createElement('button', { className: 'mcart-btn mcart-zoombtn', type: 'button',
+            title: '缩小', onClick: () => zoomBy(1 / 1.15) }, '－'),
+          React.createElement('button', { className: 'mcart-btn mcart-zoombtn', type: 'button',
+            title: '复位视角（旋转与缩放一起）',
+            onClick: () => { setYaw(0.72); setPitch(0.34); setZoom(1) } }, '⟲'),
+        ),
+        posterRecipe === null ? null : React.createElement('canvas', {
+          key: 'poster', className: 'mcart-poster',
+          width: posterSide, height: posterSide,
+          style: { width: posterSide + 'px', height: posterSide + 'px' },
+          title: hudPicked,
+          ref: (node) => setPosterCanvas(node),
+        }),
+        hudBar()))
+
+      stage.push(React.createElement('div', { className: 'mcart-grip', key: 'grip',
+        title: '上下拖动调整 3D + 物品栏的高度，双击复位',
+        onDoubleClick: () => setViewH(VIEW_H),
+        onPointerDown: (event) => {
+          gripDrag.active = true
+          gripDrag.y = event.clientY
+          gripDrag.origin = viewH
+          if (event.currentTarget.setPointerCapture) {
+            try { event.currentTarget.setPointerCapture(event.pointerId) } catch (error) { /* not fatal */ }
+          }
+        },
+        onPointerMove: (event) => {
+          if (!gripDrag.active) return
+          setViewH(clampViewH(gripDrag.origin + (event.clientY - gripDrag.y)))
+        },
+        onPointerUp: () => { gripDrag.active = false },
+        onPointerCancel: () => { gripDrag.active = false },
+      }, React.createElement('span', { className: 'mcart-gripbar' })))
+
+      const iconNotes = []
+      if (itemMsg !== null) iconNotes.push(String(itemMsg))
+      const pickedNote = slotNote(pickedRecipe)
+      if (pickedNote !== null) iconNotes.push(pickedNote)
+      if (previewItem !== null && previewItem.localOnly === true) {
+        iconNotes.push((hudPicked === '' ? previewItem.id : hudPicked)
+          + ' 没有方块模型（它是物品，不是方块），所以 3D 里没有东西可看；它的样子就是物品栏里那一格')
+      }
+      if (scene !== null && arrayOf(scene.quads).length === 0) {
+        iconNotes.push(posterRecipe === null
+          ? '这一条 3D 里一个面都没有，也没有可用的图标 —— 上面那句"取不到 / 画不出来"就是原因'
+          : '这一条 3D 里一个面都没有（模型或贴图那一段是空的）；取景框里画的是它的 2D 图标')
+      }
+      if (choice !== null && choice.kind !== 'block') {
+        iconNotes.push(choice.kind === 'entity'
+          ? '实体在游戏里没有物品图标（刷怪蛋的蛋色写在代码里，包里没有）'
+          : (choice.kind === 'biome' ? '群系' : '多方块结构') + '在游戏里不是物品')
+      }
+      if (iconNotes.length > 0) {
+        stage.push(React.createElement('div', { className: 'mcart-note', key: 'iconnote' }, iconNotes.join('；')))
+      }
+
+      if (animRows.length > 0) {
+        stage.push(React.createElement('div', { className: 'mcart-mods', key: 'anims' }, animRows))
+      }
+
+      const sources = []
+      const allTextures = Object.assign({}, scene === null ? {} : scene.textures,
+        ghost === null || ghost.textures === undefined ? {} : ghost.textures)
+      for (const recipe of iconRecipesInUse()) {
+        if (recipe.textures !== undefined && recipe.textures !== null) Object.assign(allTextures, recipe.textures)
+      }
+      if (scene !== null || item !== null) {
+        for (const id of Object.keys(allTextures)) {
+          if (decoded[id] !== undefined) continue
+          sources.push(React.createElement('img', {
+            key: id, src: allTextures[id], alt: '', style: { display: 'none' },
+            ref: (node) => {
+              if (node === null || node === undefined) delete imageNodes[id]
+              else imageNodes[id] = node
+            },
+            onLoad: () => setTick(tick + 1),
+            onError: () => { failedTex[id] = true; setTick(tick + 1) },
+          }))
+        }
+      }
+
+      return React.createElement('div', { className: 'mcart-root' },
+        React.createElement('div', { className: 'mcart-bar' },
+          React.createElement('span', { className: 'mcart-title' }, 'MC 资产'),
+          React.createElement('span', { className: 'mcart-sub' },
+            busy ? '加载中…' : (inRightColumn ? '右侧栏' : '中央面板')),
+          React.createElement('button', { className: 'mcart-btn mcart-tool', type: 'button',
+            title: '物品浏览器：来源、搜索、展示形式都在这里；下面那排物品栏跟着一起筛',
+            'data-on': itemOpen ? '1' : '0',
+            onClick: openItems }, itemOpen ? '收起列表' : '物品列表'),
+          React.createElement('button', { className: 'mcart-icon', type: 'button', title: '设置',
+            onClick: openSettings }, settings === null ? '⚙' : '⚙▾'),
+        ),
+        settings === null ? null : settingsCard(),
+        emptyRoot === null ? null : guideCard(),
+        React.createElement('div', { className: 'mcart-bar' },
+          React.createElement('span', { className: 'mcart-path' }, root),
+          React.createElement('button', { className: 'mcart-btn', type: 'button',
+            onClick: () => { setRoot(''); setIndex(null); setItem(null); setItemOpen(false); setIconPick(null); setPreviewItem(null); setHudPage(1); setScene(null); setSettings(null); setEdit(null); setVoxel(null); setHover(null); setGhost(null) } }, '换项目'),
+          React.createElement('button', { className: 'mcart-btn', type: 'button',
+            onClick: () => { forgetTextures(); setTexEpoch(texEpoch + 1); scan(root, true, null) } }, '刷新'),
+        ),
+        failure === null ? null : React.createElement('div', { className: 'mcart-err' }, withVersion(failure)),
+        diagnosticCard(),
+        React.createElement('div', { className: 'mcart-list' }, menu),
+        editorCard(),
+        voxelCard(),
+        itemOpen ? itemCard() : null,
+        React.createElement('div', { className: 'mcart-stage' }, stage),
+        React.createElement('div', { style: { display: 'none' } },
+          React.createElement('canvas', { ref: setScratch, width: 256, height: 256 }),
+          React.createElement('canvas', { ref: setEditScratch, width: 16, height: 16 }),
+          sources,
+        ),
+      )
+    }
+
+    function TabTitle() {
+      return React.createElement('span', null, 'MC 资产')
+    }
+
+    function ReferenceBar(props) {
+      const current = usePending()
+      const draft = props.useInput !== undefined ? props.useInput((state) => state.draft) : ''
+      try {
+        if (props.inputActions !== undefined && props.inputActions !== null
+          && typeof props.inputActions.setDraft === 'function') {
+          const first = typeof composer.write !== 'function'
+          composer.write = props.inputActions.setDraft
+          if (first) composerCaptured()
+        }
+        composer.draft = draft === undefined || draft === null ? '' : String(draft)
+      } catch (error) { /* 壳给的 props 形状不对也不该把引用条弄没 */ }
+      if (current === null || current.path === '') return null
+      const note = current.note === undefined || current.note === null ? '' : String(current.note)
+      return React.createElement('div', { className: 'mcart-ref' },
+        React.createElement('span', null, '引用给 AI'),
+        React.createElement('span', { className: 'mcart-ref-path' }, '@' + current.path),
+        note === '' ? null : React.createElement('span', { className: 'mcart-ref-path' }, note),
+        React.createElement('button', {
+          className: 'mcart-btn', type: 'button',
+          onClick: () => {
+            const text = draft === undefined || draft === null ? '' : String(draft)
+            const base = text.length > 0 ? text.replace(/\s+$/, '') + ' ' : ''
+            const tail = '@' + current.path + (note === '' ? ' ' : ' ' + note)
+            if (props.inputActions !== undefined) props.inputActions.setDraft(base + tail + ' ')
+            setPending(null)
+          },
+        }, '插入输入框'),
+        React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: () => setPending(null) }, '取消'),
+      )
+    }
+
+    slots.inject('conversation.input.dock', () => slots.register(
+      { name: 'conversation.input.dock', id: 'mc-art-ref', order: 15 },
+      (props) => React.createElement(ReferenceBar, { useInput: props.useInput, inputActions: props.inputActions }),
+    ))
+
+    let placement = null
+    const leftStops = []
+    function placeLeft() {
+      if (placement !== null) return
+      placement = 'left'
+      const keep = []
+      slots.inject('main', () => {
+        const stop = slots.register({ name: 'main', key: 'mcarts' },
+          () => React.createElement(PanelBoundary, null, React.createElement(Atlas, { sessionId: '' })))
+        keep.push(stop)
+        return stop
+      })
+      slots.inject('sidebar.panellist', () => {
+        const stop = slots.register({ name: 'sidebar.panellist', id: 'mcarts', order: 12, label: 'MC 资产' },
+          () => React.createElement('span', null, 'MC'))
+        keep.push(stop)
+        return stop
+      })
+      leftStops.push(() => { for (const stop of keep) { try { if (typeof stop === 'function') stop() } catch (error) {  } } })
+    }
+    function placeRight() {
+      if (placement === 'right') return
+      const rightTabs = ctx.get('sidebarRightTabs')
+      if (rightTabs === undefined) return
+      if (placement === 'left') {
+        for (const stop of leftStops) { try { stop() } catch (error) {  } }
+        leftStops.length = 0
+      }
+      placement = 'right'
+      ctx.effect(() => rightTabs.register({
+        id: TAB_ID,
+        kind: TAB_ID,
+        priority: 'extension',
+        title: () => 'MC 资产',
+        guide: [{
+          id: TAB_ID + '.open',
+          order: 40,
+          title: () => 'MC 资产预览',
+          description: () => '在右侧栏里看这个项目的方块 / 实体 / 群系 / 多方块结构',
+        }],
+      }))
+      registerPane()
+    }
+
+
+    function registerPane() {
+      slots.inject('sidebar.right.pane.tab', () => slots.register(
+        { name: 'sidebar.right.pane.tab', key: TAB_ID },
+        (props) => React.createElement(PanelBoundary, null,
+          React.createElement(Atlas, { sessionId: props.sessionId })),
+      ))
+      slots.inject('sidebar.right.pane.tab.title', () => slots.register(
+        { name: 'sidebar.right.pane.tab.title', key: TAB_ID },
+        () => React.createElement(TabTitle, null),
+      ))
+    }
+
+    if (inRightColumn) placeRight()
+    else {
+      placeLeft()
+      if (typeof ctx.inject === 'function') {
+        try {
+          ctx.inject(['sidebarRightTabs'], () => { if (rightColumnReady()) placeRight() })
+        } catch (error) {  }
+      }
+    }
+  },
+}
+
+    // <<< mcart:embedded-source
+    })(React, host, styles, console, "0.3.0")
     if (plugin === null || typeof plugin !== 'object' || typeof plugin.apply !== 'function') {
       throw new Error('mcart 客户端源码没有返回一个带 apply 的插件')
     }

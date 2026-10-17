@@ -1226,14 +1226,19 @@ function usePending() {
 }
 
 return {
-  // The client half runs in a restricted sandbox and browser timer globals are
-  // NOT there: reaching for `setInterval` took the whole tab down with
-  // "setInterval is not available in a dynamic client half".  Anything that
-  // needs to tick has to come from this injected service.
-  inject: ['timer'],
+  // 硬依赖（cordis 会等它们就绪再调 apply）：
+  //   timer —— 受限沙箱里没有浏览器定时器（setInterval 会把整个 tab 干死），只能用它；
+  //   slots —— 注册落点全靠它。**必须声明成硬依赖**：以前只在 apply 里 `ctx.get('slots')`
+  //   软取，取不到就静默 return，于是冷启动顺序一变就整块不注册，而屏幕上、日志里
+  //   一个字都没有（0.2.1 上"插件 active 但面板不在槽里"就是这么被藏起来的）。
+  inject: ['timer', 'slots'],
   apply(ctx) {
     const slots = ctx.get('slots')
-    if (slots === undefined) return
+    if (slots === undefined || slots === null) {
+      // 到这儿说明硬依赖没兑现——宁可响，也不要静默地什么都不注册。
+      console.error('[mcart] slots 服务没就绪，面板不注册（这条要报给宿主，别静默）')
+      return
+    }
     // A hard dependency (declared above), so it is present -- not a maybe.
     const timer = ctx.timer
     ctx.effect(() => styles.insert(CSS))
@@ -3649,7 +3654,7 @@ return {
           rows.push(React.createElement('div', { className: 'mcart-bar', key: 'dirinput' },
             React.createElement('input', {
               className: 'mcart-input mcart-grow', type: 'text',
-              placeholder: '参考目录路径，例如 C:\\Users\\你\\AppData\\Roaming\\.minecraft',
+              placeholder: '参考目录：%APPDATA%\\.minecraft\\versions\\<版本号>',
               value: dirDraft,
               onChange: (event) => setDirDraft(String(event.target.value)),
               onKeyDown: (event) => { if (event.key === 'Enter') applyDirDraft() },

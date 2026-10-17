@@ -738,7 +738,10 @@ async function main() {
   await ui.click('⚙')
 
   const inputs = ui.inputs()
-  const dirInput = inputs.filter((node) => String(node.props.placeholder || '').indexOf('参考目录路径') >= 0)[0]
+  // 判据是"有个能手输参考目录的输入框"，不是"占位文案长这样"：
+  // 文案会跟着 UX 改（这次就改了 —— 旧的示例里带着一条像 Windows 用户目录的路径，
+  // 发布门禁把它当私有路径扫了出来）。门禁盯语义，不盯措辞。
+  const dirInput = inputs.filter((node) => String(node.props.placeholder || '').indexOf('参考目录') >= 0)[0]
   check('设置卡里有可以手输参考目录的输入框', dirInput !== undefined,
     '输入框：' + JSON.stringify(inputs.map((node) => node.props.placeholder || node.props.type)))
   check('输入框配着"用这个路径"按钮', ui.buttonProps('用这个路径') !== undefined, ui.buttons().join(' / '))
@@ -758,7 +761,7 @@ async function main() {
   if (dirInput !== undefined) {
     dirInput.props.onChange({ target: { value: 'D:\\games\\.minecraft' } })
     await ui.settle()
-    const again = ui.inputs().filter((node) => String(node.props.placeholder || '').indexOf('参考目录路径') >= 0)[0]
+    const again = ui.inputs().filter((node) => String(node.props.placeholder || '').indexOf('参考目录') >= 0)[0]
     check('输入框里能看到刚打的字（受控输入）',
       again !== undefined && again.props.value === 'D:\\games\\.minecraft',
       again === undefined ? '输入框没了' : JSON.stringify(again.props.value))

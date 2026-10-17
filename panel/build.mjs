@@ -107,7 +107,11 @@ export function strip(file) {
     throw new Error(python.spec + ' ' + STRIPPER + ' 失败（退出码 ' + done.status + '）：' +
       String(done.stderr ?? '').trim())
   }
-  return String(done.stdout ?? '')
+  // 行尾归一：源码在工作树里可能是 CRLF（Windows），而生成物必须 LF ——
+  // verify-build.mjs 是按字节比对行尾的。以前源码被 JSON.stringify 成字符串塞进
+  // 产物（\r 被转义），看不出这个差异；现在源码是**内联**进产物的，CR 会原样落盘。
+  // 这一条是内联改造时当场被 EOL 门禁抓到的（lib/*.js 里 3500 个 CR）。
+  return String(done.stdout ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
 }
 
 /** 宿主入口：ESM 模块 = Cordis 插件。 */
@@ -118,7 +122,6 @@ import { mkdir as nodeMkdir, readdir as nodeReaddir, readFile as nodeReadFile, r
 import { dirname as nodeDirname } from 'node:path'
 import { fileURLToPath as nodeFileURLToPath } from 'node:url'
 
-const SOURCE = ${JSON.stringify(hostSource)}
 const VERSION = ${JSON.stringify(JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).version)}
 // 本模块所在目录（<包>/lib）。宿主源码用它推出**随包的那份引擎**在哪里 ——
 // 参考目录要靠 Python 脚本读 jar，而"项目不在 mc-art 仓库里"的机器上，
@@ -215,8 +218,21 @@ export function apply(ctx) {
       return () => { delete handlers[method] }
     },
   }
-  const plugin = new Function('harness', 'console', 'TextEncoder', 'btoa', 'atob', 'nodeFs', 'moduleDir', 'process', SOURCE)(
-    harness, console, TextEncoder, btoa, atob, nodeFs, MODULE_DIR, process)
+  // 宿主源码**内联成一个真正的函数表达式**，不再在运行时构造/求值函数。
+  //
+  // 为什么改：0.2.1 的浏览器沙箱禁掉了求值型加载 —— 客户端那一半就是因此在工厂里
+  // 抛错、整个 UI 不注册（宿主在 Node 里求值一直可用，所以它看起来"活着"，
+  // 症状是"插件 active 但面板不在槽里"）。宿主这边同样改成静态函数，两条路
+  // 都不再依赖求值，同一个原因不会再咬第二口。
+  //
+  // 注意：内联进 ESM 模块意味着这份源码跑在**严格模式**下（原来是宽松模式）。
+  // 它本来就是按严格模式写的；门禁加载这份产物时会把任意宽松模式的写法当场
+  // 暴露出来，而不是等用户机器上才炸。
+  const plugin = (function (harness, console, TextEncoder, btoa, atob, nodeFs, moduleDir, process) {
+  // >>> mcart:embedded-source
+${hostSource}
+  // <<< mcart:embedded-source
+  })(harness, console, TextEncoder, btoa, atob, nodeFs, MODULE_DIR, process)
   if (plugin === null || typeof plugin !== 'object' || typeof plugin.apply !== 'function') {
     throw new Error('mcart 宿主源码没有返回一个带 apply 的插件')
   }
@@ -295,7 +311,6 @@ window.__ModuleLoader__.load({
 
     // 真包世界里 React 是 require 来的；动态插件世界里它是注入的绑定。
     var React = require('react')
-    var SOURCE = ${JSON.stringify(clientSource)}
 
     // 三个垫片，对齐动态插件里注入的那三个名字。
     function ensureStyles(css) {
@@ -327,8 +342,13 @@ window.__ModuleLoader__.load({
       },
     }
 
-    var plugin = new Function('React', 'host', 'styles', 'console', 'PANEL_VERSION', SOURCE)(
-      React, host, styles, console, ${JSON.stringify(JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).version)})
+    // 源码**内联**成函数体，不做运行时求值：浏览器的沙箱禁掉了求值型加载
+    // （0.2.1 起），而这一半正是被那个禁令打死的。静态函数体在同样的沙箱里执行。
+    var plugin = (function (React, host, styles, console, PANEL_VERSION) {
+    // >>> mcart:embedded-source
+${clientSource}
+    // <<< mcart:embedded-source
+    })(React, host, styles, console, ${JSON.stringify(JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).version)})
     if (plugin === null || typeof plugin !== 'object' || typeof plugin.apply !== 'function') {
       throw new Error('mcart 客户端源码没有返回一个带 apply 的插件')
     }
