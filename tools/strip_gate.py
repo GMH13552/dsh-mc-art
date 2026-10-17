@@ -52,6 +52,15 @@ HALVES = [
     ("client", "tools/mcart-plugin/client.js", "panel/lib/client.js"),
 ]
 
+# 拆分之后：`tools/mcart-plugin/<half>.js` 是**生成物**（barrel），真源是
+# `tools/mcart-plugin/<half>/` 下的片段 + `<half>.manifest.json`（入口列最后）。
+# 所以"注释源"不再直接读 barrel —— 先问唯一拼接实现 `panel/source.mjs` 要拼接结果，
+# 再与 barrel 交叉验证二者逐字节一致（两个真相会让门禁各自为政）。
+HALF_SPEC = {
+    "host": ("host.js", "host.manifest.json"),
+    "client": ("client.js", "client.manifest.json"),
+}
+
 FAILURES = 0
 
 
@@ -68,6 +77,44 @@ def declared(text):
         name = match.group(1) or match.group(2)
         out[name] = out.get(name, 0) + 1
     return out
+
+
+def concat_half(half):
+    """问唯一拼接实现要"这一半的完整源码"（`node panel/source.mjs <half>`）。"""
+    done = subprocess.run(["node", os.path.join(REPO, "panel", "source.mjs"), half],
+                          cwd=REPO, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=120)
+    if done.returncode != 0:
+        raise SystemExit("%s：`node panel/source.mjs %s` 失败（退出码 %s）：%s"
+                         % (half, half, done.returncode, (done.stderr or "").strip()[:400]))
+    return done.stdout
+
+
+def fragments(half):
+    """清单里的片段路径（相对 tools/mcart-plugin/）。legacy 单文件模式返回 []。"""
+    _, manifest = HALF_SPEC[half]
+    path = os.path.join(REPO, "tools", "mcart-plugin", manifest)
+    with open(path, encoding="utf-8") as handle:
+        listed = json.load(handle)
+    return [item.replace("\\", "/") for item in listed]
+
+
+def fragment_names_missing(barrel_text, listed, root=None):
+    """清单里每个片段**声明的名字**，必须都出现在 barrel 里。
+
+    WHY：片段被列进清单、拼接却漏了它（或者 barrel 没重写），症状是"某些函数突然不存在"。
+    `--fault` 会用同一份函数证明它能红。
+    """
+    root = root or os.path.join(REPO, "tools", "mcart-plugin")
+    missing = []
+    for name in listed:
+        path = os.path.join(root, name)
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        for declared_name in declared(text):
+            if declared_name not in barrel_text:
+                missing.append(name + ":" + declared_name)
+    return missing
 
 
 def embedded(artifact):
@@ -131,6 +178,22 @@ def fault():
     greedy_missing = compare(FIXTURE, greedy_output, "fixture")
     check("夹具上：老规则确实吞掉声明（所以这条检查有意义）", greedy_missing != [], str(greedy_missing))
     check("而且被吞的正是那个函数", "findThing" in greedy_missing or "BETA" in greedy_missing, str(greedy_missing))
+
+    # 片段名对账的 A/B：清单里两个片段，barrel 只拼了第一个 → 第二个的名字必须报缺。
+    with tempfile.TemporaryDirectory(prefix="stripgate-frag-") as tmp:
+        os.makedirs(os.path.join(tmp, "host"))
+        with open(os.path.join(tmp, "host", "p-a.js"), "w", encoding="utf-8") as handle:
+            handle.write("function alpha() { return 1 }\n")
+        with open(os.path.join(tmp, "host", "p-b.js"), "w", encoding="utf-8") as handle:
+            handle.write("function beta() { return alpha() }\n")
+        listed = ["host/p-a.js", "host/p-b.js"]
+        partial = "function alpha() { return 1 }\n"
+        missing_partial = fragment_names_missing(partial, listed, root=tmp)
+        check("片段名对账：barrel 漏拼一个片段 → 它的声明必须报缺（这条会红）",
+              any(item.endswith(":beta") for item in missing_partial), str(missing_partial))
+        complete = partial + "function beta() { return alpha() }\n"
+        check("片段名对账：全拼进去就一个都不缺",
+              fragment_names_missing(complete, listed, root=tmp) == [])
     print("全部通过" if FAILURES == 0 else "%d 项失败" % FAILURES)
     return 1 if FAILURES else 0
 
@@ -138,7 +201,24 @@ def fault():
 def main():
     print("--- 注释剥离器：生成物里声明的名字一个都不能少")
     for label, source, artifact in HALVES:
-        annotated = open(os.path.join(REPO, source), encoding="utf-8").read()
+        barrel_path = os.path.join(REPO, source)
+        with open(barrel_path, encoding="utf-8") as handle:
+            barrel = handle.read()
+        # ① 拼接结果与 barrel 必须逐字节一致（barrel 是生成物，真源是片段清单）。
+        concatenated = concat_half(label)
+        check("%s：`panel/source.mjs %s` 的拼接结果与 barrel 逐字节一致" % (label, label),
+              concatenated == barrel,
+              "拼接 %d 字符 / barrel %d 字符" % (len(concatenated), len(barrel)))
+        # ② 清单里每个片段声明的名字都出现在 barrel 里。
+        listed = fragments(label)
+        missing_names = fragment_names_missing(barrel, listed)
+        if listed:
+            check("%s：清单里 %d 个片段的声明名字都出现在 barrel 里" % (label, len(listed)),
+                  missing_names == [], "缺 " + "、".join(missing_names[:8]))
+        else:
+            print("  · %s：清单为空（legacy 单文件模式）—— 片段名字对账等拆分落地后生效" % label)
+        # ③ 剥注释不许吞代码（原来那条，输入用 barrel = 拼接结果）。
+        annotated = barrel
         emitted, artifact_text = embedded(artifact)
         missing = compare(annotated, emitted, label)
         check("%s：%d 个声明一个不少（少了就说明剥离器吞了代码）" % (label, len(declared(annotated))),

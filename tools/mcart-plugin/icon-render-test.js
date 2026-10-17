@@ -26,6 +26,7 @@ const nodeFs = require('fs')
 const nodePath = require('path')
 
 const { handlers } = require('./run.js')
+const { clientBodyOf } = require('./client-body.js')
 
 const CLIENT = process.env.MCART_CLIENT || nodePath.join(__dirname, 'client.js')
 const REPO = nodePath.resolve(__dirname, '..', '..')
@@ -85,14 +86,10 @@ function loadClient(patches) {
     if (source.indexOf(patch[0]) < 0) throw new Error('注入失败，没找到：' + patch[0].slice(0, 60))
     source = source.replace(patch[0], patch[1])
   }
-  const start = source.indexOf('const sub =')
-  const end = source.indexOf('const CSS = [')
-  const failureAt = source.indexOf('function failureOf(')
-  const commentAt = source.lastIndexOf('/**', failureAt)
-  const commentEnd = commentAt < 0 ? -1 : source.indexOf('*/', commentAt)
-  const tail = source.slice(commentEnd >= 0 && commentEnd < failureAt ? commentAt : failureAt,
-    source.indexOf('function cssColour'))
-  const body = 'let animTicks = 0\n' + source.slice(start, end) + tail
+  // **与片段顺序无关**：去掉最后那个顶层 `return {…}`（插件对象），剩下的整段声明区
+  // 当函数体。以前用 `indexOf('const sub =')` … `indexOf('const CSS = [')` 切片，
+  // 等于要求 CSS 必须排在绘制代码之后 —— 门禁在决定片段顺序（拆分后顺序一换就 exit 2）。
+  const body = clientBodyOf(source)
   return new Function('document', body + `
     return { renderScene: renderScene, iconCamera: iconCamera, drawItemIcon: drawItemIcon,
       setTicks: function (value) { animTicks = value } }`)({
@@ -151,6 +148,14 @@ function evenness(pixels) {
 }
 
 async function main() {
+  // 取体的 A/B（与片段顺序无关的取法自己的证明）：源码形状不对时必须明确抛错，
+  // 而不是像老的字符串下标切片那样静默切出空区域（拆分后顺序一换就 exit 2）。
+  {
+    let threw = false
+    try { clientBodyOf('const alpha = 1\n') } catch (error) { threw = true }
+    check('取体自检：源码里没有顶层 return 时明确报错，不会静默切出空区域', threw)
+    check('取体自检：真实源码能取出非空声明区', clientBodyOf(nodeFs.readFileSync(CLIENT, 'utf8')).length > 1000)
+  }
   const api = loadClient()
   const quad = slantedQuad()
   const textures = { stripes: stripeTexture() }

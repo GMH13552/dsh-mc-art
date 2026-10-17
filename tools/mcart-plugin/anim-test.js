@@ -128,7 +128,10 @@ check('客户端不碰浏览器计时器全局（沙箱里没有，碰了整个�
   !/\bsetInterval\s*\(/.test(codeOnly) && !/\bclearInterval\s*\(/.test(codeOnly)
   && !/\bsetTimeout\s*\(/.test(codeOnly) && !/\brequestAnimationFrame\s*\(/.test(codeOnly))
 check('帧钟来自注入的 timer 服务，不是 Date.now()',
-  /inject: \['timer'\]/.test(codeOnly) && /const timer = ctx\.timer/.test(codeOnly)
+  // 判据是"**声明了 timer 这个硬依赖**"，不是"数组里只有 timer"：
+  // 后来还加了 slots（取不到就整块不注册、而且无声无息），写死整个数组会让
+  // 每次加依赖都假红一次（这条就是这么红的）。盯语义，不盯字面。
+  /inject:\s*\[[^\]]*'timer'/.test(codeOnly) && /const timer = ctx\.timer/.test(codeOnly)
   && /timer\.interval\(/.test(codeOnly) && !/\bDate\.now\s*\(/.test(codeOnly))
 check('timer.interval 的 disposer 交给了 effect 的 cleanup',
   /const dispose = timer\.interval\(/.test(codeOnly) && /if \(typeof dispose === 'function'\) dispose\(\)/.test(codeOnly))

@@ -9,11 +9,12 @@
  *   node verify-build.mjs
  *   node verify-build.mjs --fault   # 往"期望结果"里塞一个字节，要求门禁红
  */
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ENGINE_SCRIPTS, VENDOR_STATE, build, hostModule, clientBundle, isJunk, isSkipped, eolPolicy } from './build.mjs'
+import { SOURCES, checkBarrels } from './source.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const FAULT = process.argv.includes('--fault')
@@ -56,6 +57,58 @@ if (process.argv.includes('--fault-vendor') && vendorBefore !== null) {
 
 // ② 重新生成
 const built = build()
+
+// ②'' barrel == 清单拼接（逐字节）。
+//
+// `tools/mcart-plugin/host.js` / `client.js` 现在是**生成物**：真源是 `<half>.manifest.json`
+// 里按序排列的片段（入口列最后）。这条断言盯的是"片段改了但没重写 barrel"——
+// 那会让 15+ 个直接读 barrel 的门禁看到过期源码，比红更坏。
+// `--fault-barrel`：把 barrel 弄坏，要求这条当场红。legacy 模式（清单为空、尚未拆分）
+// 没有可比的东西，此时用一份**临时夹具**跑同一个比较函数，证明它真能红。
+const FAULT_BARREL = process.argv.includes('--fault-barrel')
+const barrelProblems = []
+if (FAULT_BARREL) {
+  // 先按当前真实树判断模式：split → 直接改磁盘上的 barrel；legacy → 临时夹具。
+  const probe = checkBarrels({ halves: ['host'] })
+  if (probe.report.host.mode === 'split') {
+    const target = join(SOURCES, 'host.js')
+    const original = readFileSync(target)
+    try {
+      writeFileSync(target, Buffer.concat([original, Buffer.from('\n// fault-barrel\n', 'utf8')]))
+      barrelProblems.push(...checkBarrels({ halves: ['host'] }).problems.map((problem) => '（--fault-barrel 注入后）' + problem))
+    } finally {
+      writeFileSync(target, original)
+    }
+    if (barrelProblems.length === 0) fail('  FAIL --fault-barrel：barrel 被改了，逐字节比对却没红')
+    // 与 `--fault` / `--fault-eol` / `--fault-vendor` 同一体例：注入证明**以红收尾**
+    // （这样退出码非 0 就是"这条断言真的能红"的证明；仓库本身没坏，已按字节还原）。
+    else fail('  FAIL --fault-barrel：barrel 被改后逐字节比对报红（这是能红证明，仓库未受影响）')
+  } else {
+    const fixture = mkdtempSync(join(tmpdir(), 'mcart-barrel-'))
+    try {
+      mkdirSync(join(fixture, 'host'), { recursive: true })
+      writeFileSync(join(fixture, 'host', 'p-a.js'), 'function alpha() { return 1 }\n')
+      writeFileSync(join(fixture, 'host.manifest.json'), JSON.stringify(['host/p-a.js']))
+      writeFileSync(join(fixture, 'host.js'), 'function alpha() { return 1 }\n// 手改过\n')
+      barrelProblems.push(...checkBarrels({ root: fixture, halves: ['host'] }).problems)
+    } finally { rmSync(fixture, { recursive: true, force: true }) }
+    if (barrelProblems.length === 0) fail('  FAIL --fault-barrel 夹具失效：barrel 与拼接不同却没红')
+    else fail('  FAIL --fault-barrel（legacy 模式夹具）：barrel 与拼接不同 → 比对报红（能红证明）')
+  }
+} else {
+  const { problems, report } = checkBarrels()
+  for (const [half, item] of Object.entries(report)) {
+    if (item.mode === 'legacy') {
+      console.log(`  · ${half}：legacy 单文件模式（清单为空，barrel 就是真源）—— 拆分落地后这条自动变成逐字节比对`)
+    } else if (item.fragments > 0) {
+      console.log(`  OK   ${half}：barrel == ${item.fragments} 个片段的清单拼接（${item.bytes} 字符，逐字节）`)
+    }
+  }
+  for (const problem of problems) fail('  FAIL ' + problem)
+  if (problems.length === 0 && Object.values(report).every((item) => item.mode === 'legacy')) {
+    console.log('  · barrel 比对：当前仍是 legacy 单文件模式，没有可比的拼接结果（拆分后自动生效）')
+  }
+}
 
 // ②' 来源 provenance：vendor 用了哪个 clone 的哪个 commit。
 //     两次之间 commit 变了 = 生成物落后于来源 → 必须重新 vendor（"来源是旧 clone"这次

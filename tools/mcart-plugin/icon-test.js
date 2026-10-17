@@ -28,6 +28,7 @@ const nodeFs = require('fs')
 const nodePath = require('path')
 const cp = require('child_process')
 const { runPython } = require('./python-bin.js')
+const { clientBodyOf } = require('./client-body.js')
 
 // The same service stubs every other host gate uses, so what runs here is the
 // emitted host -- not a re-implementation of it.
@@ -199,25 +200,10 @@ function loadClient(patches) {
     if (source.indexOf(patch[0]) < 0) throw new Error('注入失败，没找到：' + patch[0].slice(0, 60))
     source = source.replace(patch[0], patch[1])
   }
-  const start = source.indexOf('const sub =')
-  const end = source.indexOf('const CSS = [')
-  // `failureOf` sits just above `countsOf`, both after the CSS array.  The doc
-  // comment above it is included when there IS one -- this gate also runs
-  // against the STRIPPED file (`MCART_CLIENT=...`), which has no comments at
-  // all, and a slice that starts at a comment that is not there returns -1 and
-  // silently cuts off the function.
-  const failureAt = source.indexOf('function failureOf(')
-  const commentAt = source.lastIndexOf('/**', failureAt)
-  const commentEnd = commentAt < 0 ? -1 : source.indexOf('*/', commentAt)
-  // The total accessors (`isAbsent` / `idsOf`) sit just ABOVE `failureOf`, so a
-  // slice that starts at `failureOf` leaves them out and any assertion about
-  // them would test an undefined name.  Start at the accessor block when it is
-  // there and still before `cssColour`.
-  const accessorAt = source.indexOf('const isAbsent =')
-  const countsStart = accessorAt >= 0 && accessorAt < failureAt
-    ? accessorAt : (commentEnd >= 0 && commentEnd < failureAt ? commentAt : failureAt)
-  const counts = source.slice(countsStart, source.indexOf('function cssColour'))
-  const body = 'let animTicks = 0\n' + source.slice(start, end) + counts
+  // **与片段顺序无关**：去掉最后那个顶层 `return {…}`（插件对象），剩下的整段声明区拿来
+  // 当函数体。以前是 `indexOf('const sub =')` … `indexOf('const CSS = [')` 切片 —— 那要求
+  // CSS 必须排在绘制代码之后，等于门禁在决定片段顺序（拆分后顺序一换就切空、exit 2）。
+  const body = clientBodyOf(source)
   return new Function('document', body + `
     return { renderScene: renderScene, guiItemRotation: guiItemRotation, iconCamera: iconCamera,
       drawItemIcon: drawItemIcon, itemIconUrl: itemIconUrl, clearViewport: clearViewport,
@@ -495,6 +481,15 @@ async function main() {
 
   const client = nodeFs.readFileSync(process.env.MCART_CLIENT
     || nodePath.join(__dirname, 'client.js'), 'utf8')
+
+  // 取体的 A/B（**与片段顺序无关**的取法自己的证明）：源码形状不对时必须明确抛错，
+  // 而不是像老的字符串下标切片那样静默切出一个空区域（拆分后顺序一换就 exit 2）。
+  {
+    let threw = false
+    try { clientBodyOf('const alpha = 1\n') } catch (error) { threw = true }
+    check('取体自检：源码里没有顶层 return 时明确报错，不会静默切出空区域', threw)
+    check('取体自检：真实源码能取出非空声明区', clientBodyOf(client).length > 1000)
+  }
 
   console.log('--- 静态：不存在的函数（客户端里定义了没有）')
   const missing = undefinedCalls(client)

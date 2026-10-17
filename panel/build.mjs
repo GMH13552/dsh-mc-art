@@ -26,6 +26,7 @@ import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { findPythonCached, noPythonMessage, spawnPython } from '../tools/python_env.mjs'
+import { writeBarrels } from './source.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SOURCES = join(HERE, '..', 'tools', 'mcart-plugin')
@@ -537,13 +538,19 @@ function countFiles(root) {
 export const ENGINE_SCRIPTS = ['mcart_scan_refs.py', 'mcart_extract_block.py']
 
 export function build(options = {}) {
+  // **先 --write**：把每一半按 `<half>.manifest.json`（片段按序，入口列最后）拼成 barrel
+  // （`tools/mcart-plugin/host.js` / `client.js` 是生成物）。拼接实现只有 `panel/source.mjs`
+  // 一份；这里不重复实现。清单指向不存在的文件时 `writeBarrels()` 会明确抛错。
+  const barrels = writeBarrels()
+  // 剥注释对**拼接后的完整源码**做一次（不是每个片段各剥一次：那会把一条注释被切断的
+  // 可能性带进来，也让 strip_gate 的"声明一个不少"对不上同一份输入）。
   const host = strip(join(SOURCES, 'host.js'))
   const client = strip(join(SOURCES, 'client.js'))
   mkdirSync(join(HERE, 'lib'), { recursive: true })
   writeFileSync(join(HERE, 'lib', 'index.js'), hostModule(host))
   writeFileSync(join(HERE, 'lib', 'client.js'), clientBundle(client))
   const copied = vendored({ release: options.release })
-  return { host, client, copied }
+  return { host, client, copied, barrels }
 }
 
 /**

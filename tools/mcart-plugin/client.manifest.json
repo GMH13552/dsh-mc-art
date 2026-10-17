@@ -1,0 +1,8 @@
+[
+  "client/00-math.js",
+  "client/10-icon.js",
+  "client/20-const.js",
+  "client/30-state.js",
+  "client/32-normalize.js",
+  "client/99-entry.js"
+]

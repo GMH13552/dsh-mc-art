@@ -525,8 +525,7 @@ function releaseUnused(referenceBlocks, keep, referenceTextures, referenceAnimat
   return { dropped: dropped, held: held }
 }
 
-return {
-  apply(ctx) {
+function installHost(ctx) {
     const fsOf = () => ctx.get('fs')
     const sessionsOf = () => ctx.get('sessions')
 
@@ -3608,6 +3607,10 @@ return {
     }))
 
     console.log('mc-art atlas host ready (unqualified cell blocks resolve to their project; vanilla and mod blocks are extracted on demand)')
+}
+return {
+  apply(ctx) {
+    installHost(ctx)
   },
 }
 

@@ -17,6 +17,25 @@
  */
 const nodeFs = require('fs')
 const nodePath = require('path')
+const { spawnSync } = require('child_process')
+
+/**
+ * 这一半的**拼接源码**：唯一实现是 `panel/source.mjs`（片段按清单拼，入口列最后）。
+ *
+ * 为什么不直接读 `tools/mcart-plugin/<half>.js`：那个文件现在是**生成物**（barrel）。
+ * 门禁要盯的是"片段拼接出来的源码"，而不是某个碰巧被写出来的副本 —— 两者一旦不一致，
+ * 就会出现"门禁对着旧副本说没问题"。下面每条都同时要 barrel == 拼接（二者一致）。
+ */
+function halfSourceText(half) {
+  const done = spawnSync(process.execPath, [nodePath.join(REPO, 'panel', 'source.mjs'), half], {
+    cwd: REPO, encoding: 'utf8', timeout: 120000,
+  })
+  if (done.status !== 0) {
+    throw new Error('panel/source.mjs ' + half + ' 失败（退出码 ' + done.status + '）：' +
+      String(done.stderr || '').trim())
+  }
+  return done.stdout
+}
 
 const {
   loadHost, readHostSource, realSubprocess, buildFixture, WORK, fsService,
@@ -238,6 +257,18 @@ async function main() {
   ]
   {
     const injection = FAULT ? "\nagent.inbox.append('next-step', { role: 'user' })\n" : ''
+    // 拆分之后 barrel 是生成物：先要拼接源码（真源），再证明 barrel 与它逐字节一致，
+    // 然后**两边都扫**。只扫 barrel 等于信任一个可能过期的副本。
+    for (const half of ['host', 'client']) {
+      const barrelPath = nodePath.join(REPO, 'tools', 'mcart-plugin', half + '.js')
+      const barrelText = nodeFs.readFileSync(barrelPath, 'utf8')
+      const concatenated = halfSourceText(half)
+      check('static: ' + half + '：panel/source.mjs 拼接结果与 ' + half + '.js（barrel）逐字节一致',
+        concatenated === barrelText,
+        '拼接 ' + concatenated.length + ' 字符 / barrel ' + barrelText.length + ' 字符')
+      const hits = scanViews(barrelPath, [{ label: half + ' 拼接源码', code: stripComments(concatenated) }], injection)
+      check('static: ' + half + ' 的拼接源码没有写会话的调用', hits.length === 0, hits.join(' | '))
+    }
     for (const [label, file] of targets) {
       const found = viewsOf(file)
       if (found.missing) {
@@ -264,12 +295,10 @@ async function main() {
       if (!nodeFs.existsSync(generated)) continue
       const views = viewsOf(generated).views
       const embedded = views.length > 1 ? views[1].code : ''
-      const sourceName = name === 'index.js' ? 'host.js' : 'client.js'
-      check('static: panel/lib/' + name + ' 的内嵌源码就是 tools/mcart-plugin/' + sourceName + '（不是旧副本）',
-        embedded.length > 1000 &&
-          embedded.replace(/\s+/g, ' ').trim() ===
-            stripComments(nodeFs.readFileSync(nodePath.join(REPO, 'tools', 'mcart-plugin', sourceName), 'utf8'))
-              .replace(/\s+/g, ' ').trim(),
+      const half = name === 'index.js' ? 'host' : 'client'
+      const expected = stripComments(halfSourceText(half)).replace(/\s+/g, ' ').trim()
+      check('static: panel/lib/' + name + ' 的内嵌源码就是 ' + half + ' 的拼接源码（不是旧副本）',
+        embedded.length > 1000 && embedded.replace(/\s+/g, ' ').trim() === expected,
         '内嵌 ' + embedded.length + ' 字符')
     }
   }

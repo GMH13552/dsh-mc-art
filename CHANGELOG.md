@@ -11,6 +11,99 @@ panel/report contract is stable, and whose shipped skills are general (no loader
 version, machine or project is baked in). Earlier 0.1.x releases were development
 snapshots and are not itemised here.
 
+## 0.3.0
+
+A structural release: the same behaviour, in files you can find things in — plus the build,
+gate and dependency hardening that came out of building it.
+
+### A correction first
+
+**The panel was never broken on DSH 0.2.1.** An investigation into "the client UI does not
+register" read an empty **left** sidebar slot (`sidebar.panellist`) as evidence of a dead client
+half; the panel in fact registers in the **right** sidebar (`sidebar.right.pane.tab`, key
+`mc-art.atlas`) and in the composer dock (`conversation.input.dock`, id `mc-art-ref`), as designed.
+The hardening below is worth keeping, but it is not a fix for a missing panel, and this log does not
+claim it was.
+
+### Changed — the two halves are now fragment modules
+
+- `tools/mcart-plugin/host.js` (4192 lines) is now **25 fragments** under
+  `tools/mcart-plugin/host/`, ordered by `host.manifest.json`; `client.js` (4013 lines) is **6
+  fragments** under `tools/mcart-plugin/client/`, ordered by `client.manifest.json`.
+- `panel/source.mjs` is the single concatenation implementation: `--write` regenerates the barrels,
+  `--check` proves each barrel equals its manifest's concatenation byte for byte, `--selftest`
+  (with a `--fault` counter-proof) covers ordering, empty-manifest and missing-file errors.
+- `host.js` / `client.js` remain the **complete** sources — as generated barrels — so every
+  existing gate and test keeps reading the artifact it always read.
+- The split is behaviour-preserving and **mechanically proven**, not eyeballed: batch 1/2 assert the
+  barrel equals the pre-split source under the one wrapper (`installHost`, which exists so blocks
+  that share closure state can still be moved in order), and the barrel's sha256 was asserted
+  unchanged on every later batch.
+- **What was deliberately not split**, with the reason written into the code: `apply`'s closure body
+  (client ~3000 lines, and the host handler registry, 736 lines). Fragments share one top-level
+  scope; closure bodies cannot cross files without first introducing an explicit panel context
+  object, which is a separate refactor — and doing it half-way would trade one tangle for a worse
+  interface.
+
+### Added — one-command gate runner
+
+- **`node tools/gates.mjs`** is now the single source of "the 46 gates": it prints
+  `绿 / SKIP / 红`, lists every red command with its exit code, treats exit 3 as the reserved SKIP
+  code, supports `--encoding gbk` (second pass under the console code page), `--only <substr>`, and
+  `--fault`, which proves the runner itself can go red. The README's acceptance section now says
+  this one command instead of carrying a copy of the list.
+- `panel/verify-build.mjs` gained two assertions that can fail: each barrel equals its manifest
+  concatenation (`--fault-barrel`), and each `lib/` artifact equals the regenerated result
+  (`--fault`).
+- `tools/strip_gate.py` and `tools/mcart-plugin/report-test.js` now compare against the
+  **concatenated** source and cross-check the barrel, instead of assuming a single-file layout.
+- `tools/mcart-plugin/icon-test.js` and `icon-render-test.js` no longer slice the source by string
+  offsets (`indexOf('const sub =')` … `indexOf('const CSS = [')`). That made fragment order depend on
+  gate internals — reordering files turned them red with `ReferenceError: drawItemIcon is not
+  defined`. They now evaluate the whole top-level declaration region through one shared helper, and
+  throw loudly if the region cannot be found instead of silently evaluating nothing.
+
+### Fixed — hardening found while restructuring
+
+- **Artifacts no longer evaluate their own source at runtime.** Both halves are emitted as inline
+  function bodies; `verify-build`/`entry-test` assert no runtime evaluation remains, so the artifact
+  can be analysed statically and does not depend on a sandbox allowing it.
+- **Inlining leaked CRLF into the artifacts** (about 3,500 carriage returns) — caught by the EOL
+  gate the moment the source was no longer wrapped in a JSON string. `strip()` now normalizes to LF.
+- **The client plugin declared too little to be safe**: it injected only `timer` and fetched `slots`
+  softly, returning silently when absent — a cold-start ordering change disabled the whole panel with
+  nothing on screen or in the log. It now declares `inject: ['timer', 'slots']` and reports a missing
+  `slots` loudly.
+- **`dsh.client.inject` listed two host-side packages** (`dsh-api-session-controller`,
+  `dsh-cordis-client-runner`), which are not client modules — dependencies that could never resolve.
+  The list is now empty, because the real service dependencies are plugin-level ones.
+- **`dsh.compatibility.dsh` did not match the running DSH.** Under node-semver a prerelease version
+  only satisfies a range that names a prerelease of the same `major.minor.patch`, so
+  `>=0.1.0-rc.8 <0.3.0` excludes `0.2.1-rc.2`. The range now accepts both lines.
+- The reference-directory placeholder in settings no longer looks like a Windows user path
+  (`C:\Users\…`), which the publish-time privacy gate rightly flagged once the source stopped being
+  hidden inside a JSON string.
+
+### Changed — UI
+
+- Colours now come from host theme tokens (`--dsw-alias-*` with neutral fallbacks), so the panel
+  follows light/dark instead of hard-coding greys; content surfaces (3D viewport, pixel canvas, HUD)
+  deliberately keep a fixed neutral dark ground — they are content, not chrome.
+- One spacing grid (4/8), collapsed font and radius scales, unified borders, consistent
+  hover/active/disabled states, and **`:focus-visible` on every interactive control** (custom
+  controls previously had no keyboard focus indication at all).
+- Empty/loading/error states share one visual language; the HUD's glow was removed. No gradients,
+  no animations, no stacked shadows.
+
+### Known limits
+
+- Duplicate knowledge is **not** unified yet: the vanilla-parent table still exists in both
+  `host/05-model-shape.js` and the Python extractor, the icon path and the scene path still resolve
+  textures separately, and "cannot read it, return silently" branches remain. Next round starts with
+  a drift gate between the two parent tables.
+- The UI was reviewed by code and tokens, not by eye in a browser: the theme-token inspect provider
+  timed out, so token names were read from the shipped DSH artifacts.
+
 ## 0.2.9
 
 ### Fixed

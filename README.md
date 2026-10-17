@@ -268,20 +268,17 @@ Automation Token（`npm config set //registry.npmjs.org/:_authToken=<token>`）�
 ## 十、门禁（能红才算门禁）
 
 ```powershell
-node panel/verify-build.mjs          # lib/ 与源码重新生成的结果逐字节比对
-node panel/entry-test.mjs            # 两个入口真加载/apply/派发
-node panel/ui-test.mjs               # 假 React 真渲染设置卡，按文字点按钮
-node tools/check_presets.mjs         # 只有一个模式，且不带 tool-cordis
-node panel/check-private.mjs         # 发布物里没有机器路径/私人名
-python tools/skill_vocab_test.py     # 两个 skill 的散文词汇白名单
-python tools/strip_gate.py           # 注释剥离器不许吞代码
-node tools/mcart-plugin/loader-test.js
-node tools/mcart-plugin/project-test.js
-node tools/mcart-plugin/roots-test.js
-node tools/mcart-plugin/shell-dialect-test.js
+node tools/gates.mjs                 # 全量 46 条：输出 绿 N / SKIP N / 红 N
+node tools/gates.mjs --encoding gbk  # 第二遍（PYTHONIOENCODING=gbk），计数必须一样
+node tools/gates.mjs --fault         # 自证 runner 能红（一条已知绿 + 一条必然失败）
+node tools/gates.mjs --only strip    # 调试：只跑名字/命令里含 strip 的条目
 ```
 
-每条都带 `--fault`（或等价的 A/B）证明它会红：只有能失败的门禁才算门禁。
+**清单只有一处**：`tools/gates.mjs`。不要再把门禁清单抄进文档（抄一次就会漂一次）。
+每条门禁自己带 `--fault`（或等价的 A/B）证明它会红；runner 把**退出码 3**当作按设计
+SKIP（单列，不算红），其余非 0 一律算红并让 runner 退出码非 0。
+
+拆分机制（片段 → barrel → `lib/`）与门禁怎么校验它，见 [docs/MODULE-LAYOUT.md](docs/MODULE-LAYOUT.md)。
 
 ## 十一、实测记录（不是宣传）
 
