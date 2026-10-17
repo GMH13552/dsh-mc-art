@@ -35,10 +35,10 @@ claim it was.
   (with a `--fault` counter-proof) covers ordering, empty-manifest and missing-file errors.
 - `host.js` / `client.js` remain the **complete** sources — as generated barrels — so every
   existing gate and test keeps reading the artifact it always read.
-- The split is behaviour-preserving and **mechanically proven**, not eyeballed: batch 1/2 assert the
-  barrel equals the pre-split source under the one wrapper (`installHost`, which exists so blocks
-  that share closure state can still be moved in order), and the barrel's sha256 was asserted
-  unchanged on every later batch.
+- The split is behaviour-preserving and **mechanically proven**, not judged by sight: batch 1/2
+  assert the barrel equals the pre-split source under the one wrapper (`installHost`, which exists
+  so blocks that share closure state can still be moved in order), and the barrel's sha256 was
+  asserted unchanged on every later batch.
 - **What was deliberately not split**, with the reason written into the code: `apply`'s closure body
   (client ~3000 lines, and the host handler registry, 736 lines). Fragments share one top-level
   scope; closure bodies cannot cross files without first introducing an explicit panel context
@@ -80,9 +80,9 @@ claim it was.
 - **`dsh.compatibility.dsh` did not match the running DSH.** Under node-semver a prerelease version
   only satisfies a range that names a prerelease of the same `major.minor.patch`, so
   `>=0.1.0-rc.8 <0.3.0` excludes `0.2.1-rc.2`. The range now accepts both lines.
-- The reference-directory placeholder in settings no longer looks like a Windows user path
-  (`C:\Users\…`), which the publish-time privacy gate rightly flagged once the source stopped being
-  hidden inside a JSON string.
+- The reference-directory placeholder in settings no longer looks like a Windows user-profile path,
+  which the publish-time privacy gate rightly flagged once the source stopped being hidden inside a
+  JSON string.
 
 ### Changed — UI
 
