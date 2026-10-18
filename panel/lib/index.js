@@ -4,7 +4,7 @@ import { mkdir as nodeMkdir, readdir as nodeReaddir, readFile as nodeReadFile, r
 import { dirname as nodeDirname } from 'node:path'
 import { fileURLToPath as nodeFileURLToPath } from 'node:url'
 
-const VERSION = "0.3.1"
+const VERSION = "0.3.2"
 // 本模块所在目录（<包>/lib）。宿主源码用它推出**随包的那份引擎**在哪里 ——
 // 参考目录要靠 Python 脚本读 jar，而"项目不在 mc-art 仓库里"的机器上，
 // 只从项目目录往上找是找不到的（实测：设置存得下、什么也读不出来）。

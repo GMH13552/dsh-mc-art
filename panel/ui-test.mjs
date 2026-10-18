@@ -38,6 +38,7 @@ const FAULT_VERSION = process.argv.includes('--fault-version')     // 报错不�
 const FAULT_COPY = process.argv.includes('--fault-copy')           // 复制报告不设防
 const FAULT_SCENE = process.argv.includes('--fault-scene')         // 畸形场景不归一化 → 白屏
 const FAULT_SIDEBAR = process.argv.includes('--fault-sidebar')     // 右侧栏没服务时两处都没有
+const FAULT_PLACEMENT = process.argv.includes('--fault-placement') // 落点重试被删 → 迁移断言必须红
 const FAULT_PNG = process.argv.includes('--fault-png')             // 非 PNG 也发给宿主
 const FAULT_SAVEPATH = process.argv.includes('--fault-savepath')   // 不挡绝对路径句柄
 const FAULT_FACES = process.argv.includes('--fault-faces')         // 按面编辑退化
@@ -483,6 +484,11 @@ async function mount(component, props, host, react, owner) {
       const button = buttons().filter((node) => textOf(node) === label)[0]
       return button === undefined ? undefined : button.props
     },
+    /** 图标按钮按 title 找 props（可见文字只是一个字形，语义在 title/aria-label 里）。 */
+    buttonTitled(fragment) {
+      const button = buttons().filter((node) => String(node.props.title || '').indexOf(fragment) >= 0)[0]
+      return button === undefined ? undefined : button.props
+    },
   }
 }
 
@@ -566,11 +572,12 @@ const Project_dir = () => ({ root: CWD, id: PROJECT.id, title: PROJECT.title, na
 function buildPanel(source, host, reactApi, options) {
   const o = options || {}
   const seen = []
+  const removed = []
   const slots = {
     inject: (slot, callback) => callback(),
     register: (settings, component) => {
       seen.push({ settings: settings, component: component })
-      return () => {}
+      return () => { removed.push(settings.name) }
     },
     entries: (name) => (o.slotEntries === undefined || o.slotEntries[name] === undefined
       ? [] : o.slotEntries[name]),
@@ -584,7 +591,8 @@ function buildPanel(source, host, reactApi, options) {
     },
     inject: (names, callback) => { if (o.fireInject === true && typeof callback === 'function') callback(); return () => {} },
     effect: (fn) => { fn(); return () => {} },
-    timer: { interval: () => () => {}, timeout: async () => {} },
+    // `timer` 可注入：落点重试 / 宿主瞬时失败重试这两条要能"推进时间"才验得了。
+    timer: o.timer === undefined ? { interval: () => () => {}, timeout: async () => {} } : o.timer,
   }
   const styles = { insert: () => () => {}, remove: () => {} }
   const plugin = new Function('React', 'host', 'styles', 'console', 'PANEL_VERSION', source)(
@@ -596,7 +604,9 @@ function buildPanel(source, host, reactApi, options) {
   return {
     main: main === undefined ? null : main.component,
     dock: dock === undefined ? null : dock.component,
-    registered: seen.map((item) => item.settings.name),
+    // 用 getter：落点迁移会在 apply 之后才注册右栏，快照数组看不到后来的注册。
+    get registered() { return seen.map((item) => item.settings.name) },
+    get removed() { return removed.slice() },
   }
 }
 
@@ -625,7 +635,7 @@ async function main() {
       apply: (src) => src.replace('forgetTextures(); setTexEpoch(texEpoch + 1); scan(root, true, null)',
         'forgetTextures(); scan(root, true, null)') },
     { flag: FAULT, name: '--fault', hint: '源码里找不到设置卡的手输框那一段',
-      apply: (src) => src.replace(/rows\.push\(React\.createElement\('div', \{ className: 'mcart-bar', key: 'dirinput' \}[\s\S]*?\)\)\n/, '') },
+      apply: (src) => src.replace("placeholder: '参考目录：", "placeholder: '（已移除）") },
     // 六张缓存表少清一张（用户实测："3D 换了、菜单图标还是旧的"）。
     { flag: FAULT_FORGET, name: '--fault-forget', hint: '找不到 forgetTextures 里清 itemRecipes 那一句',
       apply: (src) => src.replace('  for (const key of Object.keys(itemRecipes)) delete itemRecipes[key]\n', '') },
@@ -654,6 +664,9 @@ async function main() {
       apply: (src) => src.replace('if (inRightColumn) placeRight()',
         "if (slotHasEntries('sidebar.right.pane.tab')) placeRight()") },
     // 画布给的不是 PNG 也照发（宿主就无从"先验是 PNG 再替换"）。
+    // 落点竞态自证：把"右侧栏晚挂载就重试"那一行删掉 —— 晚出现的右栏永远不会被迁移。
+    { flag: FAULT_PLACEMENT, name: '--fault-placement', hint: '找不到 retryRight() 的调用',
+      apply: (src) => src.replace('      retryRight()\n', '') },
     { flag: FAULT_PNG, name: '--fault-png', hint: '找不到 saveEdit 里取 PNG 的那一句',
       apply: (src) => src.replace("editScratch.toDataURL('image/png')", "editScratch.toDataURL('image/jpeg')") },
     // 不挡绝对路径 / `..` 的贴图句柄 → 可能写到项目包外面去。
@@ -915,14 +928,14 @@ async function main() {
   // 返回，那样"刷新之后有没有再取一次"就成了空断言 —— 所以先把前提钉住。
   // （不能拿 `atlas.refItems` 当前提：物品是**前面那几段用例**载入的，而那时调用记录
   //   已经被 `calls.length = 0` 清过一次，这里看不到。）
-  if (refreshUi.buttonProps('物品列表') !== undefined) await refreshUi.click('物品列表')
+  if (refreshUi.buttonTitled('物品列表') !== undefined && refreshUi.nodes().filter((node) => node.type === 'select').length === 0) await refreshUi.clickTitle('物品列表')
   await refreshUi.settle()
   check('物品卡开着（前提：item 非空，刷新才会去补配方）',
     refreshUi.buttonProps('收起') !== undefined,
     '按钮：' + refreshUi.buttons().join(' / '))
 
   const recipesBefore = countOf('atlas.itemIcons')
-  await refreshUi.click('刷新')
+  await refreshUi.clickTitle('刷新')
   await refreshUi.settle()
   check('刷新之后配方会再取一次（不然缩略图和九宫格空白，而且不会自己回来）',
     countOf('atlas.itemIcons') > recipesBefore,
@@ -932,14 +945,14 @@ async function main() {
   // 而 `voxel` 只有"手动修改一个结构/群系"才会被建起来（见 openVoxel）。
   const openedStructure = await refreshUi.clickLabel('示例结构').then(() => true).catch(() => false)
   await refreshUi.settle()
-  const openedEditor = await refreshUi.clickLabel('手动修改').then(() => true).catch(() => false)
+  const openedEditor = await refreshUi.clickTitle('手动修改').then(() => true).catch(() => false)
   await refreshUi.settle()
   const iconsBefore = countOf('atlas.icons')
   check('打开结构资产并进编辑会去取方块图标（前提：'
     + (openedStructure ? '' : '没找到结构按钮；') + (openedEditor ? '' : '没找到「手动修改」按钮；')
     + '）', iconsBefore > 0, '取图标调用次数 = ' + iconsBefore
     + '，宿主收过的：' + calls.map((call) => call.name).join(','))
-  await refreshUi.click('刷新')
+  await refreshUi.clickTitle('刷新')
   await refreshUi.settle()
   check('刷新之后方块图标会再取一次（不然左边菜单只剩空框）',
     countOf('atlas.icons') > iconsBefore,
@@ -1098,7 +1111,7 @@ async function main() {
   await uiLong.click('展开全部')
   check('展开后能看到后面的条目', uiLong.text().indexOf('block/missing_11') >= 0)
   // 同一条报告再发生一次（点刷新会重新取同一个资产）：屏幕上只留一条，不重复刷屏。
-  await uiLong.click('刷新')
+  await uiLong.clickTitle('刷新')
   await uiLong.settle()
   const repeatText = uiLong.text()
   check('同一条报告不重复刷屏（第二次只说一句"同一条"）',
@@ -1261,6 +1274,47 @@ async function main() {
     }
   }
 
+
+  // ── 落点竞态：右侧栏 300ms 后出现 → 自动迁移（左栏撤掉、不重复注册）──────────
+  //
+  // 用户实测：重启后这次落在中央面板而不是右侧栏 —— 右侧栏插件比我们晚挂载。
+  // 这条模拟它：apply 时只有左栏可用，500ms 重试到一半时右侧栏服务出现，
+  // 必须自动迁移，并且**撤掉左栏那份、不重复注册右栏 pane**。
+  console.log('--- 落点竞态：右侧栏晚出现 → 自动迁移，左栏撤掉、不重复注册')
+  {
+    const lateServices = {}
+    const lateTimers = []
+    const timerApi = {
+      interval: (fn, ms) => { lateTimers.push({ fn: fn, ms: ms }); return () => {} },
+      timeout: (fn) => { fn(); return () => {} },
+    }
+    handlers = makeHandlers({})
+    let lateBuilt = null
+    let lateError = null
+    try {
+      lateBuilt = buildPanel(faulted, makeHost([]), createReact().api,
+        { services: lateServices, timer: timerApi })
+    } catch (error) { lateError = error }
+    const retry = lateTimers.filter((item) => item.ms === 500)[0]
+    check('右侧栏没就绪时：先落在左/主栏，并登记 500ms 重试（不是只试一次）',
+      lateBuilt !== null && retry !== undefined
+      && lateBuilt.registered.indexOf('main') >= 0
+      && lateBuilt.registered.indexOf('sidebar.right.pane.tab') < 0,
+      lateError !== null ? String(lateError.message) : (lateBuilt === null ? '没搭起来' : lateBuilt.registered.join(',')))
+    if (retry !== undefined) {
+      lateServices.sidebarRightTabs = { register: () => () => {} }
+      lateServices.sidebarRight = {}
+      retry.fn()
+    }
+    check('右侧栏一出现就迁移：挂进右栏 pane、撤掉左栏那份',
+      lateBuilt !== null && lateBuilt.registered.indexOf('sidebar.right.pane.tab') >= 0
+      && lateBuilt.removed.indexOf('main') >= 0,
+      lateBuilt === null ? '没搭起来'
+        : ('registered=' + lateBuilt.registered.join(',') + ' removed=' + lateBuilt.removed.join(',')))
+    check('迁移不重复注册右栏 pane（只一次）',
+      lateBuilt !== null && lateBuilt.registered.filter((name) => name === 'sidebar.right.pane.tab').length === 1,
+      lateBuilt === null ? '没搭起来' : lateBuilt.registered.join(','))
+  }
   // ── 畸形 JSON / 类型不对：一律不许白屏 ───────────────────────────────────────
   //
   // 宿主与面板之间走 JSON，`undefined` 字段会被丢掉，"少一个字段"是常态而不是异常。
@@ -1277,11 +1331,43 @@ async function main() {
   if (uiBad.buttonProps('用本会话目录') !== undefined) await uiBad.click('用本会话目录')
   await uiBad.settle()
   check('缺字段 / 类型不对的场景照常渲染（不是白屏、也不该走渲染边界）',
-    uiBad.text().indexOf('面板渲染失败') < 0 && uiBad.text().indexOf('MC 资产') >= 0 && uiBad.text().length > 0,
+    uiBad.text().indexOf('面板渲染失败') < 0 && uiBad.buttons().length > 0 && uiBad.text().length > 0,
     uiBad.text().slice(0, 160) || '（空白）')
   check('畸形贴图清单也能老实报数（0 面 · 贴图 0/0，不糊涂）',
     uiBad.text().indexOf('0 面 · 贴图 0/0') >= 0, uiBad.text().slice(0, 220))
 
+
+  // ── 宿主已卸载：先自动重试一次，再给两行人话 + 可展开详情 ────────────────────
+  //
+  // 用户实测：反复重建 + HMR 后宿主变成"已注册 0 个方法/宿主已卸载"，界面上只有一句
+  // 技术原话，用户看不懂也不知道怎么办。要求：重试一次；仍失败则两行人话 + 详情折叠。
+  console.log('--- 宿主已卸载：先自动重试一次，再给人话 + 可展开详情')
+  {
+    const HOST_DEAD = '宿主没有这个方法：atlas.scan（宿主 dsh-mc-art-panel@0.3.0，已注册 0 个方法，宿主已卸载）'
+    let attempts = 0
+    const baseHandlers = makeHandlers({})
+    handlers = async (name, args) => {
+      if (name === 'atlas.scan') { attempts += 1; return { error: HOST_DEAD } }
+      return baseHandlers(name, args)
+    }
+    const reactT = createReact()
+    const hostT = makeHost([])
+    const timerT = { interval: () => () => {}, timeout: (fn) => { fn(); return () => {} } }
+    const builtT = buildPanel(faulted, hostT, reactT.api, { timer: timerT })
+    const uiT = await mount(builtT.main, { sessionId: 'ui-test' }, hostT, reactT, 'main')
+    if (uiT.buttonProps('用本会话目录') !== undefined) await uiT.click('用本会话目录')
+    await uiT.settle()
+    check('宿主没加载时：第一行是人话、第二行是动作（都能照着做）',
+      uiT.text().indexOf('面板宿主没有加载成功——插件刚重建过时会出现这种情况。') >= 0
+      && uiT.text().indexOf('请完全退出并重新打开 DSH（不是刷新页面）。') >= 0,
+      uiT.text().slice(0, 240))
+    check('技术原话只进"详情"（不在主文案里）',
+      uiT.text().indexOf('详情') >= 0
+      && uiT.nodes().filter((node) => String((node.props || {}).className || '') === 'mcart-report').length >= 1,
+      '详情节点数 ' + uiT.nodes().filter((node) => String((node.props || {}).className || '') === 'mcart-report').length)
+    check('先自动重试一次（atlas.scan 被调了两次），不是一次失败就摆错误页',
+      attempts === 2, 'atlas.scan 次数=' + attempts)
+  }
   // ── 像素编辑器：按面编辑 / 保存发出去的是真 PNG / 只写项目自己的包 ───────────
   const TEX_SIDE = 'ui_probe:block/example_side'
   const TEX_TOP = 'ui_probe:block/example_top'
@@ -1312,7 +1398,7 @@ async function main() {
     const ui = await mount(built.main, { sessionId: 'ui-test' }, hostHere, reactHere, 'main')
     if (ui.buttonProps('用本会话目录') !== undefined) await ui.click('用本会话目录')
     const wired = await decodeTextures(ui)
-    const opened = await ui.clickLabel('手动修改').then(() => true).catch(() => false)
+    const opened = await ui.clickTitle('手动修改').then(() => true).catch(() => false)
     await ui.settle()
     return { ui: ui, calls: callsHere, wired: wired, opened: opened }
   }
@@ -1358,7 +1444,7 @@ async function main() {
   const uiP = await mount(builtP.main, { sessionId: 'ui-test' }, hostP, reactP, 'main')
   if (uiP.buttonProps('用本会话目录') !== undefined) await uiP.click('用本会话目录')
   await decodeTextures(uiP)
-  if (uiP.buttonProps('物品列表') !== undefined) await uiP.click('物品列表')
+  if (uiP.buttonTitled('物品列表') !== undefined && uiP.nodes().filter((node) => node.type === 'select').length === 0) await uiP.clickTitle('物品列表')
   await uiP.settle()
   const pickedItem = await uiP.clickTitle('示例物品').then(() => true).catch(() => false)
   await uiP.settle()
@@ -1437,7 +1523,7 @@ async function main() {
   async function pickReferenceItem(ui, title) {
     // 物品浏览器先开起来（它默认列本项目），再把来源切到参考命名空间。第二次调用时
     // 来源已经是参考了 —— 那就别再去切一遍（找不到 value='project' 的选择框不是错误）。
-    if (ui.buttonProps('物品列表') !== undefined) await ui.click('物品列表')
+    if (ui.buttonTitled('物品列表') !== undefined && ui.nodes().filter((node) => node.type === 'select').length === 0) await ui.clickTitle('物品列表')
     await ui.settle()
     await pixelsOf(ui)
     const out = ui.nodes().filter((node) => node.type === 'select' && String(node.props.value) === 'project')[0]
@@ -1520,7 +1606,7 @@ async function main() {
   const uiM = await mount(builtM.main, { sessionId: 'ui-test' }, hostM, reactM, 'main')
   if (uiM.buttonProps('用本会话目录') !== undefined) await uiM.click('用本会话目录')
   await uiM.settle()
-  if (uiM.buttonProps('物品列表') !== undefined) await uiM.click('物品列表')
+  if (uiM.buttonTitled('物品列表') !== undefined && uiM.nodes().filter((node) => node.type === 'select').length === 0) await uiM.clickTitle('物品列表')
   await decodeTextures(uiM)
   const slotFor = (id) => uiM.nodes().filter((node) => node.type === 'button'
     && node.props.className === 'mcart-slot' && String(node.props.title || '').indexOf('\n' + id + '\n') >= 0)[0]

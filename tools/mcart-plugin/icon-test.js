@@ -844,8 +844,8 @@ async function main() {
 
   console.log('--- 客户端：面板接线（界面上真的会出现）')
   check('物品浏览器只在展开时占位', /itemOpen \? itemCard\(\) : null/.test(client))
-  check('顶栏按钮开的是浏览器（文字按钮，不是 emoji）',
-    /onClick: openItems \}, itemOpen \? '收起列表' : '物品列表'/.test(client)
+  check('顶栏按钮开的是浏览器（图标按钮 + 语义标签，不是 emoji）',
+    /onClick: openItems/.test(client) && /'aria-label': '物品列表'/.test(client)
     && client.indexOf('🎒') < 0)
   check('打开面板会去取这一页的配方', /ensureItemPage\(\)/.test(client)
     && /if \(item === null \|\| item\.facts\.length === 0\) return/.test(client))
@@ -956,7 +956,7 @@ async function main() {
     && /setPending\(\{ path: path, title: asset\.title \}\)/.test(client))
   const itemRow = client.slice(client.indexOf("key: 'itemrow'"), client.indexOf("key: 'viewport'"))
   check('物品那一行带着和方块同一套的两个按钮',
-    itemRow.indexOf("'✎ 手动修改'") >= 0 && itemRow.indexOf("'@ 提意见'") >= 0
+    itemRow.indexOf("'aria-label': '手动修改'") >= 0 && itemRow.indexOf("'@ 提意见'") >= 0
     && itemRow.indexOf('onClick: openEditor') >= 0 && itemRow.indexOf('onClick: complain') >= 0)
   // 真注入：把物品那条分支去掉，回到原来的 `if (scene === null) return`。
   const noItemBranch = client.replace(
@@ -984,9 +984,9 @@ async function main() {
     /const iconNotes = \[\]/.test(client)
     && /className: 'mcart-note', key: 'iconnote'/.test(client)
     && client.indexOf("key: 'iconnote'") > client.indexOf("key: 'viewport'"))
-  check('高度是状态，canvas 用它（不是写死 240）',
+  check('高度是状态，canvas 用它（视口填满剩余高度，手柄调的是下限）',
     /const viewHPair = React\.useState\(VIEW_H\)/.test(client)
-    && /style: \{ height: viewH \+ 'px' \}/.test(client))
+    && /style: \{ minHeight: viewH \+ 'px' \}/.test(client))
   check('底部有拖动手柄，双击复位', /className: 'mcart-grip', key: 'grip'/.test(client)
     && /onDoubleClick: \(\) => setViewH\(VIEW_H\)/.test(client)
     && /\.mcart-grip\{/.test(client) && /cursor:ns-resize/.test(client))
@@ -1022,8 +1022,65 @@ async function main() {
   check('两次取物品都带上 source 给宿主',
     /source: source, namespace: namespace/.test(client)
     && /source: item\.source, namespace: item\.namespace/.test(client))
+  check('宿主没加载：两行人话 + 技术原话折叠进详情，并先自动重试一次',
+    /function isHostUnloaded\(text\)/.test(client) && /function hostRecoveryHint\(\)/.test(client)
+    && /function failureView\(text\)/.test(client)
+    && /面板宿主没有加载成功——插件刚重建过时会出现这种情况。/ .test(client)
+    && /请完全退出并重新打开 DSH（不是刷新页面）。/.test(client)
+    && /function reportFailure\(message, retry\)/.test(client)
+    && /timer\.timeout\(\(\) => \{ retry\(\) \}, 1000\)/.test(client))
   check('内置的原版母模型会在屏幕上说出来（不假装是从游戏里读的）',
     /内置:/.test(client) && /原版母模型用了内置的/.test(client))
+
+  // ── 落点：优先右侧栏；右侧栏插件晚挂载时重试并保留用户状态 ────────────────
+  //
+  // 用户实测：重启后这次落在"中央面板"而不是右侧栏 —— 就是右侧栏插件比我们晚
+  // 挂载。修法不是"接受落在左栏"，而是**在 ~5 秒内重试**（10×500ms），就绪即迁移；
+  // 迁移会重新挂载组件，所以用户选中的资产/滚动位置必须带过去。
+  console.log('--- 落点：优先右栏 + 晚挂载重试 + 迁移保留用户状态')
+  check('右侧栏没就绪时按 10×500ms 重试，就绪立刻迁移',
+    /function retryRight\(\)/.test(client) && /tries >= 10/.test(client)
+    && /timer\.interval\(tickOnce, 500\)/.test(client)
+    && /if \(rightColumnReady\(\)\) \{ stop\(\); placeRight\(\); return \}/.test(client))
+  check('迁移后恢复用户选中的资产（记 lastOpened / rememberedPick）',
+    /lastOpened = \{ project: target\.project, kind: target\.kind, id: target\.id \}/.test(client)
+    && /function rememberedPick\(projects\)/.test(client)
+    && /rememberedPick\(cached\.projects\)/.test(client))
+  check('迁移后恢复主体滚动位置（不是把人弹回顶部）',
+    /node\.scrollTop = lastBodyScroll/.test(client)
+    && /lastBodyScroll = event\.currentTarget\.scrollTop/.test(client))
+  check('头部只剩路径一行（不再泄漏内部落点术语 / 不再重复视图名）',
+    client.indexOf("'中央面板'") < 0 && client.indexOf("'右侧栏'") < 0
+    && /className: 'mcart-headpath'/.test(client) && client.indexOf('mcart-viewname') < 0)
+  check('四个图标按钮都有 tooltip（title），顺序 = 列表 / 设置 / 回到项目根 / 刷新',
+    /title: '物品列表（浏览器）'/.test(client) && /title: '设置'/.test(client)
+    && /title: '回到项目根（换一个项目）'/.test(client) && /title: '刷新资产（重新读磁盘）'/.test(client)
+    && client.indexOf("title: '物品列表（浏览器）'") < client.indexOf("title: '设置'")
+    && client.indexOf("title: '设置'") < client.indexOf("title: '回到项目根（换一个项目）'"))
+
+  // ── 列表与工具栏：检查器式排版（两列行 / 三级权重） ────────────────────────
+  console.log('--- 列表与工具栏：两列行 + 三级权重')
+  check('方块列表是两列行（名称 span + 等宽 id span，title 是全 id）',
+    /className: 'mcart-item-name'/.test(client) && /className: 'mcart-item-id'/.test(client)
+    && /title: item\.id/.test(client))
+  check('分组头是独立一条（不是把项目名当普通行）',
+    /className: 'mcart-group-head'/.test(client) && client.indexOf("className: 'mcart-group', key: 'p' + project.id }, project.title") < 0)
+  check('舞台工具栏：事实（mono）+ 图标工具（重置/手动修改）+ 主操作（@ 提意见）',
+    /className: 'mcart-toolbar-facts'/.test(client)
+    && /className: 'mcart-btn mcart-primary'/.test(client)
+    && /'aria-label': '重置'/.test(client) && /'aria-label': '手动修改'/.test(client))
+  check('相机按包围盒 fit：8 个角都拉进 88% 安全框、并避让底部热键栏',
+    /function boxCorners\(box\)/.test(client) && /const margin = 0\.88/.test(client)
+    && /for \(let pass = 0; pass < 6; pass\+\+\)/.test(client)
+    && /const hud = Math\.min\(56/.test(client)
+    && /const target = sub\(centre, mul\(camera\.up, shift\)\)/.test(client))
+  check('切换资产后重新 fit（缩放复位）', /setZoom\(1\)/.test(client))
+  check('取景框里画了极淡的地面网格（不碰拾取缓冲）',
+    /function drawGroundGrid\(paint, camera, width, height, box\)/.test(client)
+    && /drawGroundGrid\(paint, camera, size\[0\], size\[1\], box\)/.test(client))
+  check('视口左下角有轴指示器（X/Y/Z 三根短线）',
+    /className: 'mcart-axis'/.test(client) && /mcart-axis-x/.test(client)
+    && /mcart-axis-y/.test(client) && /mcart-axis-z/.test(client))
 
   console.log(failures === 0 ? '全部通过' : (failures + ' 项失败'))
   return failures

@@ -92,16 +92,54 @@ function makeCamera(position, target, width, height, fovY) {
       if (z <= 0.02) return null
       return [width / 2 + (x * focal) / z, height / 2 - (y * focal) / z, z]
     },
+    position: position, target: target, right: right, up: up, forward: forward,
+    focal: focal, width: width, height: height,
   }
 }
 
+
+function boxCorners(box) {
+  const out = []
+  for (let i = 0; i < 8; i++) {
+    out.push([
+      (i & 1) === 1 ? box.max[0] : box.min[0],
+      (i & 2) === 2 ? box.max[1] : box.min[1],
+      (i & 4) === 4 ? box.max[2] : box.min[2],
+    ])
+  }
+  return out
+}
+
+
 function orbitCamera(box, yaw, pitch, zoom, width, height, fovY) {
   const centre = mul(add(box.min, box.max), 0.5)
-  const radius = Math.max(vlen(sub(box.max, box.min)) / 2, 0.05)
-  const fit = radius / Math.sin(fovY / 2) / zoom
+  const corners = boxCorners(box)
   const cp = Math.cos(pitch)
   const direction = [Math.sin(yaw) * cp, Math.sin(pitch), Math.cos(yaw) * cp]
-  return makeCamera(add(centre, mul(direction, fit * 1.05)), centre, width, height, fovY)
+  const hud = Math.min(56, Math.max(0, height * 0.2))
+  const usableH = Math.max(32, height - hud)
+  const margin = 0.88
+  const halfW = Math.max(1, width * margin / 2)
+  const halfH = Math.max(1, usableH * margin / 2)
+  const z = Math.max(zoom, 0.01)
+  let distance = Math.max(vlen(sub(box.max, box.min)) / 2, 0.05)
+    / Math.sin(fovY / 2) / z * 1.2
+  let camera = null
+  for (let pass = 0; pass < 6; pass++) {
+    camera = makeCamera(add(centre, mul(direction, distance)), centre, width, height, fovY)
+    let worst = 0
+    for (const corner of corners) {
+      const p = camera.project(corner)
+      if (p === null) { worst = Math.max(worst, 8); continue }
+      worst = Math.max(worst, Math.abs(p[0] - width / 2) / halfW,
+        Math.abs(p[1] - height / 2) / halfH)
+    }
+    if (worst <= 1 && worst >= 0.9) break
+    distance *= Math.max(0.5, worst)
+  }
+  const shift = (hud / 2) * (distance / Math.max(camera.focal, 1e-6))
+  const target = sub(centre, mul(camera.up, shift))
+  return makeCamera(add(target, mul(direction, distance)), target, width, height, fovY)
 }
 
 const EMPTY_ANIMATIONS = {}
@@ -385,6 +423,36 @@ function iconCamera(quads, width, height, fill) {
 }
 
 
+function drawGroundGrid(paint, camera, width, height, box) {
+  const ground = box.min[1]
+  const spanX = Math.max(box.max[0] - box.min[0], 1)
+  const spanZ = Math.max(box.max[2] - box.min[2], 1)
+  const extent = Math.max(spanX, spanZ) * 1.6
+  const step = extent / 8
+  const cx = (box.min[0] + box.max[0]) / 2
+  const cz = (box.min[2] + box.max[2]) / 2
+  const half = extent / 2
+  const line = (from, to, style) => {
+    const a = camera.project(from)
+    const b = camera.project(to)
+    if (a === null || b === null) return
+    paint.strokeStyle = style
+    paint.beginPath()
+    paint.moveTo(a[0], a[1])
+    paint.lineTo(b[0], b[1])
+    paint.stroke()
+  }
+  paint.lineWidth = 1
+  for (let i = -4; i <= 4; i++) {
+    const at = i * step
+    const strong = i === 0 ? 'rgba(255,255,255,.10)' : 'rgba(255,255,255,.06)'
+    line([cx + at, ground, cz - half], [cx + at, ground, cz + half], strong)
+    line([cx - half, ground, cz + at], [cx + half, ground, cz + at], strong)
+  }
+  return { extent: extent, step: step }
+}
+
+
 function drawItemIcon(canvas, recipe, frameIndex, decoded) {
   const width = canvas.width, height = canvas.height
   const paint = canvas.getContext('2d')
@@ -509,6 +577,8 @@ const CSS = [
     + '--mc-text-1:var(--dsw-alias-label-primary,rgba(236,236,241,.94));'
     + '--mc-text-2:var(--dsw-alias-label-secondary,rgba(236,236,241,.58));'
     + '--mc-brand:var(--dsw-alias-brand-primary,#4f9cf9);'
+    + '--mc-brand-bar:color-mix(in srgb,var(--dsw-alias-brand-primary,#4f9cf9) 75%,'
+    + 'var(--dsw-alias-label-primary,#ececf1));'
     + '--mc-error:var(--dsw-alias-state-error-primary,#e06c6c);'
     + '--mc-warn:var(--dsw-alias-state-warn-primary,#e0a06c);'
     + '--mc-ok:var(--dsw-alias-state-success-primary,#7fc98a);'
@@ -523,7 +593,7 @@ const CSS = [
     + '--mc-mono:ui-monospace,Consolas,monospace;'
     + '--mc-canvas-bg:#141317;--mc-hud-bg:rgba(20,20,24,.8);'
     + 'display:flex;flex-direction:column;gap:var(--mc-s4);padding:var(--mc-s4);'
-    + 'height:100%;box-sizing:border-box;overflow-y:auto;overflow-x:hidden;'
+    + 'height:100%;box-sizing:border-box;overflow:hidden;container-type:inline-size;'
     + 'color:var(--mc-text-1);background:var(--mc-bg-0);'
     + 'font:var(--mc-fs)/var(--mc-lh) system-ui,-apple-system,"Segoe UI",sans-serif}',
   '.mcart-title{font-size:var(--mc-fs2);font-weight:600;color:var(--mc-text-2)}',
@@ -544,13 +614,29 @@ const CSS = [
     + 'padding:0 var(--mc-s4);margin:calc(-1 * var(--mc-s4)) calc(-1 * var(--mc-s4)) 0;'
     + 'background:var(--mc-bg-0);border-bottom:1px solid var(--mc-line-1)}',
   '.mcart-head>.mcart-title{color:var(--mc-text-1)}',
+  '.mcart-headpath{font-family:var(--mc-mono);font-size:var(--mc-fs2);color:var(--mc-text-2);'
+    + 'font-variant-numeric:tabular-nums;min-width:0;overflow:hidden;text-overflow:ellipsis;'
+    + 'white-space:nowrap}',
+  '.mcart-headgrow{flex:1;min-width:var(--mc-s2)}',
   '.mcart-head .mcart-btn,.mcart-head .mcart-icon{background:transparent;border-color:transparent;'
-    + 'height:var(--mc-control)}',
+    + 'height:var(--mc-control);flex:none}',
   '.mcart-head .mcart-btn:hover,.mcart-head .mcart-icon:hover{background:var(--mc-hover)}',
   '.mcart-head .mcart-btn+.mcart-btn,.mcart-head .mcart-btn+.mcart-icon,'
-    + '.mcart-head .mcart-icon+.mcart-btn{border-left:1px solid var(--mc-line-1);'
-    + 'border-top-left-radius:0;border-bottom-left-radius:0;padding-left:var(--mc-s3)}',
+    + ' .mcart-head .mcart-icon+.mcart-btn,.mcart-head .mcart-icon+.mcart-icon{'
+    + 'border-left:1px solid var(--mc-line-1);border-radius:0;padding-left:var(--mc-s1)}',
+  '.mcart-toolbar{display:flex;align-items:center;gap:var(--mc-s2);height:var(--mc-toolbar);'
+    + 'min-height:var(--mc-toolbar)}',
+  '.mcart-toolbar-facts{font-family:var(--mc-mono);font-size:var(--mc-fs2);'
+    + 'font-variant-numeric:tabular-nums;color:var(--mc-text-2);white-space:nowrap}',
+  '.mcart-toolbar-grow{flex:1;min-width:var(--mc-s2)}',
+  '.mcart-primary{color:var(--mc-brand);border-color:var(--mc-brand);background:transparent}',
+  '.mcart-primary:hover{background:var(--mc-select);border-color:var(--mc-brand)}',
   '.mcart-bar{display:flex;align-items:center;gap:var(--mc-s2);flex-wrap:wrap}',
+  '.mcart-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;'
+    + 'flex-direction:column;gap:var(--mc-s4);scrollbar-width:thin;'
+    + 'scrollbar-color:var(--dsw-scrollbar-thumb,var(--mc-line-2)) transparent;'
+    + 'overscroll-behavior:contain}',
+  '.mcart-stage{flex:1;min-height:0;display:flex;flex-direction:column;gap:var(--mc-s2)}',
   '.mcart-card{border:0;border-top:1px solid var(--mc-line-1);border-radius:0;'
     + 'padding:var(--mc-s2) 0;display:flex;flex-direction:column;gap:var(--mc-s2);'
     + 'background:transparent}',
@@ -609,17 +695,31 @@ const CSS = [
     + 'border-left:2px solid;padding-left:var(--mc-s3)}',
   '.mcart-bad{color:var(--mc-warn);border-left-color:var(--mc-warn)}',
   '.mcart-err{color:var(--mc-error);border-left-color:var(--mc-error)}',
-  '.mcart-list{overflow:auto;border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);'
-    + 'padding:var(--mc-s1);max-height:240px}',
+  '.mcart-details{font-size:var(--mc-fs2);line-height:14px;color:var(--mc-text-2);'
+    + 'margin-top:var(--mc-s1)}',
+  '.mcart-details>summary{cursor:pointer;width:max-content}',
+  '.mcart-details>.mcart-report{margin:var(--mc-s1) 0 0}',
+  '.mcart-list{flex:1;min-height:0;overflow:auto;'
+    + 'border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);'
+    + 'padding:var(--mc-s1)}',
   '.mcart-row{display:flex;align-items:center;gap:var(--mc-s2);height:var(--mc-lh);'
     + 'padding:0 var(--mc-s2);border-left:2px solid transparent}',
   '.mcart-row:hover{background:var(--mc-hover)}',
-  '.mcart-item{display:block;width:100%;height:var(--mc-lh);padding:0 var(--mc-s2);text-align:left;'
+  '.mcart-item{display:flex;align-items:center;gap:var(--mc-s2);width:100%;'
+    + 'height:var(--mc-lh);padding:0 var(--mc-s2);text-align:left;'
     + 'border:0;border-left:2px solid transparent;border-radius:0;background:none;'
     + 'color:var(--mc-text-1);font:inherit;font-size:var(--mc-fs);cursor:pointer}',
+  '.mcart-item-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.mcart-item-id{flex:none;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+    + 'font-family:var(--mc-mono);font-size:var(--mc-fs2);font-variant-numeric:tabular-nums;'
+    + 'color:var(--mc-text-2);text-align:right}',
+  '.mcart-group-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;'
+    + 'height:var(--mc-section);min-height:var(--mc-section);padding:0 var(--mc-s2);'
+    + 'background:var(--mc-bg-0);border-bottom:1px solid var(--mc-line-1);'
+    + 'font-size:var(--mc-fs2);font-weight:600;color:var(--mc-text-2)}',
   '.mcart-item:hover{background:var(--mc-hover)}',
   '.mcart-item:active{background:var(--mc-active)}',
-  '.mcart-item[data-on="1"]{background:var(--mc-select);border-left-color:var(--mc-brand)}',
+  '.mcart-item[data-on="1"]{background:var(--mc-select);border-left-color:var(--mc-brand-bar)}',
   '.mcart-projects{max-height:240px;overflow:auto;display:flex;flex-direction:column;'
     + 'border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);padding:var(--mc-s1)}',
   '.mcart-mods{border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);'
@@ -631,17 +731,23 @@ const CSS = [
   '.mcart-list,.mcart-hotbar,.mcart-swatches,.mcart-projects,.mcart-mods{'
     + 'scrollbar-width:thin;scrollbar-color:var(--dsw-scrollbar-thumb,var(--mc-line-2)) transparent;'
     + 'overscroll-behavior:contain}',
-  '.mcart-stage{flex:none;display:flex;flex-direction:column;gap:var(--mc-s2)}',
-  '.mcart-canvas{width:100%;height:240px;display:block;border-radius:var(--mc-radius-panel);'
-    + 'background:var(--mc-canvas-bg);border:1px solid var(--mc-line-1);cursor:grab;touch-action:none}',
+  '.mcart-canvas{width:100%;height:100%;min-height:180px;display:block;'
+    + 'border-radius:var(--mc-radius-panel);background:var(--mc-canvas-bg);'
+    + 'border:1px solid var(--mc-line-1);cursor:grab;touch-action:none}',
   '.mcart-canvas:active{cursor:grabbing}',
-  '.mcart-viewport{position:relative;flex:none}',
+  '.mcart-viewport{position:relative;flex:1;min-height:0}',
   '.mcart-zoom{position:absolute;right:var(--mc-s2);top:var(--mc-s2);display:flex;'
     + 'gap:var(--mc-s1);opacity:.9}',
   '.mcart-zoom:hover{opacity:1}',
   '.mcart-zoombtn{width:var(--mc-control);height:var(--mc-control);padding:0;display:inline-flex;'
     + 'align-items:center;justify-content:center;font-size:var(--mc-fs);line-height:1;'
     + 'background:var(--mc-hud-bg);border-color:var(--mc-line-2);color:var(--mc-text-1)}',
+  '.mcart-axis{position:absolute;left:var(--mc-s2);bottom:var(--mc-s2);pointer-events:none;'
+    + 'opacity:.75}',
+  '.mcart-axis line{stroke:var(--mc-text-2);stroke-width:1;stroke-linecap:butt}',
+  '.mcart-axis-x{opacity:.9}',
+  '.mcart-axis-y{opacity:.65}',
+  '.mcart-axis-z{opacity:.45}',
   '.mcart-poster{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);'
     + 'image-rendering:pixelated;pointer-events:none}',
   '.mcart-grip{display:flex;align-items:center;justify-content:center;height:5px;'
@@ -650,9 +756,10 @@ const CSS = [
   '.mcart-grip:hover .mcart-gripbar{background:var(--mc-brand)}',
   '.mcart-hud{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;'
     + 'align-items:center;gap:var(--mc-s1);padding:0 var(--mc-s2) var(--mc-s2);pointer-events:none}',
-  '.mcart-hudname{font-family:var(--mc-mono);font-size:var(--mc-fs2);padding:0 var(--mc-s2);'
-    + 'border-radius:var(--mc-radius);background:var(--mc-hud-bg);'
-    + 'border:1px solid var(--mc-line-2)}',
+  '.mcart-hudname{position:absolute;right:var(--mc-s2);'
+    + 'bottom:calc(var(--mc-control) + var(--mc-s4));font-family:var(--mc-mono);'
+    + 'font-size:var(--mc-fs2);font-variant-numeric:tabular-nums;color:var(--mc-text-2);'
+    + 'background:none;border:0;padding:0;pointer-events:none;white-space:nowrap}',
   '.mcart-hudbar{display:flex;align-items:center;gap:var(--mc-s1);padding:var(--mc-s1);'
     + 'border-radius:var(--mc-radius-panel);background:var(--mc-hud-bg);'
     + 'border:1px solid var(--mc-line-2);pointer-events:auto}',
@@ -701,6 +808,15 @@ const CSS = [
     + 'padding:var(--mc-s3);margin:var(--mc-s1) 0;line-height:14px;max-height:240px;'
     + 'overflow:auto;user-select:text}',
   '.mcart-reportnote{color:var(--mc-text-2);word-break:break-all}',
+  '.mcart-stack{display:flex;flex-direction:column;align-items:stretch;gap:var(--mc-s2)}',
+  '.mcart-stack>.mcart-btn{align-self:flex-start}',
+  '.mcart-prop-value{flex-wrap:wrap}',
+  '.mcart-prop-value>.mcart-input{flex:1 1 96px}',
+  '.mcart-prop-value>.mcart-btn{flex:none}',
+  '@container (max-width:260px){'
+    + '.mcart-prop{grid-template-columns:64px 1fr}'
+    + '.mcart-hint{padding-left:0}'
+    + '.mcart-item-id{max-width:46%}}',
 ].join('')
 
 const CATEGORIES = [
@@ -889,6 +1005,18 @@ function withVersion(text) {
 }
 
 
+function isHostUnloaded(text) {
+  const line = text === null || text === undefined ? '' : String(text)
+  return /宿主已卸载|已注册 0 个方法|宿主没有这个方法/.test(line)
+}
+function hostRecoveryHint() {
+  return {
+    title: '面板宿主没有加载成功——插件刚重建过时会出现这种情况。',
+    action: '请完全退出并重新打开 DSH（不是刷新页面）。',
+  }
+}
+
+
 function safeTextureHandle(id) {
   const text = id === undefined || id === null ? '' : String(id)
   if (text === '') return false
@@ -996,6 +1124,8 @@ function paletteOf(pixels, limit) {
 
 let canvasGeneration = 0
 let lastDrawKey = ''
+let lastBodyScroll = 0
+let lastOpened = null
 let lastCamera = null
 let lastReportKey = ''
 
@@ -1165,6 +1295,19 @@ return {
       }
       : function PanelBoundary(props) { return props.children }
 
+
+    function failureView(text) {
+      const raw = text === null || text === undefined ? '' : String(text)
+      if (!isHostUnloaded(raw)) return React.createElement('div', { className: 'mcart-err' }, withVersion(raw))
+      const hint = hostRecoveryHint()
+      return React.createElement('div', { className: 'mcart-err' },
+        React.createElement('div', null, hint.title),
+        React.createElement('div', null, hint.action),
+        React.createElement('details', { className: 'mcart-details' },
+          React.createElement('summary', null, '详情'),
+          React.createElement('pre', { className: 'mcart-report' }, withVersion(raw))))
+    }
+
     function Atlas(props) {
       if (typeof globalThis !== 'undefined' && globalThis.__MCART_FORCE_RENDER_ERROR__ === true) {
         throw new Error('注入的渲染错误')
@@ -1172,6 +1315,20 @@ return {
       const sessionId = props.sessionId === undefined ? '' : String(props.sessionId)
       const indexPair = React.useState(null)
       const failurePair = React.useState(null)
+      let hostRetried = false
+
+      function reportFailure(message, retry) {
+        const text = message === null || message === undefined ? '' : String(message)
+        if (isHostUnloaded(text) && !hostRetried && typeof retry === 'function') {
+          hostRetried = true
+          try {
+            timer.timeout(() => { retry() }, 1000)
+            return true
+          } catch (error) { hostRetried = false }
+        }
+        setFailure(text)
+        return false
+      }
       const emptyPair = React.useState(null)
       const newIdPair = React.useState('')
       const noticePair = React.useState(null)
@@ -1355,6 +1512,8 @@ return {
       }
 
       function open(target, where) {
+        lastOpened = { project: target.project, kind: target.kind, id: target.id }
+        setZoom(1)
         if (lastProject !== target.project) { forgetTextures(); setTexEpoch(texEpoch + 1) }
         lastProject = target.project
         setBusy(true)
@@ -1372,17 +1531,21 @@ return {
           setBusy(false)
           if (result === null || result === undefined) { setFailure('scene returned nothing'); return }
           if (result.error !== undefined) {
-            setFailure(result.error)
+            if (reportFailure(result.error, () => open(target, where))) return
             noteDiag(result, result.error)
             setScene(null)
             return
           }
           setFailure(null)
+          hostRetried = false
           lastReportKey = ''
           setDiag(null)
           for (const key of Object.keys(imageNodes)) delete imageNodes[key]
           setScene(sceneOf(result))
-        }).catch((error) => { setBusy(false); setFailure(String(error && error.message ? error.message : error)) })
+        }).catch((error) => {
+          setBusy(false)
+          reportFailure(String(error && error.message ? error.message : error), () => open(target, where))
+        })
       }
 
       function firstOfProject(project) {
@@ -1405,14 +1568,30 @@ return {
         return null
       }
 
+
+      function rememberedPick(projects) {
+        if (lastOpened === null) return null
+        for (const project of projects || []) {
+          if (project.id !== lastOpened.project) continue
+          const items = (project.items && project.items[lastOpened.kind]) || []
+          for (const item of items) {
+            if (item.id === lastOpened.id) return { project: project.id, kind: lastOpened.kind, id: item.id }
+          }
+        }
+        return null
+      }
+
       function scan(where, force, wantProject) {
         if (where === undefined || where === '') { setIndex(null); return }
         if (force !== true && indexes[where] !== undefined) {
           const cached = indexes[where]
           setIndex(cached)
           setFailure(null)
+          hostRetried = false
           const project = wantProject === undefined || wantProject === null ? null : (cached.projects || []).filter((p) => p.id === wantProject)[0]
-          const first = project !== null && project !== undefined ? firstOfProject(project) : firstPick(cached)
+          const remembered = wantProject === undefined || wantProject === null ? rememberedPick(cached.projects) : null
+          const first = remembered
+            || (project !== null && project !== undefined ? firstOfProject(project) : firstPick(cached))
           if (first !== null) open(first, where)
           return
         }
@@ -1422,7 +1601,7 @@ return {
           setBusy(false)
           if (result === null || result === undefined) { setFailure('scan returned nothing'); return }
           setIndex(result)
-          if (result.error !== undefined) { setFailure(result.error); return }
+          if (result.error !== undefined) { reportFailure(result.error, () => scan(where, true, null)); return }
           const projects = result.projects || []
           if (projects.length === 0) {
             setFailure(null)
@@ -1433,11 +1612,17 @@ return {
           }
           setEmptyRoot(null)
           setFailure(null)
+          hostRetried = false
           indexes[where] = result
           const project = wantProject === undefined || wantProject === null ? null : projects.filter((p) => p.id === wantProject)[0]
-          const first = project !== null && project !== undefined ? firstOfProject(project) : firstPick(result)
+          const remembered = wantProject === undefined || wantProject === null ? rememberedPick(projects) : null
+          const first = remembered
+            || (project !== null && project !== undefined ? firstOfProject(project) : firstPick(result))
           if (first !== null) open(first, where)
-        }).catch((error) => { setBusy(false); setFailure(String(error && error.message ? error.message : error)) })
+        }).catch((error) => {
+          setBusy(false)
+          reportFailure(String(error && error.message ? error.message : error), () => scan(where, true, null))
+        })
       }
 
       function commitRoot(next) {
@@ -1745,6 +1930,7 @@ return {
         const frame = paint.createImageData(size[0], size[1])
         frame.data.set(bytes)
         paint.putImageData(frame, 0, 0)
+        drawGroundGrid(paint, camera, size[0], size[1], box)
       })
 
 
@@ -3285,14 +3471,14 @@ return {
           rows.push(group('notifygroup', notifyRows))
         }
         if (notice !== null) rows.push(React.createElement('div', { className: 'mcart-bad', key: 'notice' }, String(notice)))
-        if (failure !== null) rows.push(React.createElement('div', { className: 'mcart-err', key: 'failure' }, withVersion(failure)))
+        if (failure !== null) rows.push(React.createElement('div', { key: 'failure' }, failureView(failure)))
         return React.createElement('div', { className: 'mcart-card', key: 'settings' }, rows)
       }
 
       if (root === '') {
         const card = []
         card.push(React.createElement('div', { className: 'mcart-note', key: 'hint' }, '未指定资产路径'))
-        card.push(React.createElement('div', { className: 'mcart-bar', key: 'input' },
+        card.push(React.createElement('div', { className: 'mcart-stack', key: 'input' },
           React.createElement('input', {
             className: 'mcart-input', placeholder: '/path/to/project',
             value: draft, onChange: (event) => setDraft(event.target.value),
@@ -3333,11 +3519,11 @@ return {
         ))
 
         if (notice !== null) card.push(React.createElement('div', { className: 'mcart-bad', key: 'notice' }, String(notice)))
-        if (failure !== null) card.push(React.createElement('div', { className: 'mcart-err', key: 'failure' }, withVersion(failure)))
+        if (failure !== null) card.push(React.createElement('div', { key: 'failure' }, failureView(failure)))
         return React.createElement('div', { className: 'mcart-root' },
-          React.createElement('div', { className: 'mcart-bar' },
-            React.createElement('span', { className: 'mcart-title' }, 'MC 资产'),
-            React.createElement('span', { className: 'mcart-sub' }, inRightColumn ? '右侧栏' : '中央面板'),
+          React.createElement('div', { className: 'mcart-head' },
+            React.createElement('span', { className: 'mcart-headpath' }, '未选择项目'),
+            React.createElement('span', { className: 'mcart-headgrow' }),
           ),
           React.createElement('div', { className: 'mcart-card' }, card),
         )
@@ -3375,7 +3561,7 @@ return {
           reference === null || reference === ''
             ? '建完下一步：点右上角 ⚙ 指定参考目录（面板会列出自动探测到的游戏目录）。不指定也能用，只是看不到原版/模组的参照。'
             : '参考目录已经设好了：' + reference))
-        if (failure !== null) rows.push(React.createElement('div', { className: 'mcart-err', key: 'err' }, withVersion(failure)))
+        if (failure !== null) rows.push(React.createElement('div', { key: 'err' }, failureView(failure)))
         return React.createElement('div', { className: 'mcart-card', key: 'guide' }, rows)
       }
 
@@ -3418,20 +3604,24 @@ return {
       const projects = index === null ? [] : (index.projects || [])
       const menu = []
       for (const project of projects) {
-        menu.push(React.createElement('div', { className: 'mcart-group', key: 'p' + project.id }, project.title))
+        const prefix = projects.length > 1 ? project.title + ' · ' : ''
         for (const category of CATEGORIES) {
           const items = (project.items && project.items[category.key]) || []
           if (items.length === 0) continue
-          menu.push(React.createElement('div', { className: 'mcart-group', key: 'p' + project.id + category.key },
-            category.label + ' · ' + items.length))
+          menu.push(React.createElement('div', {
+            className: 'mcart-group-head', key: 'p' + project.id + category.key,
+          }, prefix + category.label + ' · ' + items.length))
           for (const item of items) {
             const on = choice !== null && choice.project === project.id && choice.kind === category.key && choice.id === item.id
             menu.push(React.createElement('button', {
               key: project.id + '/' + category.key + '/' + item.id, type: 'button',
               className: 'mcart-item', 'data-on': on ? '1' : '0',
+              title: item.id,
               onClick: () => open({ project: project.id, kind: category.key, id: item.id }, root),
-            }, item.title,
-              item.title === item.id ? null : React.createElement('span', { className: 'mcart-id' }, item.id)))
+            },
+            React.createElement('span', { className: 'mcart-item-name' }, item.title),
+            item.title === item.id ? null
+              : React.createElement('span', { className: 'mcart-item-id' }, item.id)))
           }
         }
       }
@@ -3442,13 +3632,21 @@ return {
         const ids = idsOf(scene)
         const okCount = ids.filter((id) => decoded[id] !== undefined).length
         const bad = ids.filter((id) => failedTex[id] === true).length
-        stage.push(React.createElement('div', { className: 'mcart-bar', key: 'row' },
-          React.createElement('span', { className: 'mcart-note' },
+        stage.push(React.createElement('div', { className: 'mcart-toolbar', key: 'row' },
+          React.createElement('span', { className: 'mcart-toolbar-facts' },
             scene.quads.length + ' 面 · 贴图 ' + okCount + '/' + ids.length),
-          React.createElement('button', { className: 'mcart-btn', type: 'button',
-            onClick: () => { setYaw(0.72); setPitch(0.34); setZoom(1) } }, '重置'),
-          React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: openEditor }, '✎ 手动修改'),
-          React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: complain }, '@ 提意见'),
+          React.createElement('span', { className: 'mcart-toolbar-grow' }),
+          React.createElement('button', {
+            className: 'mcart-icon', type: 'button', title: '重置视角（旋转与缩放一起）',
+            'aria-label': '重置', onClick: () => { setYaw(0.72); setPitch(0.34); setZoom(1) },
+          }, '⟲'),
+          React.createElement('button', {
+            className: 'mcart-icon', type: 'button', title: '手动修改（按面编辑这张贴图）',
+            'aria-label': '手动修改', onClick: openEditor,
+          }, '✎'),
+          React.createElement('button', {
+            className: 'mcart-btn mcart-primary', type: 'button', onClick: complain,
+          }, '@ 提意见'),
         ))
         if (bad > 0) stage.push(React.createElement('div', { className: 'mcart-bad', key: 'bad' }, bad + ' 张贴图解码失败'))
         if (scene.errors && scene.errors.length > 0) {
@@ -3495,12 +3693,18 @@ return {
         if (asset !== null) {
           const ids = idsOf(asset.recipe)
           const okCount = ids.filter((id) => decoded[id] !== undefined).length
-          stage.push(React.createElement('div', { className: 'mcart-bar', key: 'itemrow' },
-            React.createElement('span', { className: 'mcart-note' },
+          stage.push(React.createElement('div', { className: 'mcart-toolbar', key: 'itemrow' },
+            React.createElement('span', { className: 'mcart-toolbar-facts' },
               '物品 · 贴图 ' + okCount + '/' + ids.length
               + (asset.source === 'project' ? '' : '（参考）')),
-            React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: openEditor }, '✎ 手动修改'),
-            React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: complain }, '@ 提意见'),
+            React.createElement('span', { className: 'mcart-toolbar-grow' }),
+            React.createElement('button', {
+              className: 'mcart-icon', type: 'button', title: '手动修改（按面编辑这张贴图）',
+              'aria-label': '手动修改', onClick: openEditor,
+            }, '✎'),
+            React.createElement('button', {
+              className: 'mcart-btn mcart-primary', type: 'button', onClick: complain,
+            }, '@ 提意见'),
           ))
         }
       }
@@ -3511,7 +3715,7 @@ return {
       stage.push(React.createElement('div', { className: 'mcart-viewport', key: 'viewport' },
         React.createElement('canvas', {
         key: 'canvas', className: 'mcart-canvas',
-        style: { height: viewH + 'px' },
+        style: { minHeight: viewH + 'px' },
         ref: (node) => { canvasGeneration += 1; setCanvas(node) },
         onPointerDown: (event) => {
           drag.active = true
@@ -3564,6 +3768,12 @@ return {
           title: hudPicked,
           ref: (node) => setPosterCanvas(node),
         }),
+        React.createElement('svg', {
+          className: 'mcart-axis', width: 34, height: 34, viewBox: '-17 -17 34 34', 'aria-hidden': 'true',
+        },
+          React.createElement('line', { x1: 0, y1: 0, x2: 12, y2: 0, className: 'mcart-axis-x' }),
+          React.createElement('line', { x1: 0, y1: 0, x2: 0, y2: -12, className: 'mcart-axis-y' }),
+          React.createElement('line', { x1: 0, y1: 0, x2: -7, y2: 9, className: 'mcart-axis-z' })),
         hudBar()))
 
       stage.push(React.createElement('div', { className: 'mcart-grip', key: 'grip',
@@ -3632,33 +3842,50 @@ return {
         }
       }
 
+      const forgetProject = () => {
+        setRoot(''); setIndex(null); setItem(null); setItemOpen(false); setIconPick(null)
+        setPreviewItem(null); setHudPage(1); setScene(null); setSettings(null); setEdit(null)
+        setVoxel(null); setHover(null); setGhost(null)
+      }
       return React.createElement('div', { className: 'mcart-root' },
-        React.createElement('div', { className: 'mcart-bar mcart-head' },
-          React.createElement('span', { className: 'mcart-title' }, 'MC 资产'),
-          React.createElement('span', { className: 'mcart-sub' },
-            busy ? '加载中…' : (inRightColumn ? '右侧栏' : '中央面板')),
-          React.createElement('button', { className: 'mcart-btn mcart-tool', type: 'button',
-            title: '物品浏览器：来源、搜索、展示形式都在这里；下面那排物品栏跟着一起筛',
-            'data-on': itemOpen ? '1' : '0',
-            onClick: openItems }, itemOpen ? '收起列表' : '物品列表'),
-          React.createElement('button', { className: 'mcart-icon', type: 'button', title: '设置',
-            onClick: openSettings }, settings === null ? '⚙' : '⚙▾'),
+        React.createElement('div', { className: 'mcart-head' },
+          React.createElement('span', { className: 'mcart-headpath', title: root },
+            root === '' ? '未选择项目' : root),
+          React.createElement('span', { className: 'mcart-headgrow' }),
+          React.createElement('button', {
+            className: 'mcart-icon', type: 'button', title: '物品列表（浏览器）',
+            'aria-label': '物品列表', 'data-on': itemOpen ? '1' : '0',
+            onClick: openItems,
+          }, '▤'),
+          React.createElement('button', {
+            className: 'mcart-icon', type: 'button', title: '设置', 'aria-label': '设置',
+            onClick: openSettings,
+          }, settings === null ? '⚙' : '⚙▾'),
+          React.createElement('button', {
+            className: 'mcart-icon', type: 'button', title: '回到项目根（换一个项目）',
+            'aria-label': '返回项目根', onClick: forgetProject,
+          }, '⌂'),
+          React.createElement('button', {
+            className: 'mcart-icon', type: 'button', title: '刷新资产（重新读磁盘）',
+            'aria-label': '刷新', onClick: () => { forgetTextures(); setTexEpoch(texEpoch + 1); scan(root, true, null) },
+          }, '↻'),
         ),
+        React.createElement('div', {
+          className: 'mcart-body',
+          ref: (node) => {
+            if (node !== null && node !== undefined) { try { node.scrollTop = lastBodyScroll } catch (error) { /* 不是真 DOM */ } }
+          },
+          onScroll: (event) => { lastBodyScroll = event.currentTarget.scrollTop },
+        },
         settings === null ? null : settingsCard(),
         emptyRoot === null ? null : guideCard(),
-        React.createElement('div', { className: 'mcart-bar' },
-          React.createElement('span', { className: 'mcart-path' }, root),
-          React.createElement('button', { className: 'mcart-btn', type: 'button',
-            onClick: () => { setRoot(''); setIndex(null); setItem(null); setItemOpen(false); setIconPick(null); setPreviewItem(null); setHudPage(1); setScene(null); setSettings(null); setEdit(null); setVoxel(null); setHover(null); setGhost(null) } }, '换项目'),
-          React.createElement('button', { className: 'mcart-btn', type: 'button',
-            onClick: () => { forgetTextures(); setTexEpoch(texEpoch + 1); scan(root, true, null) } }, '刷新'),
-        ),
-        failure === null ? null : React.createElement('div', { className: 'mcart-err' }, withVersion(failure)),
+        failure === null ? null : failureView(failure),
         diagnosticCard(),
         React.createElement('div', { className: 'mcart-list' }, menu),
         editorCard(),
         voxelCard(),
         itemOpen ? itemCard() : null,
+        ),
         React.createElement('div', { className: 'mcart-stage' }, stage),
         React.createElement('div', { style: { display: 'none' } },
           React.createElement('canvas', { ref: setScratch, width: 256, height: 256 }),
@@ -3767,20 +3994,47 @@ return {
       ))
     }
 
+
+    function retryRight() {
+      let tries = 0
+      let dispose = null
+      let done = false
+      const stop = () => {
+        done = true
+        if (typeof dispose === 'function') { try { dispose() } catch (error) { /* 已释放 */ } }
+        dispose = null
+      }
+      const tickOnce = () => {
+        if (done) return
+        if (placement === 'right') { stop(); return }
+        if (rightColumnReady()) { stop(); placeRight(); return }
+        tries += 1
+        if (tries >= 10) stop()
+      }
+      try {
+        dispose = timer.interval(tickOnce, 500)
+      } catch (error) {
+        dispose = null
+      }
+      ctx.effect(() => () => stop())
+      return stop
+    }
+
     if (inRightColumn) placeRight()
     else {
       placeLeft()
       if (typeof ctx.inject === 'function') {
         try {
           ctx.inject(['sidebarRightTabs'], () => { if (rightColumnReady()) placeRight() })
-        } catch (error) {  }
+        } catch (error) { /* 没有 inject 就靠下面的轮询 */ }
       }
+      retryRight()
     }
   },
 }
 
     // <<< mcart:embedded-source
-    })(React, host, styles, console, "0.3.1")
+    })(React, host, styles, console, "0.3.2")
     if (plugin === null || typeof plugin !== 'object' || typeof plugin.apply !== 'function') {
       throw new Error('mcart 客户端源码没有返回一个带 apply 的插件')
     }

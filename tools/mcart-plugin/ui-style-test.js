@@ -150,8 +150,12 @@ function main() {
   check('顶栏 sticky', /\.mcart-head\{[^}]*position:sticky/.test(css))
   check('列表选中 = 强调色 8% 叠底 + 左侧 2px 强调条',
     /\.mcart-item\[data-on="1"\]\{[^}]*background:var\(--mc-select\)/.test(css)
-    && /\.mcart-item\[data-on="1"\]\{[^}]*border-left-color:var\(--mc-brand\)/.test(css)
+    && /\.mcart-item\[data-on="1"\]\{[^}]*border-left-color:var\(--mc-brand-bar\)/.test(css)
     && /--mc-select:color-mix\(in srgb,var\(--mc-brand\) 8%/.test(css))
+  check('选中条不是灰：品牌色按 75/25 与主文字色混合（暗色主题仍可辨识）',
+    /--mc-brand-bar:color-mix\(in srgb,var\(--dsw-alias-brand-primary/.test(css)
+    && /75%/.test(css))
+  check('列表区填满主体剩余高度（不留死空白）', /\.mcart-list\{[^}]*flex:1;min-height:0/.test(css))
   check('列表 hover = 中性 4% 叠底', /--mc-hover:color-mix\(in srgb,var\(--mc-text-1\) 4%/.test(css))
   check('数字 / 路径 / ID 用等宽字体 + tabular-nums',
     /--mc-mono:ui-monospace,Consolas,monospace/.test(css) && /tabular-nums/.test(css)
@@ -159,6 +163,46 @@ function main() {
   check('数值输入右对齐 + 等宽', /\.mcart-input\[type="number"\]\{[^}]*text-align:right/.test(css))
   check('开关是 12×20 轨道，不是 iOS 大开关', /\.mcart-switch input\[type="checkbox"\]\{[^}]*width:20px;height:12px/.test(css))
   check('空状态只是一行次要色文字（无插图/大标题）', /\.mcart-empty\{[^}]*font-size:var\(--mc-fs2\)/.test(css))
+
+  console.log('--- 检查器式排版（第二轮规范：单行头 / 两列列表 / 视口 / 工具栏）')
+  check('单行头部：**只有路径**（mono、超长省略；视图名不再重复）',
+    /\.mcart-headpath\{[^}]*font-family:var\(--mc-mono\)/.test(css)
+    && /\.mcart-headpath\{[^}]*text-overflow:ellipsis/.test(css)
+    && css.indexOf('.mcart-viewname{') < 0)
+  check('头部右侧是图标按钮组（22×22，组间 1px 竖线）',
+    /\.mcart-head \.mcart-icon\{[^}]*height:var\(--mc-control\)/.test(css)
+    && /\.mcart-head \.mcart-icon\+\.mcart-icon\{[^}]*border-left:1px solid/.test(css))
+  check('列表是两列行：名称占满 + id 右对齐等宽次要色',
+    /\.mcart-item\{[^}]*display:flex/.test(css)
+    && /\.mcart-item-name\{[^}]*flex:1;min-width:0/.test(css)
+    && /\.mcart-item-id\{[^}]*font-family:var\(--mc-mono\)/.test(css)
+    && /\.mcart-item-id\{[^}]*text-align:right/.test(css))
+  check('分组头 11px/600 次要色、22px 高、底 1px 线、sticky',
+    /\.mcart-group-head\{[^}]*position:sticky/.test(css)
+    && /\.mcart-group-head\{[^}]*font-size:var\(--mc-fs2\)/.test(css)
+    && /\.mcart-group-head\{[^}]*font-weight:600/.test(css)
+    && /\.mcart-group-head\{[^}]*border-bottom:1px solid/.test(css))
+  check('主体独立滚动、视口填满剩余高度',
+    /\.mcart-body\{[^}]*flex:1;min-height:0;overflow-y:auto/.test(css)
+    && /\.mcart-stage\{[^}]*flex:1;min-height:0/.test(css)
+    && /\.mcart-viewport\{[^}]*flex:1;min-height:0/.test(css)
+    && /\.mcart-canvas\{[^}]*height:100%/.test(css))
+  check('舞台工具栏：事实 mono 次要色 + 主操作强调色',
+    /\.mcart-toolbar\{[^}]*height:var\(--mc-toolbar\)/.test(css)
+    && /\.mcart-toolbar-facts\{[^}]*font-family:var\(--mc-mono\)/.test(css)
+    && /\.mcart-primary\{[^}]*color:var\(--mc-brand\)/.test(css))
+  check('视口左下角有方向指示器（单色短线，不是彩色装饰）',
+    /\.mcart-axis\{[^}]*position:absolute;left:var\(--mc-s2\);bottom:var\(--mc-s2\)/.test(css)
+    && /\.mcart-axis line\{[^}]*stroke:var\(--mc-text-2\)/.test(css))
+  check('当前物品名是视口右下角的 mono 11 次要色标签（不是浮在热栏上的 chip）',
+    /\.mcart-hudname\{[^}]*font-family:var\(--mc-mono\)/.test(css)
+    && /\.mcart-hudname\{[^}]*color:var\(--mc-text-2\)/.test(css)
+    && /\.mcart-hudname\{[^}]*background:none/.test(css))
+  check('窄宽度能换行：堆叠表单 + 容器查询收窄标签列',
+    /\.mcart-stack\{[^}]*flex-direction:column/.test(css)
+    && /@container \(max-width:260px\)/.test(css))
+  check('宿主没加载的技术原话收进可展开“详情”（不占主文案）',
+    /\.mcart-details\{/.test(css) && /\.mcart-details>summary\{/.test(css))
 
   console.log('--- 交互四态（§5）')
   check('hover / active / focus-visible / disabled 四态都有',

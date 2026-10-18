@@ -55,16 +55,61 @@ function makeCamera(position, target, width, height, fovY) {
       if (z <= 0.02) return null
       return [width / 2 + (x * focal) / z, height / 2 - (y * focal) / z, z]
     },
+    position: position, target: target, right: right, up: up, forward: forward,
+    focal: focal, width: width, height: height,
   }
 }
 
+/** 包围盒的 8 个角（fit 时要让**每一个**角都落在安全框里，不能按外接球估）。 */
+function boxCorners(box) {
+  const out = []
+  for (let i = 0; i < 8; i++) {
+    out.push([
+      (i & 1) === 1 ? box.max[0] : box.min[0],
+      (i & 2) === 2 ? box.max[1] : box.min[1],
+      (i & 4) === 4 ? box.max[2] : box.min[2],
+    ])
+  }
+  return out
+}
+
+/**
+ * 轨道相机。**按包围盒 fit**：把 8 个角投影到屏幕上，迭代拉到"全部角都落在
+ * 88% 安全框（四周各留 ~12% 边距）里"，再把画面整体上移半个 HUD 高度 ——
+ * 视口底部被热键栏盖住，不避让的话方块的底边就被切掉（用户截图实测）。
+ * `zoom` 是用户缩放倍数（1 = 自动 fit）。
+ */
 function orbitCamera(box, yaw, pitch, zoom, width, height, fovY) {
   const centre = mul(add(box.min, box.max), 0.5)
-  const radius = Math.max(vlen(sub(box.max, box.min)) / 2, 0.05)
-  const fit = radius / Math.sin(fovY / 2) / zoom
+  const corners = boxCorners(box)
   const cp = Math.cos(pitch)
   const direction = [Math.sin(yaw) * cp, Math.sin(pitch), Math.cos(yaw) * cp]
-  return makeCamera(add(centre, mul(direction, fit * 1.05)), centre, width, height, fovY)
+  // 热键栏（HUD）盖住视口底部：可用高度要先扣掉它。
+  const hud = Math.min(56, Math.max(0, height * 0.2))
+  const usableH = Math.max(32, height - hud)
+  const margin = 0.88
+  const halfW = Math.max(1, width * margin / 2)
+  const halfH = Math.max(1, usableH * margin / 2)
+  const z = Math.max(zoom, 0.01)
+  let distance = Math.max(vlen(sub(box.max, box.min)) / 2, 0.05)
+    / Math.sin(fovY / 2) / z * 1.2
+  let camera = null
+  for (let pass = 0; pass < 6; pass++) {
+    camera = makeCamera(add(centre, mul(direction, distance)), centre, width, height, fovY)
+    let worst = 0
+    for (const corner of corners) {
+      const p = camera.project(corner)
+      if (p === null) { worst = Math.max(worst, 8); continue }
+      worst = Math.max(worst, Math.abs(p[0] - width / 2) / halfW,
+        Math.abs(p[1] - height / 2) / halfH)
+    }
+    if (worst <= 1 && worst >= 0.9) break
+    distance *= Math.max(0.5, worst)
+  }
+  // 画面整体上移 hud/2：相机与目标一起下移，内容就上移（内容区避让热键栏）。
+  const shift = (hud / 2) * (distance / Math.max(camera.focal, 1e-6))
+  const target = sub(centre, mul(camera.up, shift))
+  return makeCamera(add(target, mul(direction, distance)), target, width, height, fovY)
 }
 
 // Which ROW of an animated strip to sample right now.
@@ -468,5 +513,41 @@ function iconCamera(quads, width, height, fill) {
         mid + 1 - point[2] + 0.5]
     },
   }
+}
+
+/**
+ * 在地面（模型包围盒的底面）上画一层**极淡的网格**，把模型"放"在地上，
+ * 而不是浮在虚空里。这是 3D 工具视口的常规参照物（Blender 的 grid floor）。
+ *
+ * 只画在 2D 画布上（`paint`），**不碰拾取缓冲**：网格不可点、不参与深度。
+ * 对比度刻意压到极低（1px、白 6% / 中线 10%），只负责"有个地面"。
+ */
+function drawGroundGrid(paint, camera, width, height, box) {
+  const ground = box.min[1]
+  const spanX = Math.max(box.max[0] - box.min[0], 1)
+  const spanZ = Math.max(box.max[2] - box.min[2], 1)
+  const extent = Math.max(spanX, spanZ) * 1.6
+  const step = extent / 8
+  const cx = (box.min[0] + box.max[0]) / 2
+  const cz = (box.min[2] + box.max[2]) / 2
+  const half = extent / 2
+  const line = (from, to, style) => {
+    const a = camera.project(from)
+    const b = camera.project(to)
+    if (a === null || b === null) return
+    paint.strokeStyle = style
+    paint.beginPath()
+    paint.moveTo(a[0], a[1])
+    paint.lineTo(b[0], b[1])
+    paint.stroke()
+  }
+  paint.lineWidth = 1
+  for (let i = -4; i <= 4; i++) {
+    const at = i * step
+    const strong = i === 0 ? 'rgba(255,255,255,.10)' : 'rgba(255,255,255,.06)'
+    line([cx + at, ground, cz - half], [cx + at, ground, cz + half], strong)
+    line([cx - half, ground, cz + at], [cx + half, ground, cz + at], strong)
+  }
+  return { extent: extent, step: step }
 }
 

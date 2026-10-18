@@ -11,6 +11,72 @@ panel/report contract is stable, and whose shipped skills are general (no loader
 version, machine or project is baked in). Earlier 0.1.x releases were development
 snapshots and are not itemised here.
 
+## 0.3.2
+
+The UI pass this project needed was never "make it nicer": it was **look at it**. This release starts
+with a written spec, then a machine that can see the result.
+
+### Added — two documents
+
+- **`docs/UI-STYLE.md`** — a design spec, not a mood: the reference language is a *professional
+  inspector* (Blender properties / VS Code panel — flat, dense, narrow, quiet), with an explicit
+  anti-list of what made the panel read as "AI-made": cards inside cards, large radii, pill buttons,
+  gradients, glow, animation, coloured chips, emoji icons, 16px+ padding, centred form labels.
+  It fixes the numbers: 12/11px type, 22px rows, 26px form rows, 28px toolbar, 22px controls,
+  radii 2/3 only, spacing 2/4/6/8, four interaction states, token-only colours.
+- **`docs/CUA-UI-REVIEW.md`** — how an agent can *see* this panel: the official
+  `@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp` provider (published by DeepSeek,
+  `packages/experimental/…` in `deepseek-ai/deepseek-harness`) mounted against the locally installed
+  Cua driver, plus the exact screenshot/zoom/click procedure and its traps (Electron exposes no UIA
+  tree; Chromium input fields only accept foreground delivery; coordinates are in the returned
+  screenshot's pixel space).
+
+### Changed — the panel, judged from screenshots
+
+- **Header**: the breadcrumb leaked placement jargon (`中央面板`) and repeated the tab title. It is
+  now one row — path only (mono 11px, muted, ellipsised, full path in `title`).
+- **Asset list**: rows are two columns — localised name on the left, **monospaced id right-aligned
+  and muted** — instead of `深渊砖 abyss_bricks` run together. The group header (`方块 · 44`) is
+  sticky with a hairline, the list fills its container and scrolls on its own, and the selected row's
+  2px left bar uses a brand-derived token (`--mc-brand-bar`, brand 75% + text 25%) rather than
+  reading as grey.
+- **Toolbar**: counts (`6 面 · 贴图 1/1`) in mono muted on the left; `重置`/`手动修改` as icon buttons
+  with tooltips and 1px dividers; `@ 提意见` as the only primary action, right-aligned.
+- **3D viewport**: the camera now **auto-fits the bounding box** by projecting all eight corners
+  into an 88% safe box (~12% margin), reserves room for the hotbar and shifts the content up so the
+  block is never clipped, and re-fits on asset switch and viewport resize. A subtle ground grid and
+  a small axis indicator give the model a ground and an orientation; the selection label moved from
+  a chip floating over the hotbar to a mono label in the corner.
+- **Narrow widths**: the settings "使用" button was clipped by the right sidebar; the input and button
+  group now wrap instead of overflowing.
+
+### Fixed — recovery instead of a raw error
+
+- **"宿主已卸载" is now actionable.** After repeated rebuilds plus HMR the host half can end up
+  disposed (`0 个方法`), and the panel used to show that sentence and nothing else. It now says, in
+  two lines, that the plugin host did not load (which happens right after a rebuild) and that DSH
+  must be fully quit and reopened — with the technical detail collapsed under `详情` — and it
+  **retries the operation once** after a second before reporting.
+- **Panel placement is deterministic.** At boot the right sidebar service can appear after the panel;
+  the panel now retries the migration and removes the left/centre fallback once it lands on the right
+  sidebar. `ui-test --fault-placement` proves the retry is load-bearing (delete it → three assertions
+  go red).
+
+### Gates
+
+- New `tools/mcart-plugin/ui-style-test.js` (`plugin-ui-style`): 27 assertions over the CSS string
+  that actually ships — every anti-list item must be absent, every fixed number present; three fault
+  modes return exit 1. `icon-test` gained static assertions for fit/reset/grid/axis/details/retry/
+  two-column rows/placement retry; `ui-test` gained the placement-race and host-unloaded behaviours
+  without relaxing any existing behaviour assertion.
+- **51 conditions**, two passes (default console encoding and `--encoding gbk`): **50 green / 1 SKIP /
+  0 red**.
+
+### Note
+
+The visual review was done on the previous build with CUA screenshots; this batch's final look was
+checked by code, tests and gates, and needs one page refresh to be seen.
+
 ## 0.3.1
 
 ### Changed

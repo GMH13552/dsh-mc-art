@@ -55,16 +55,61 @@ function makeCamera(position, target, width, height, fovY) {
       if (z <= 0.02) return null
       return [width / 2 + (x * focal) / z, height / 2 - (y * focal) / z, z]
     },
+    position: position, target: target, right: right, up: up, forward: forward,
+    focal: focal, width: width, height: height,
   }
 }
 
+/** 包围盒的 8 个角（fit 时要让**每一个**角都落在安全框里，不能按外接球估）。 */
+function boxCorners(box) {
+  const out = []
+  for (let i = 0; i < 8; i++) {
+    out.push([
+      (i & 1) === 1 ? box.max[0] : box.min[0],
+      (i & 2) === 2 ? box.max[1] : box.min[1],
+      (i & 4) === 4 ? box.max[2] : box.min[2],
+    ])
+  }
+  return out
+}
+
+/**
+ * 轨道相机。**按包围盒 fit**：把 8 个角投影到屏幕上，迭代拉到"全部角都落在
+ * 88% 安全框（四周各留 ~12% 边距）里"，再把画面整体上移半个 HUD 高度 ——
+ * 视口底部被热键栏盖住，不避让的话方块的底边就被切掉（用户截图实测）。
+ * `zoom` 是用户缩放倍数（1 = 自动 fit）。
+ */
 function orbitCamera(box, yaw, pitch, zoom, width, height, fovY) {
   const centre = mul(add(box.min, box.max), 0.5)
-  const radius = Math.max(vlen(sub(box.max, box.min)) / 2, 0.05)
-  const fit = radius / Math.sin(fovY / 2) / zoom
+  const corners = boxCorners(box)
   const cp = Math.cos(pitch)
   const direction = [Math.sin(yaw) * cp, Math.sin(pitch), Math.cos(yaw) * cp]
-  return makeCamera(add(centre, mul(direction, fit * 1.05)), centre, width, height, fovY)
+  // 热键栏（HUD）盖住视口底部：可用高度要先扣掉它。
+  const hud = Math.min(56, Math.max(0, height * 0.2))
+  const usableH = Math.max(32, height - hud)
+  const margin = 0.88
+  const halfW = Math.max(1, width * margin / 2)
+  const halfH = Math.max(1, usableH * margin / 2)
+  const z = Math.max(zoom, 0.01)
+  let distance = Math.max(vlen(sub(box.max, box.min)) / 2, 0.05)
+    / Math.sin(fovY / 2) / z * 1.2
+  let camera = null
+  for (let pass = 0; pass < 6; pass++) {
+    camera = makeCamera(add(centre, mul(direction, distance)), centre, width, height, fovY)
+    let worst = 0
+    for (const corner of corners) {
+      const p = camera.project(corner)
+      if (p === null) { worst = Math.max(worst, 8); continue }
+      worst = Math.max(worst, Math.abs(p[0] - width / 2) / halfW,
+        Math.abs(p[1] - height / 2) / halfH)
+    }
+    if (worst <= 1 && worst >= 0.9) break
+    distance *= Math.max(0.5, worst)
+  }
+  // 画面整体上移 hud/2：相机与目标一起下移，内容就上移（内容区避让热键栏）。
+  const shift = (hud / 2) * (distance / Math.max(camera.focal, 1e-6))
+  const target = sub(centre, mul(camera.up, shift))
+  return makeCamera(add(target, mul(direction, distance)), target, width, height, fovY)
 }
 
 // Which ROW of an animated strip to sample right now.
@@ -470,6 +515,42 @@ function iconCamera(quads, width, height, fill) {
   }
 }
 
+/**
+ * 在地面（模型包围盒的底面）上画一层**极淡的网格**，把模型"放"在地上，
+ * 而不是浮在虚空里。这是 3D 工具视口的常规参照物（Blender 的 grid floor）。
+ *
+ * 只画在 2D 画布上（`paint`），**不碰拾取缓冲**：网格不可点、不参与深度。
+ * 对比度刻意压到极低（1px、白 6% / 中线 10%），只负责"有个地面"。
+ */
+function drawGroundGrid(paint, camera, width, height, box) {
+  const ground = box.min[1]
+  const spanX = Math.max(box.max[0] - box.min[0], 1)
+  const spanZ = Math.max(box.max[2] - box.min[2], 1)
+  const extent = Math.max(spanX, spanZ) * 1.6
+  const step = extent / 8
+  const cx = (box.min[0] + box.max[0]) / 2
+  const cz = (box.min[2] + box.max[2]) / 2
+  const half = extent / 2
+  const line = (from, to, style) => {
+    const a = camera.project(from)
+    const b = camera.project(to)
+    if (a === null || b === null) return
+    paint.strokeStyle = style
+    paint.beginPath()
+    paint.moveTo(a[0], a[1])
+    paint.lineTo(b[0], b[1])
+    paint.stroke()
+  }
+  paint.lineWidth = 1
+  for (let i = -4; i <= 4; i++) {
+    const at = i * step
+    const strong = i === 0 ? 'rgba(255,255,255,.10)' : 'rgba(255,255,255,.06)'
+    line([cx + at, ground, cz - half], [cx + at, ground, cz + half], strong)
+    line([cx - half, ground, cz + at], [cx + half, ground, cz + at], strong)
+  }
+  return { extent: extent, step: step }
+}
+
 /** One icon frame into a canvas.  `decoded` holds one entry per texture id:
  *  the pixels, and whatever else the decode step kept. */
 function drawItemIcon(canvas, recipe, frameIndex, decoded) {
@@ -618,6 +699,10 @@ const CSS = [
     + '--mc-text-1:var(--dsw-alias-label-primary,rgba(236,236,241,.94));'
     + '--mc-text-2:var(--dsw-alias-label-secondary,rgba(236,236,241,.58));'
     + '--mc-brand:var(--dsw-alias-brand-primary,#4f9cf9);'
+    // 选中行左侧 2px 条：纯品牌色在暗色主题下偏暗、容易被当成灰，
+    // 按 75% 品牌色 + 25% 主文字色提亮（仍是 token 派生，不是硬编码颜色）。
+    + '--mc-brand-bar:color-mix(in srgb,var(--dsw-alias-brand-primary,#4f9cf9) 75%,'
+    + 'var(--dsw-alias-label-primary,#ececf1));'
     + '--mc-error:var(--dsw-alias-state-error-primary,#e06c6c);'
     + '--mc-warn:var(--dsw-alias-state-warn-primary,#e0a06c);'
     + '--mc-ok:var(--dsw-alias-state-success-primary,#7fc98a);'
@@ -636,7 +721,7 @@ const CSS = [
     // 内容区（视口 / 像素画布 / HUD）是内容不是界面：固定中性深底
     + '--mc-canvas-bg:#141317;--mc-hud-bg:rgba(20,20,24,.8);'
     + 'display:flex;flex-direction:column;gap:var(--mc-s4);padding:var(--mc-s4);'
-    + 'height:100%;box-sizing:border-box;overflow-y:auto;overflow-x:hidden;'
+    + 'height:100%;box-sizing:border-box;overflow:hidden;container-type:inline-size;'
     + 'color:var(--mc-text-1);background:var(--mc-bg-0);'
     + 'font:var(--mc-fs)/var(--mc-lh) system-ui,-apple-system,"Segoe UI",sans-serif}',
   // ---- 标签 / 文字层级 -----------------------------------------------------
@@ -659,14 +744,35 @@ const CSS = [
     + 'padding:0 var(--mc-s4);margin:calc(-1 * var(--mc-s4)) calc(-1 * var(--mc-s4)) 0;'
     + 'background:var(--mc-bg-0);border-bottom:1px solid var(--mc-line-1)}',
   '.mcart-head>.mcart-title{color:var(--mc-text-1)}',
+  // ---- 单行紧凑头部：只有路径（mono）+ 右侧图标按钮组 ----------------------
+  // 不再显示"中央面板/右侧栏"这类内部落点概念，也不再重复视图名。
+  '.mcart-headpath{font-family:var(--mc-mono);font-size:var(--mc-fs2);color:var(--mc-text-2);'
+    + 'font-variant-numeric:tabular-nums;min-width:0;overflow:hidden;text-overflow:ellipsis;'
+    + 'white-space:nowrap}',
+  '.mcart-headgrow{flex:1;min-width:var(--mc-s2)}',
   // 工具栏按钮：透明底、组间 1px 竖线（只在 header 内）
   '.mcart-head .mcart-btn,.mcart-head .mcart-icon{background:transparent;border-color:transparent;'
-    + 'height:var(--mc-control)}',
+    + 'height:var(--mc-control);flex:none}',
   '.mcart-head .mcart-btn:hover,.mcart-head .mcart-icon:hover{background:var(--mc-hover)}',
   '.mcart-head .mcart-btn+.mcart-btn,.mcart-head .mcart-btn+.mcart-icon,'
-    + '.mcart-head .mcart-icon+.mcart-btn{border-left:1px solid var(--mc-line-1);'
-    + 'border-top-left-radius:0;border-bottom-left-radius:0;padding-left:var(--mc-s3)}',
+    + ' .mcart-head .mcart-icon+.mcart-btn,.mcart-head .mcart-icon+.mcart-icon{'
+    + 'border-left:1px solid var(--mc-line-1);border-radius:0;padding-left:var(--mc-s1)}',
+  // ---- 3D 舞台的工具栏：事实（左）· 图标工具（中）· 主操作（右） ----------
+  '.mcart-toolbar{display:flex;align-items:center;gap:var(--mc-s2);height:var(--mc-toolbar);'
+    + 'min-height:var(--mc-toolbar)}',
+  '.mcart-toolbar-facts{font-family:var(--mc-mono);font-size:var(--mc-fs2);'
+    + 'font-variant-numeric:tabular-nums;color:var(--mc-text-2);white-space:nowrap}',
+  '.mcart-toolbar-grow{flex:1;min-width:var(--mc-s2)}',
+  // 主操作：强调色文字 + 强调色描边（唯一带品牌色的按钮）
+  '.mcart-primary{color:var(--mc-brand);border-color:var(--mc-brand);background:transparent}',
+  '.mcart-primary:hover{background:var(--mc-select);border-color:var(--mc-brand)}',
   '.mcart-bar{display:flex;align-items:center;gap:var(--mc-s2);flex-wrap:wrap}',
+  // ---- 主体（独立滚动）与 3D 舞台（占满剩余高度） -------------------------
+  '.mcart-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;'
+    + 'flex-direction:column;gap:var(--mc-s4);scrollbar-width:thin;'
+    + 'scrollbar-color:var(--dsw-scrollbar-thumb,var(--mc-line-2)) transparent;'
+    + 'overscroll-behavior:contain}',
+  '.mcart-stage{flex:1;min-height:0;display:flex;flex-direction:column;gap:var(--mc-s2)}',
   // 卡片去掉"卡片感"：面 + 顶部分隔线 + 4/8 留白，无圆角无阴影
   '.mcart-card{border:0;border-top:1px solid var(--mc-line-1);border-radius:0;'
     + 'padding:var(--mc-s2) 0;display:flex;flex-direction:column;gap:var(--mc-s2);'
@@ -732,18 +838,35 @@ const CSS = [
     + 'border-left:2px solid;padding-left:var(--mc-s3)}',
   '.mcart-bad{color:var(--mc-warn);border-left-color:var(--mc-warn)}',
   '.mcart-err{color:var(--mc-error);border-left-color:var(--mc-error)}',
-  // ---- 列表：行高 22，选中 8% 叠底 + 左侧 2px 强调条 ------------------------
-  '.mcart-list{overflow:auto;border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);'
-    + 'padding:var(--mc-s1);max-height:240px}',
+  // 技术细节：可展开的"详情"，原话只进这里（不占主文案）
+  '.mcart-details{font-size:var(--mc-fs2);line-height:14px;color:var(--mc-text-2);'
+    + 'margin-top:var(--mc-s1)}',
+  '.mcart-details>summary{cursor:pointer;width:max-content}',
+  '.mcart-details>.mcart-report{margin:var(--mc-s1) 0 0}',
+  // ---- 列表：两列行（名称 + 右对齐等宽 id），选中 8% 叠底 + 左侧 2px 强调条 ----
+  // 列表区填满主体剩余高度（不留"飘在空白里"的死区），底部自带 1px 发丝线。
+  '.mcart-list{flex:1;min-height:0;overflow:auto;'
+    + 'border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);'
+    + 'padding:var(--mc-s1)}',
   '.mcart-row{display:flex;align-items:center;gap:var(--mc-s2);height:var(--mc-lh);'
     + 'padding:0 var(--mc-s2);border-left:2px solid transparent}',
   '.mcart-row:hover{background:var(--mc-hover)}',
-  '.mcart-item{display:block;width:100%;height:var(--mc-lh);padding:0 var(--mc-s2);text-align:left;'
+  '.mcart-item{display:flex;align-items:center;gap:var(--mc-s2);width:100%;'
+    + 'height:var(--mc-lh);padding:0 var(--mc-s2);text-align:left;'
     + 'border:0;border-left:2px solid transparent;border-radius:0;background:none;'
     + 'color:var(--mc-text-1);font:inherit;font-size:var(--mc-fs);cursor:pointer}',
+  '.mcart-item-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.mcart-item-id{flex:none;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+    + 'font-family:var(--mc-mono);font-size:var(--mc-fs2);font-variant-numeric:tabular-nums;'
+    + 'color:var(--mc-text-2);text-align:right}',
+  // 分组头：11px/600 次要色、22px 高、底部 1px 发丝线、滚动时 sticky（贴在顶栏下面）
+  '.mcart-group-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;'
+    + 'height:var(--mc-section);min-height:var(--mc-section);padding:0 var(--mc-s2);'
+    + 'background:var(--mc-bg-0);border-bottom:1px solid var(--mc-line-1);'
+    + 'font-size:var(--mc-fs2);font-weight:600;color:var(--mc-text-2)}',
   '.mcart-item:hover{background:var(--mc-hover)}',
   '.mcart-item:active{background:var(--mc-active)}',
-  '.mcart-item[data-on="1"]{background:var(--mc-select);border-left-color:var(--mc-brand)}',
+  '.mcart-item[data-on="1"]{background:var(--mc-select);border-left-color:var(--mc-brand-bar)}',
   '.mcart-projects{max-height:240px;overflow:auto;display:flex;flex-direction:column;'
     + 'border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);padding:var(--mc-s1)}',
   '.mcart-mods{border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);'
@@ -756,18 +879,25 @@ const CSS = [
   '.mcart-list,.mcart-hotbar,.mcart-swatches,.mcart-projects,.mcart-mods{'
     + 'scrollbar-width:thin;scrollbar-color:var(--dsw-scrollbar-thumb,var(--mc-line-2)) transparent;'
     + 'overscroll-behavior:contain}',
-  // ---- 取景框（内容区，固定深底） ------------------------------------------
-  '.mcart-stage{flex:none;display:flex;flex-direction:column;gap:var(--mc-s2)}',
-  '.mcart-canvas{width:100%;height:240px;display:block;border-radius:var(--mc-radius-panel);'
-    + 'background:var(--mc-canvas-bg);border:1px solid var(--mc-line-1);cursor:grab;touch-action:none}',
+  // ---- 取景框（内容区，固定深底；视口占满舞台剩余高度） --------------------
+  '.mcart-canvas{width:100%;height:100%;min-height:180px;display:block;'
+    + 'border-radius:var(--mc-radius-panel);background:var(--mc-canvas-bg);'
+    + 'border:1px solid var(--mc-line-1);cursor:grab;touch-action:none}',
   '.mcart-canvas:active{cursor:grabbing}',
-  '.mcart-viewport{position:relative;flex:none}',
+  '.mcart-viewport{position:relative;flex:1;min-height:0}',
   '.mcart-zoom{position:absolute;right:var(--mc-s2);top:var(--mc-s2);display:flex;'
     + 'gap:var(--mc-s1);opacity:.9}',
   '.mcart-zoom:hover{opacity:1}',
   '.mcart-zoombtn{width:var(--mc-control);height:var(--mc-control);padding:0;display:inline-flex;'
     + 'align-items:center;justify-content:center;font-size:var(--mc-fs);line-height:1;'
     + 'background:var(--mc-hud-bg);border-color:var(--mc-line-2);color:var(--mc-text-1)}',
+  // 方向指示器：左下角，三根 12px 短线，单色低饱和（没有彩色装饰）
+  '.mcart-axis{position:absolute;left:var(--mc-s2);bottom:var(--mc-s2);pointer-events:none;'
+    + 'opacity:.75}',
+  '.mcart-axis line{stroke:var(--mc-text-2);stroke-width:1;stroke-linecap:butt}',
+  '.mcart-axis-x{opacity:.9}',
+  '.mcart-axis-y{opacity:.65}',
+  '.mcart-axis-z{opacity:.45}',
   '.mcart-poster{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);'
     + 'image-rendering:pixelated;pointer-events:none}',
   '.mcart-grip{display:flex;align-items:center;justify-content:center;height:5px;'
@@ -777,9 +907,11 @@ const CSS = [
   // ---- HUD（游戏物品栏）：槽位 22px、2px 圆角、选中 1px 强调内描边 ----------
   '.mcart-hud{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;'
     + 'align-items:center;gap:var(--mc-s1);padding:0 var(--mc-s2) var(--mc-s2);pointer-events:none}',
-  '.mcart-hudname{font-family:var(--mc-mono);font-size:var(--mc-fs2);padding:0 var(--mc-s2);'
-    + 'border-radius:var(--mc-radius);background:var(--mc-hud-bg);'
-    + 'border:1px solid var(--mc-line-2)}',
+  // 当前物品名：**视口右下角的 mono 11 次要色标签**（不再浮在热键栏上方挡内容）
+  '.mcart-hudname{position:absolute;right:var(--mc-s2);'
+    + 'bottom:calc(var(--mc-control) + var(--mc-s4));font-family:var(--mc-mono);'
+    + 'font-size:var(--mc-fs2);font-variant-numeric:tabular-nums;color:var(--mc-text-2);'
+    + 'background:none;border:0;padding:0;pointer-events:none;white-space:nowrap}',
   '.mcart-hudbar{display:flex;align-items:center;gap:var(--mc-s1);padding:var(--mc-s1);'
     + 'border-radius:var(--mc-radius-panel);background:var(--mc-hud-bg);'
     + 'border:1px solid var(--mc-line-2);pointer-events:auto}',
@@ -831,6 +963,16 @@ const CSS = [
     + 'padding:var(--mc-s3);margin:var(--mc-s1) 0;line-height:14px;max-height:240px;'
     + 'overflow:auto;user-select:text}',
   '.mcart-reportnote{color:var(--mc-text-2);word-break:break-all}',
+  // ---- 窄宽度（右侧栏）：不许把按钮裁掉 —— 控件换行、标签列收窄 -------------
+  '.mcart-stack{display:flex;flex-direction:column;align-items:stretch;gap:var(--mc-s2)}',
+  '.mcart-stack>.mcart-btn{align-self:flex-start}',
+  '.mcart-prop-value{flex-wrap:wrap}',
+  '.mcart-prop-value>.mcart-input{flex:1 1 96px}',
+  '.mcart-prop-value>.mcart-btn{flex:none}',
+  '@container (max-width:260px){'
+    + '.mcart-prop{grid-template-columns:64px 1fr}'
+    + '.mcart-hint{padding-left:0}'
+    + '.mcart-item-id{max-width:46%}}',
 ].join('')
 
 const CATEGORIES = [
@@ -1131,6 +1273,22 @@ function withVersion(text) {
 }
 
 /**
+ * "宿主已卸载 / 已注册 0 个方法"不是用户能听懂的句子，也不是用户能自己修的：
+ * 它只在插件刚被重建（HMR/重装）时出现，动作永远是"完全退出再打开 DSH"。
+ * 所以界面上先给两行人话 + 可展开的技术详情（原话只进详情/日志，不占主文案）。
+ */
+function isHostUnloaded(text) {
+  const line = text === null || text === undefined ? '' : String(text)
+  return /宿主已卸载|已注册 0 个方法|宿主没有这个方法/.test(line)
+}
+function hostRecoveryHint() {
+  return {
+    title: '面板宿主没有加载成功——插件刚重建过时会出现这种情况。',
+    action: '请完全退出并重新打开 DSH（不是刷新页面）。',
+  }
+}
+
+/**
  * 贴图句柄的底线：**只写项目自己的包**。
  *
  * `atlas.saveTexture` 收的是贴图句柄（`<ns>:<路径>`），宿主拿它在项目包里定点写；
@@ -1258,6 +1416,11 @@ function paletteOf(pixels, limit) {
 
 let canvasGeneration = 0
 let lastDrawKey = ''
+// 主体滚动位置。面板从"中央/左栏"迁到右侧栏会重新挂载，滚动位置属于用户状态：
+// 迁移完要能回到原处，而不是把人弹回顶部。
+let lastBodyScroll = 0
+// 上一次打开的资产（`{project, kind, id}`）。迁移/重挂载后恢复选中，而不是回到第一个。
+let lastOpened = null
 // The camera the last frame was drawn with.  A click is a pixel, and turning
 // that pixel into "how far up the face did I hit" needs the same projection the
 // pick buffer was filled with -- not a fresh one from current state.
@@ -1481,6 +1644,22 @@ return {
       }
       : function PanelBoundary(props) { return props.children }
 
+    /**
+     * 失败块：宿主没加载成功时 = **两行人话 + 可展开的技术详情**（原话不占主文案）；
+     * 其它失败照旧一行（那些话本身用户看得懂，也需要原样）。
+     */
+    function failureView(text) {
+      const raw = text === null || text === undefined ? '' : String(text)
+      if (!isHostUnloaded(raw)) return React.createElement('div', { className: 'mcart-err' }, withVersion(raw))
+      const hint = hostRecoveryHint()
+      return React.createElement('div', { className: 'mcart-err' },
+        React.createElement('div', null, hint.title),
+        React.createElement('div', null, hint.action),
+        React.createElement('details', { className: 'mcart-details' },
+          React.createElement('summary', null, '详情'),
+          React.createElement('pre', { className: 'mcart-report' }, withVersion(raw))))
+    }
+
     function Atlas(props) {
       // 故障注入的缝：门禁把它置真，用来证明"渲染抛异常时边界真的会画出那句话"
       // （生产里这面旗永远是 undefined）。
@@ -1490,6 +1669,23 @@ return {
       const sessionId = props.sessionId === undefined ? '' : String(props.sessionId)
       const indexPair = React.useState(null)
       const failurePair = React.useState(null)
+      // 宿主"已卸载"多半是一次瞬时状态（插件刚重建过）：**先自动重试一次**（~1s），
+      // 重试仍失败才报"请完全退出并重新打开 DSH"。一次抖动不该摆出错误页。
+      let hostRetried = false
+      /** 返回 true = 已安排重试（调用方先别写失败文案）。 */
+      function reportFailure(message, retry) {
+        const text = message === null || message === undefined ? '' : String(message)
+        if (isHostUnloaded(text) && !hostRetried && typeof retry === 'function') {
+          hostRetried = true
+          try {
+            // 只重试一次：重试再失败就报错（成功路径会把 hostRetried 复位）。
+            timer.timeout(() => { retry() }, 1000)
+            return true
+          } catch (error) { hostRetried = false }
+        }
+        setFailure(text)
+        return false
+      }
       // 空目录的引导：`emptyRoot` 记着"哪个根目录里一个项目都没有"，`newId` 是用户正在
       // 取的项目名（命名空间与它同名 —— 一个模组一个命名空间，不让在这里分叉）。
       const emptyPair = React.useState(null)
@@ -1717,6 +1913,12 @@ return {
       }
 
       function open(target, where) {
+        // 记住"用户选中的是哪一个"：面板从左/中栏迁到右侧栏（或任何重新挂载）
+        // 时要用它恢复，否则迁移一次就把人弹回第一个资产。
+        lastOpened = { project: target.project, kind: target.kind, id: target.id }
+        // 切换资产后重新 fit：把用户缩放复位到 1（fit 是"按包围盒自动装进视口"，
+        // 上一件资产的缩放对新资产没有意义）。
+        setZoom(1)
         // 换项目就丢像素缓存：缓存按贴图 id 存，而两个项目可以有同名贴图
         // （`examplemod:stone` 换了项目还是那个 id，但文件已经不是同一张）。
         if (lastProject !== target.project) { forgetTextures(); setTexEpoch(texEpoch + 1) }
@@ -1739,18 +1941,22 @@ return {
           setBusy(false)
           if (result === null || result === undefined) { setFailure('scene returned nothing'); return }
           if (result.error !== undefined) {
-            setFailure(result.error)
+            if (reportFailure(result.error, () => open(target, where))) return
             noteDiag(result, result.error)
             setScene(null)
             return
           }
           setFailure(null)
+          hostRetried = false
           // 换了一个画得出来的资产：上一次的报告作废（不然下一条同样的报告会被当成"重复"）。
           lastReportKey = ''
           setDiag(null)
           for (const key of Object.keys(imageNodes)) delete imageNodes[key]
           setScene(sceneOf(result))
-        }).catch((error) => { setBusy(false); setFailure(String(error && error.message ? error.message : error)) })
+        }).catch((error) => {
+          setBusy(false)
+          reportFailure(String(error && error.message ? error.message : error), () => open(target, where))
+        })
       }
 
       function firstOfProject(project) {
@@ -1773,14 +1979,31 @@ return {
         return null
       }
 
+      /** 迁移/重挂载后恢复上次打开的那个资产；找不到就返回 null（回落到第一个）。 */
+      function rememberedPick(projects) {
+        if (lastOpened === null) return null
+        for (const project of projects || []) {
+          if (project.id !== lastOpened.project) continue
+          const items = (project.items && project.items[lastOpened.kind]) || []
+          for (const item of items) {
+            if (item.id === lastOpened.id) return { project: project.id, kind: lastOpened.kind, id: item.id }
+          }
+        }
+        return null
+      }
+
       function scan(where, force, wantProject) {
         if (where === undefined || where === '') { setIndex(null); return }
         if (force !== true && indexes[where] !== undefined) {
           const cached = indexes[where]
           setIndex(cached)
           setFailure(null)
+          hostRetried = false
           const project = wantProject === undefined || wantProject === null ? null : (cached.projects || []).filter((p) => p.id === wantProject)[0]
-          const first = project !== null && project !== undefined ? firstOfProject(project) : firstPick(cached)
+          // 迁移后保留用户选中的资产（找不到才回落到第一个）；显式指定项目时不恢复。
+          const remembered = wantProject === undefined || wantProject === null ? rememberedPick(cached.projects) : null
+          const first = remembered
+            || (project !== null && project !== undefined ? firstOfProject(project) : firstPick(cached))
           if (first !== null) open(first, where)
           return
         }
@@ -1790,7 +2013,7 @@ return {
           setBusy(false)
           if (result === null || result === undefined) { setFailure('scan returned nothing'); return }
           setIndex(result)
-          if (result.error !== undefined) { setFailure(result.error); return }
+          if (result.error !== undefined) { reportFailure(result.error, () => scan(where, true, null)); return }
           const projects = result.projects || []
           if (projects.length === 0) {
             // 以前这里直接 setFailure —— 于是"刚开一个空目录"看起来像报错。空目录不是错误，
@@ -1803,11 +2026,17 @@ return {
           }
           setEmptyRoot(null)
           setFailure(null)
+          hostRetried = false
           indexes[where] = result
           const project = wantProject === undefined || wantProject === null ? null : projects.filter((p) => p.id === wantProject)[0]
-          const first = project !== null && project !== undefined ? firstOfProject(project) : firstPick(result)
+          const remembered = wantProject === undefined || wantProject === null ? rememberedPick(projects) : null
+          const first = remembered
+            || (project !== null && project !== undefined ? firstOfProject(project) : firstPick(result))
           if (first !== null) open(first, where)
-        }).catch((error) => { setBusy(false); setFailure(String(error && error.message ? error.message : error)) })
+        }).catch((error) => {
+          setBusy(false)
+          reportFailure(String(error && error.message ? error.message : error), () => scan(where, true, null))
+        })
       }
 
       function commitRoot(next) {
@@ -2191,6 +2420,8 @@ return {
         const frame = paint.createImageData(size[0], size[1])
         frame.data.set(bytes)
         paint.putImageData(frame, 0, 0)
+        // 极淡的地面网格：有参照物，模型才"站"在地上而不是浮在虚空里（内容区）。
+        drawGroundGrid(paint, camera, size[0], size[1], box)
       })
 
       /** The icon recipes whose textures have to be decoded right now: the hotbar's
@@ -3958,14 +4189,15 @@ return {
         // 于是"选择目录…"失败（对话框弹不出来、没有 shell 服务…）时，
         // 界面上一个字都不变 —— 用户看到的就是"点了没反应，也没有报错"。
         if (notice !== null) rows.push(React.createElement('div', { className: 'mcart-bad', key: 'notice' }, String(notice)))
-        if (failure !== null) rows.push(React.createElement('div', { className: 'mcart-err', key: 'failure' }, withVersion(failure)))
+        if (failure !== null) rows.push(React.createElement('div', { key: 'failure' }, failureView(failure)))
         return React.createElement('div', { className: 'mcart-card', key: 'settings' }, rows)
       }
 
       if (root === '') {
         const card = []
         card.push(React.createElement('div', { className: 'mcart-note', key: 'hint' }, '未指定资产路径'))
-        card.push(React.createElement('div', { className: 'mcart-bar', key: 'input' },
+        // 窄宽度（右侧栏）不许把按钮裁掉：输入框一行、按钮下一行（`.mcart-stack`）。
+        card.push(React.createElement('div', { className: 'mcart-stack', key: 'input' },
           React.createElement('input', {
             className: 'mcart-input', placeholder: '/path/to/project',
             value: draft, onChange: (event) => setDraft(event.target.value),
@@ -4006,11 +4238,12 @@ return {
         ))
 
         if (notice !== null) card.push(React.createElement('div', { className: 'mcart-bad', key: 'notice' }, String(notice)))
-        if (failure !== null) card.push(React.createElement('div', { className: 'mcart-err', key: 'failure' }, withVersion(failure)))
+        if (failure !== null) card.push(React.createElement('div', { key: 'failure' }, failureView(failure)))
         return React.createElement('div', { className: 'mcart-root' },
-          React.createElement('div', { className: 'mcart-bar' },
-            React.createElement('span', { className: 'mcart-title' }, 'MC 资产'),
-            React.createElement('span', { className: 'mcart-sub' }, inRightColumn ? '右侧栏' : '中央面板'),
+          // 没有项目时也只有一行：路径（不写内部落点，也不再重复视图名）。
+          React.createElement('div', { className: 'mcart-head' },
+            React.createElement('span', { className: 'mcart-headpath' }, '未选择项目'),
+            React.createElement('span', { className: 'mcart-headgrow' }),
           ),
           React.createElement('div', { className: 'mcart-card' }, card),
         )
@@ -4050,7 +4283,7 @@ return {
           reference === null || reference === ''
             ? '建完下一步：点右上角 ⚙ 指定参考目录（面板会列出自动探测到的游戏目录）。不指定也能用，只是看不到原版/模组的参照。'
             : '参考目录已经设好了：' + reference))
-        if (failure !== null) rows.push(React.createElement('div', { className: 'mcart-err', key: 'err' }, withVersion(failure)))
+        if (failure !== null) rows.push(React.createElement('div', { key: 'err' }, failureView(failure)))
         return React.createElement('div', { className: 'mcart-card', key: 'guide' }, rows)
       }
 
@@ -4098,20 +4331,26 @@ return {
       const projects = index === null ? [] : (index.projects || [])
       const menu = []
       for (const project of projects) {
-        menu.push(React.createElement('div', { className: 'mcart-group', key: 'p' + project.id }, project.title))
+        // 多项目时才在分组头上带项目名（单项目时路径已经在头部，不再重复一行）。
+        const prefix = projects.length > 1 ? project.title + ' · ' : ''
         for (const category of CATEGORIES) {
           const items = (project.items && project.items[category.key]) || []
           if (items.length === 0) continue
-          menu.push(React.createElement('div', { className: 'mcart-group', key: 'p' + project.id + category.key },
-            category.label + ' · ' + items.length))
+          menu.push(React.createElement('div', {
+            className: 'mcart-group-head', key: 'p' + project.id + category.key,
+          }, prefix + category.label + ' · ' + items.length))
           for (const item of items) {
             const on = choice !== null && choice.project === project.id && choice.kind === category.key && choice.id === item.id
             menu.push(React.createElement('button', {
               key: project.id + '/' + category.key + '/' + item.id, type: 'button',
               className: 'mcart-item', 'data-on': on ? '1' : '0',
+              title: item.id,
               onClick: () => open({ project: project.id, kind: category.key, id: item.id }, root),
-            }, item.title,
-              item.title === item.id ? null : React.createElement('span', { className: 'mcart-id' }, item.id)))
+            },
+            React.createElement('span', { className: 'mcart-item-name' }, item.title),
+            // 两列：中文名占满、id 右对齐等宽（超长两边都省略，title 里是全 id）。
+            item.title === item.id ? null
+              : React.createElement('span', { className: 'mcart-item-id' }, item.id)))
           }
         }
       }
@@ -4123,13 +4362,23 @@ return {
         const ids = idsOf(scene)
         const okCount = ids.filter((id) => decoded[id] !== undefined).length
         const bad = ids.filter((id) => failedTex[id] === true).length
-        stage.push(React.createElement('div', { className: 'mcart-bar', key: 'row' },
-          React.createElement('span', { className: 'mcart-note' },
+        // 三级权重：左 = 事实（mono 11 次要色）· 中 = 工具（22×22 图标按钮，组间竖线）·
+        // 右 = 主操作（强调色文字按钮，靠右）。一眼能分出"读数 / 操作 / 主操作"。
+        stage.push(React.createElement('div', { className: 'mcart-toolbar', key: 'row' },
+          React.createElement('span', { className: 'mcart-toolbar-facts' },
             scene.quads.length + ' 面 · 贴图 ' + okCount + '/' + ids.length),
-          React.createElement('button', { className: 'mcart-btn', type: 'button',
-            onClick: () => { setYaw(0.72); setPitch(0.34); setZoom(1) } }, '重置'),
-          React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: openEditor }, '✎ 手动修改'),
-          React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: complain }, '@ 提意见'),
+          React.createElement('span', { className: 'mcart-toolbar-grow' }),
+          React.createElement('button', {
+            className: 'mcart-icon', type: 'button', title: '重置视角（旋转与缩放一起）',
+            'aria-label': '重置', onClick: () => { setYaw(0.72); setPitch(0.34); setZoom(1) },
+          }, '⟲'),
+          React.createElement('button', {
+            className: 'mcart-icon', type: 'button', title: '手动修改（按面编辑这张贴图）',
+            'aria-label': '手动修改', onClick: openEditor,
+          }, '✎'),
+          React.createElement('button', {
+            className: 'mcart-btn mcart-primary', type: 'button', onClick: complain,
+          }, '@ 提意见'),
         ))
         if (bad > 0) stage.push(React.createElement('div', { className: 'mcart-bad', key: 'bad' }, bad + ' 张贴图解码失败'))
         if (scene.errors && scene.errors.length > 0) {
@@ -4214,12 +4463,18 @@ return {
         if (asset !== null) {
           const ids = idsOf(asset.recipe)
           const okCount = ids.filter((id) => decoded[id] !== undefined).length
-          stage.push(React.createElement('div', { className: 'mcart-bar', key: 'itemrow' },
-            React.createElement('span', { className: 'mcart-note' },
+          stage.push(React.createElement('div', { className: 'mcart-toolbar', key: 'itemrow' },
+            React.createElement('span', { className: 'mcart-toolbar-facts' },
               '物品 · 贴图 ' + okCount + '/' + ids.length
               + (asset.source === 'project' ? '' : '（参考）')),
-            React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: openEditor }, '✎ 手动修改'),
-            React.createElement('button', { className: 'mcart-btn', type: 'button', onClick: complain }, '@ 提意见'),
+            React.createElement('span', { className: 'mcart-toolbar-grow' }),
+            React.createElement('button', {
+              className: 'mcart-icon', type: 'button', title: '手动修改（按面编辑这张贴图）',
+              'aria-label': '手动修改', onClick: openEditor,
+            }, '✎'),
+            React.createElement('button', {
+              className: 'mcart-btn mcart-primary', type: 'button', onClick: complain,
+            }, '@ 提意见'),
           ))
         }
       }
@@ -4244,10 +4499,9 @@ return {
       stage.push(React.createElement('div', { className: 'mcart-viewport', key: 'viewport' },
         React.createElement('canvas', {
         key: 'canvas', className: 'mcart-canvas',
-        // The CSS default is the same number; an inline height is what the grip
-        // moves.  `clientHeight` then feeds the size state, so the picture is
-        // redrawn at the new resolution instead of being stretched.
-        style: { height: viewH + 'px' },
+        // 视口填满剩余高度：宽度是面板的，高度由 flex 决定；手柄调的是**下限**
+        // （min-height），所以拖高之后仍然会随面板长高，而不是留一块空白。
+        style: { minHeight: viewH + 'px' },
         ref: (node) => { canvasGeneration += 1; setCanvas(node) },
         onPointerDown: (event) => {
           drag.active = true
@@ -4311,6 +4565,14 @@ return {
         // standing in the world is the big picture, and what it looks like in a
         // slot is the strip along the bottom, the way the game shows both.
         //
+        // 方向参照：左下角一个很小的轴指示器（三根 12px 短线，低饱和、单色）。
+        // 视口里有个"哪边是上"的参照，转动才不会迷失。
+        React.createElement('svg', {
+          className: 'mcart-axis', width: 34, height: 34, viewBox: '-17 -17 34 34', 'aria-hidden': 'true',
+        },
+          React.createElement('line', { x1: 0, y1: 0, x2: 12, y2: 0, className: 'mcart-axis-x' }),
+          React.createElement('line', { x1: 0, y1: 0, x2: 0, y2: -12, className: 'mcart-axis-y' }),
+          React.createElement('line', { x1: 0, y1: 0, x2: -7, y2: 9, className: 'mcart-axis-z' })),
         // It is an absolutely positioned overlay, not a row above or below: a row
         // that appears and disappears MOVES the canvas, which moves whatever is
         // under the pointer, which is the twitching a row above the canvas caused.
@@ -4398,40 +4660,57 @@ return {
         }
       }
 
+      // 单行紧凑头部：**只放路径**（当前视图名在区块标题里已经有了，不再重复）。
+      // 路径 mono、次要色、超长省略，title 是全路径。
+      // 右 = 图标按钮（22×22，都有 tooltip；组间 1px 竖线由 CSS 画）。
+      // "中央面板/右侧栏"是内部落点概念，用户看不懂 —— 不再显示。
+      const forgetProject = () => {
+        setRoot(''); setIndex(null); setItem(null); setItemOpen(false); setIconPick(null)
+        setPreviewItem(null); setHudPage(1); setScene(null); setSettings(null); setEdit(null)
+        setVoxel(null); setHover(null); setGhost(null)
+      }
       return React.createElement('div', { className: 'mcart-root' },
-        // 顶栏钉在滚动区顶部（`mcart-head`）：面板很长时"设置/物品列表"不会滚走，
-        // 这是专业工具的常规做法（VS Code 标题栏、Blender 属性面板的 header）。
-        React.createElement('div', { className: 'mcart-bar mcart-head' },
-          React.createElement('span', { className: 'mcart-title' }, 'MC 资产'),
-          React.createElement('span', { className: 'mcart-sub' },
-            busy ? '加载中…' : (inRightColumn ? '右侧栏' : '中央面板')),
-          // The bar at the bottom of the 3D view IS the 物品栏 now, the way the
-          // game has it; this button unfolds the browser behind it (来源、搜索、
-          // 展示形式、四十格一页), which is the part the game has no equivalent of.
-          React.createElement('button', { className: 'mcart-btn mcart-tool', type: 'button',
-            title: '物品浏览器：来源、搜索、展示形式都在这里；下面那排物品栏跟着一起筛',
-            'data-on': itemOpen ? '1' : '0',
-            onClick: openItems }, itemOpen ? '收起列表' : '物品列表'),
-          React.createElement('button', { className: 'mcart-icon', type: 'button', title: '设置',
-            onClick: openSettings }, settings === null ? '⚙' : '⚙▾'),
+        React.createElement('div', { className: 'mcart-head' },
+          // 顶部那行**只有路径**（"方块"这类视图名在区块标题里已经写过了）。
+          React.createElement('span', { className: 'mcart-headpath', title: root },
+            root === '' ? '未选择项目' : root),
+          React.createElement('span', { className: 'mcart-headgrow' }),
+          React.createElement('button', {
+            className: 'mcart-icon', type: 'button', title: '物品列表（浏览器）',
+            'aria-label': '物品列表', 'data-on': itemOpen ? '1' : '0',
+            onClick: openItems,
+          }, '▤'),
+          React.createElement('button', {
+            className: 'mcart-icon', type: 'button', title: '设置', 'aria-label': '设置',
+            onClick: openSettings,
+          }, settings === null ? '⚙' : '⚙▾'),
+          React.createElement('button', {
+            className: 'mcart-icon', type: 'button', title: '回到项目根（换一个项目）',
+            'aria-label': '返回项目根', onClick: forgetProject,
+          }, '⌂'),
+          React.createElement('button', {
+            className: 'mcart-icon', type: 'button', title: '刷新资产（重新读磁盘）',
+            'aria-label': '刷新', onClick: () => { forgetTextures(); setTexEpoch(texEpoch + 1); scan(root, true, null) },
+          }, '↻'),
         ),
+        // 主体：独立滚动（列表/卡片在这里滚，3D 舞台不被推走）。
+        React.createElement('div', {
+          className: 'mcart-body',
+          ref: (node) => {
+            if (node !== null && node !== undefined) { try { node.scrollTop = lastBodyScroll } catch (error) { /* 不是真 DOM */ } }
+          },
+          onScroll: (event) => { lastBodyScroll = event.currentTarget.scrollTop },
+        },
         settings === null ? null : settingsCard(),
         emptyRoot === null ? null : guideCard(),
-        React.createElement('div', { className: 'mcart-bar' },
-          React.createElement('span', { className: 'mcart-path' }, root),
-          React.createElement('button', { className: 'mcart-btn', type: 'button',
-            onClick: () => { setRoot(''); setIndex(null); setItem(null); setItemOpen(false); setIconPick(null); setPreviewItem(null); setHudPage(1); setScene(null); setSettings(null); setEdit(null); setVoxel(null); setHover(null); setGhost(null) } }, '换项目'),
-          React.createElement('button', { className: 'mcart-btn', type: 'button',
-            // 刷新 = "磁盘上可能变了，重新读一遍"：先丢像素缓存，再强制重扫索引。
-            // 只重扫索引的话，`have` 里还留着旧贴图的 id，宿主永远不会再送新的字节。
-            onClick: () => { forgetTextures(); setTexEpoch(texEpoch + 1); scan(root, true, null) } }, '刷新'),
-        ),
-        failure === null ? null : React.createElement('div', { className: 'mcart-err' }, withVersion(failure)),
+        failure === null ? null : failureView(failure),
         diagnosticCard(),
         React.createElement('div', { className: 'mcart-list' }, menu),
         editorCard(),
         voxelCard(),
         itemOpen ? itemCard() : null,
+        ),
+        // 舞台：占满剩余高度（视口 flex 填满，列表区自己滚）。
         React.createElement('div', { className: 'mcart-stage' }, stage),
         React.createElement('div', { style: { display: 'none' } },
           React.createElement('canvas', { ref: setScratch, width: 256, height: 256 }),
@@ -4572,14 +4851,49 @@ return {
       ))
     }
 
+    /**
+     * 冷启动时右侧栏插件可能比我们晚挂载（用户实测：重启后面板落在中央/左栏，
+     * 而上次是在右侧栏）。先放一个能用的落点，然后在 ~5 秒内每 500ms 重试；
+     * 一旦右栏就绪就搬过去，`placeRight()` 会撤掉左栏那份。
+     * 迁移会重新挂载组件，但 `lastOpened` / `lastBodyScroll` 会把用户选中的资产
+     * 和滚动位置带过去（见 open() 与主渲染里的 ref/onScroll）。
+     */
+    function retryRight() {
+      let tries = 0
+      let dispose = null
+      let done = false
+      const stop = () => {
+        done = true
+        if (typeof dispose === 'function') { try { dispose() } catch (error) { /* 已释放 */ } }
+        dispose = null
+      }
+      const tickOnce = () => {
+        if (done) return
+        if (placement === 'right') { stop(); return }
+        if (rightColumnReady()) { stop(); placeRight(); return }
+        tries += 1
+        if (tries >= 10) stop()
+      }
+      try {
+        dispose = timer.interval(tickOnce, 500)
+      } catch (error) {
+        // 定时器服务不可用也不能让面板挂不上：事件驱动的那条仍然在（ctx.inject）。
+        dispose = null
+      }
+      ctx.effect(() => () => stop())
+      return stop
+    }
+
     if (inRightColumn) placeRight()
     else {
       placeLeft()
+      // 事件驱动的那条（服务一出现就搬）+ 轮询兜底（最多 10×500ms）。
       if (typeof ctx.inject === 'function') {
         try {
           ctx.inject(['sidebarRightTabs'], () => { if (rightColumnReady()) placeRight() })
-        } catch (error) {  }
+        } catch (error) { /* 没有 inject 就靠下面的轮询 */ }
       }
+      retryRight()
     }
   },
 }

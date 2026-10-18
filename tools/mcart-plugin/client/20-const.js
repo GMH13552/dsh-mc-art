@@ -16,6 +16,10 @@ const CSS = [
     + '--mc-text-1:var(--dsw-alias-label-primary,rgba(236,236,241,.94));'
     + '--mc-text-2:var(--dsw-alias-label-secondary,rgba(236,236,241,.58));'
     + '--mc-brand:var(--dsw-alias-brand-primary,#4f9cf9);'
+    // 选中行左侧 2px 条：纯品牌色在暗色主题下偏暗、容易被当成灰，
+    // 按 75% 品牌色 + 25% 主文字色提亮（仍是 token 派生，不是硬编码颜色）。
+    + '--mc-brand-bar:color-mix(in srgb,var(--dsw-alias-brand-primary,#4f9cf9) 75%,'
+    + 'var(--dsw-alias-label-primary,#ececf1));'
     + '--mc-error:var(--dsw-alias-state-error-primary,#e06c6c);'
     + '--mc-warn:var(--dsw-alias-state-warn-primary,#e0a06c);'
     + '--mc-ok:var(--dsw-alias-state-success-primary,#7fc98a);'
@@ -34,7 +38,7 @@ const CSS = [
     // 内容区（视口 / 像素画布 / HUD）是内容不是界面：固定中性深底
     + '--mc-canvas-bg:#141317;--mc-hud-bg:rgba(20,20,24,.8);'
     + 'display:flex;flex-direction:column;gap:var(--mc-s4);padding:var(--mc-s4);'
-    + 'height:100%;box-sizing:border-box;overflow-y:auto;overflow-x:hidden;'
+    + 'height:100%;box-sizing:border-box;overflow:hidden;container-type:inline-size;'
     + 'color:var(--mc-text-1);background:var(--mc-bg-0);'
     + 'font:var(--mc-fs)/var(--mc-lh) system-ui,-apple-system,"Segoe UI",sans-serif}',
   // ---- 标签 / 文字层级 -----------------------------------------------------
@@ -57,14 +61,35 @@ const CSS = [
     + 'padding:0 var(--mc-s4);margin:calc(-1 * var(--mc-s4)) calc(-1 * var(--mc-s4)) 0;'
     + 'background:var(--mc-bg-0);border-bottom:1px solid var(--mc-line-1)}',
   '.mcart-head>.mcart-title{color:var(--mc-text-1)}',
+  // ---- 单行紧凑头部：只有路径（mono）+ 右侧图标按钮组 ----------------------
+  // 不再显示"中央面板/右侧栏"这类内部落点概念，也不再重复视图名。
+  '.mcart-headpath{font-family:var(--mc-mono);font-size:var(--mc-fs2);color:var(--mc-text-2);'
+    + 'font-variant-numeric:tabular-nums;min-width:0;overflow:hidden;text-overflow:ellipsis;'
+    + 'white-space:nowrap}',
+  '.mcart-headgrow{flex:1;min-width:var(--mc-s2)}',
   // 工具栏按钮：透明底、组间 1px 竖线（只在 header 内）
   '.mcart-head .mcart-btn,.mcart-head .mcart-icon{background:transparent;border-color:transparent;'
-    + 'height:var(--mc-control)}',
+    + 'height:var(--mc-control);flex:none}',
   '.mcart-head .mcart-btn:hover,.mcart-head .mcart-icon:hover{background:var(--mc-hover)}',
   '.mcart-head .mcart-btn+.mcart-btn,.mcart-head .mcart-btn+.mcart-icon,'
-    + '.mcart-head .mcart-icon+.mcart-btn{border-left:1px solid var(--mc-line-1);'
-    + 'border-top-left-radius:0;border-bottom-left-radius:0;padding-left:var(--mc-s3)}',
+    + ' .mcart-head .mcart-icon+.mcart-btn,.mcart-head .mcart-icon+.mcart-icon{'
+    + 'border-left:1px solid var(--mc-line-1);border-radius:0;padding-left:var(--mc-s1)}',
+  // ---- 3D 舞台的工具栏：事实（左）· 图标工具（中）· 主操作（右） ----------
+  '.mcart-toolbar{display:flex;align-items:center;gap:var(--mc-s2);height:var(--mc-toolbar);'
+    + 'min-height:var(--mc-toolbar)}',
+  '.mcart-toolbar-facts{font-family:var(--mc-mono);font-size:var(--mc-fs2);'
+    + 'font-variant-numeric:tabular-nums;color:var(--mc-text-2);white-space:nowrap}',
+  '.mcart-toolbar-grow{flex:1;min-width:var(--mc-s2)}',
+  // 主操作：强调色文字 + 强调色描边（唯一带品牌色的按钮）
+  '.mcart-primary{color:var(--mc-brand);border-color:var(--mc-brand);background:transparent}',
+  '.mcart-primary:hover{background:var(--mc-select);border-color:var(--mc-brand)}',
   '.mcart-bar{display:flex;align-items:center;gap:var(--mc-s2);flex-wrap:wrap}',
+  // ---- 主体（独立滚动）与 3D 舞台（占满剩余高度） -------------------------
+  '.mcart-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;'
+    + 'flex-direction:column;gap:var(--mc-s4);scrollbar-width:thin;'
+    + 'scrollbar-color:var(--dsw-scrollbar-thumb,var(--mc-line-2)) transparent;'
+    + 'overscroll-behavior:contain}',
+  '.mcart-stage{flex:1;min-height:0;display:flex;flex-direction:column;gap:var(--mc-s2)}',
   // 卡片去掉"卡片感"：面 + 顶部分隔线 + 4/8 留白，无圆角无阴影
   '.mcart-card{border:0;border-top:1px solid var(--mc-line-1);border-radius:0;'
     + 'padding:var(--mc-s2) 0;display:flex;flex-direction:column;gap:var(--mc-s2);'
@@ -130,18 +155,35 @@ const CSS = [
     + 'border-left:2px solid;padding-left:var(--mc-s3)}',
   '.mcart-bad{color:var(--mc-warn);border-left-color:var(--mc-warn)}',
   '.mcart-err{color:var(--mc-error);border-left-color:var(--mc-error)}',
-  // ---- 列表：行高 22，选中 8% 叠底 + 左侧 2px 强调条 ------------------------
-  '.mcart-list{overflow:auto;border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);'
-    + 'padding:var(--mc-s1);max-height:240px}',
+  // 技术细节：可展开的"详情"，原话只进这里（不占主文案）
+  '.mcart-details{font-size:var(--mc-fs2);line-height:14px;color:var(--mc-text-2);'
+    + 'margin-top:var(--mc-s1)}',
+  '.mcart-details>summary{cursor:pointer;width:max-content}',
+  '.mcart-details>.mcart-report{margin:var(--mc-s1) 0 0}',
+  // ---- 列表：两列行（名称 + 右对齐等宽 id），选中 8% 叠底 + 左侧 2px 强调条 ----
+  // 列表区填满主体剩余高度（不留"飘在空白里"的死区），底部自带 1px 发丝线。
+  '.mcart-list{flex:1;min-height:0;overflow:auto;'
+    + 'border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);'
+    + 'padding:var(--mc-s1)}',
   '.mcart-row{display:flex;align-items:center;gap:var(--mc-s2);height:var(--mc-lh);'
     + 'padding:0 var(--mc-s2);border-left:2px solid transparent}',
   '.mcart-row:hover{background:var(--mc-hover)}',
-  '.mcart-item{display:block;width:100%;height:var(--mc-lh);padding:0 var(--mc-s2);text-align:left;'
+  '.mcart-item{display:flex;align-items:center;gap:var(--mc-s2);width:100%;'
+    + 'height:var(--mc-lh);padding:0 var(--mc-s2);text-align:left;'
     + 'border:0;border-left:2px solid transparent;border-radius:0;background:none;'
     + 'color:var(--mc-text-1);font:inherit;font-size:var(--mc-fs);cursor:pointer}',
+  '.mcart-item-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.mcart-item-id{flex:none;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+    + 'font-family:var(--mc-mono);font-size:var(--mc-fs2);font-variant-numeric:tabular-nums;'
+    + 'color:var(--mc-text-2);text-align:right}',
+  // 分组头：11px/600 次要色、22px 高、底部 1px 发丝线、滚动时 sticky（贴在顶栏下面）
+  '.mcart-group-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;'
+    + 'height:var(--mc-section);min-height:var(--mc-section);padding:0 var(--mc-s2);'
+    + 'background:var(--mc-bg-0);border-bottom:1px solid var(--mc-line-1);'
+    + 'font-size:var(--mc-fs2);font-weight:600;color:var(--mc-text-2)}',
   '.mcart-item:hover{background:var(--mc-hover)}',
   '.mcart-item:active{background:var(--mc-active)}',
-  '.mcart-item[data-on="1"]{background:var(--mc-select);border-left-color:var(--mc-brand)}',
+  '.mcart-item[data-on="1"]{background:var(--mc-select);border-left-color:var(--mc-brand-bar)}',
   '.mcart-projects{max-height:240px;overflow:auto;display:flex;flex-direction:column;'
     + 'border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);padding:var(--mc-s1)}',
   '.mcart-mods{border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);'
@@ -154,18 +196,25 @@ const CSS = [
   '.mcart-list,.mcart-hotbar,.mcart-swatches,.mcart-projects,.mcart-mods{'
     + 'scrollbar-width:thin;scrollbar-color:var(--dsw-scrollbar-thumb,var(--mc-line-2)) transparent;'
     + 'overscroll-behavior:contain}',
-  // ---- 取景框（内容区，固定深底） ------------------------------------------
-  '.mcart-stage{flex:none;display:flex;flex-direction:column;gap:var(--mc-s2)}',
-  '.mcart-canvas{width:100%;height:240px;display:block;border-radius:var(--mc-radius-panel);'
-    + 'background:var(--mc-canvas-bg);border:1px solid var(--mc-line-1);cursor:grab;touch-action:none}',
+  // ---- 取景框（内容区，固定深底；视口占满舞台剩余高度） --------------------
+  '.mcart-canvas{width:100%;height:100%;min-height:180px;display:block;'
+    + 'border-radius:var(--mc-radius-panel);background:var(--mc-canvas-bg);'
+    + 'border:1px solid var(--mc-line-1);cursor:grab;touch-action:none}',
   '.mcart-canvas:active{cursor:grabbing}',
-  '.mcart-viewport{position:relative;flex:none}',
+  '.mcart-viewport{position:relative;flex:1;min-height:0}',
   '.mcart-zoom{position:absolute;right:var(--mc-s2);top:var(--mc-s2);display:flex;'
     + 'gap:var(--mc-s1);opacity:.9}',
   '.mcart-zoom:hover{opacity:1}',
   '.mcart-zoombtn{width:var(--mc-control);height:var(--mc-control);padding:0;display:inline-flex;'
     + 'align-items:center;justify-content:center;font-size:var(--mc-fs);line-height:1;'
     + 'background:var(--mc-hud-bg);border-color:var(--mc-line-2);color:var(--mc-text-1)}',
+  // 方向指示器：左下角，三根 12px 短线，单色低饱和（没有彩色装饰）
+  '.mcart-axis{position:absolute;left:var(--mc-s2);bottom:var(--mc-s2);pointer-events:none;'
+    + 'opacity:.75}',
+  '.mcart-axis line{stroke:var(--mc-text-2);stroke-width:1;stroke-linecap:butt}',
+  '.mcart-axis-x{opacity:.9}',
+  '.mcart-axis-y{opacity:.65}',
+  '.mcart-axis-z{opacity:.45}',
   '.mcart-poster{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);'
     + 'image-rendering:pixelated;pointer-events:none}',
   '.mcart-grip{display:flex;align-items:center;justify-content:center;height:5px;'
@@ -175,9 +224,11 @@ const CSS = [
   // ---- HUD（游戏物品栏）：槽位 22px、2px 圆角、选中 1px 强调内描边 ----------
   '.mcart-hud{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;'
     + 'align-items:center;gap:var(--mc-s1);padding:0 var(--mc-s2) var(--mc-s2);pointer-events:none}',
-  '.mcart-hudname{font-family:var(--mc-mono);font-size:var(--mc-fs2);padding:0 var(--mc-s2);'
-    + 'border-radius:var(--mc-radius);background:var(--mc-hud-bg);'
-    + 'border:1px solid var(--mc-line-2)}',
+  // 当前物品名：**视口右下角的 mono 11 次要色标签**（不再浮在热键栏上方挡内容）
+  '.mcart-hudname{position:absolute;right:var(--mc-s2);'
+    + 'bottom:calc(var(--mc-control) + var(--mc-s4));font-family:var(--mc-mono);'
+    + 'font-size:var(--mc-fs2);font-variant-numeric:tabular-nums;color:var(--mc-text-2);'
+    + 'background:none;border:0;padding:0;pointer-events:none;white-space:nowrap}',
   '.mcart-hudbar{display:flex;align-items:center;gap:var(--mc-s1);padding:var(--mc-s1);'
     + 'border-radius:var(--mc-radius-panel);background:var(--mc-hud-bg);'
     + 'border:1px solid var(--mc-line-2);pointer-events:auto}',
@@ -229,6 +280,16 @@ const CSS = [
     + 'padding:var(--mc-s3);margin:var(--mc-s1) 0;line-height:14px;max-height:240px;'
     + 'overflow:auto;user-select:text}',
   '.mcart-reportnote{color:var(--mc-text-2);word-break:break-all}',
+  // ---- 窄宽度（右侧栏）：不许把按钮裁掉 —— 控件换行、标签列收窄 -------------
+  '.mcart-stack{display:flex;flex-direction:column;align-items:stretch;gap:var(--mc-s2)}',
+  '.mcart-stack>.mcart-btn{align-self:flex-start}',
+  '.mcart-prop-value{flex-wrap:wrap}',
+  '.mcart-prop-value>.mcart-input{flex:1 1 96px}',
+  '.mcart-prop-value>.mcart-btn{flex:none}',
+  '@container (max-width:260px){'
+    + '.mcart-prop{grid-template-columns:64px 1fr}'
+    + '.mcart-hint{padding-left:0}'
+    + '.mcart-item-id{max-width:46%}}',
 ].join('')
 
 const CATEGORIES = [
