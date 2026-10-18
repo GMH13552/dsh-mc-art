@@ -4,7 +4,7 @@ import { mkdir as nodeMkdir, readdir as nodeReaddir, readFile as nodeReadFile, r
 import { dirname as nodeDirname } from 'node:path'
 import { fileURLToPath as nodeFileURLToPath } from 'node:url'
 
-const VERSION = "0.3.0"
+const VERSION = "0.3.1"
 // 本模块所在目录（<包>/lib）。宿主源码用它推出**随包的那份引擎**在哪里 ——
 // 参考目录要靠 Python 脚本读 jar，而"项目不在 mc-art 仓库里"的机器上，
 // 只从项目目录往上找是找不到的（实测：设置存得下、什么也读不出来）。
@@ -236,34 +236,244 @@ function translateQuads(quads, offset) {
   }))
 }
 
-function cubeElements(pick) {
-  const faces = {}
-  for (const face of FACE_ORDER) faces[face] = { texture: pick[face], uv: [0, 0, 16, 16] }
-  return [{ from: [0, 0, 0], to: [16, 16, 16], faces: faces }]
-}
-
-const CROSS_ELEMENTS = [
-  { from: [0.8, 0, 8], to: [15.2, 16, 8], rotation: { origin: [8, 8, 8], axis: 'y', angle: 45, rescale: true }, shade: false,
-    faces: { north: { uv: [0, 0, 16, 16], texture: '#cross' }, south: { uv: [0, 0, 16, 16], texture: '#cross' } } },
-  { from: [8, 0, 0.8], to: [8, 16, 15.2], rotation: { origin: [8, 8, 8], axis: 'y', angle: 45, rescale: true }, shade: false,
-    faces: { west: { uv: [0, 0, 16, 16], texture: '#cross' }, east: { uv: [0, 0, 16, 16], texture: '#cross' } } },
-]
-
 const VANILLA_PARENTS = {
-  'block/block': { textures: {}, gui_light: 'side', display: { gui: {
-    rotation: [30, 225, 0], translation: [0, 0, 0], scale: [0.625, 0.625, 0.625] } } },
-  'block/cube': { parent: 'block/block', textures: { particle: '#north' },
-    elements: cubeElements({ down: '#down', up: '#up', north: '#north',
-      south: '#south', west: '#west', east: '#east' }) },
-  'block/cube_all': { parent: 'block/cube', textures: { particle: '#all', down: '#all', up: '#all',
-    north: '#all', south: '#all', west: '#all', east: '#all' } },
-  'block/cube_column': { parent: 'block/cube', textures: { particle: '#side', end: '#end', side: '#side',
-    down: '#end', up: '#end', north: '#side', south: '#side', west: '#side', east: '#side' } },
-  'block/cube_bottom_top': { parent: 'block/cube', textures: { particle: '#side', bottom: '#bottom',
-    top: '#top', side: '#side', down: '#bottom', up: '#top', north: '#side',
-    south: '#side', west: '#side', east: '#side' } },
-  'block/cross': { textures: { particle: '#cross' }, elements: CROSS_ELEMENTS },
-  'block/tinted_cross': { parent: 'block/cross', textures: {} },
+  "block/block": {
+    "textures": {},
+    "gui_light": "side",
+    "display": {
+      "gui": {
+        "rotation": [
+          30,
+          225,
+          0
+        ],
+        "translation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.625,
+          0.625,
+          0.625
+        ]
+      }
+    }
+  },
+  "block/cube": {
+    "parent": "block/block",
+    "textures": {
+      "particle": "#north"
+    },
+    "elements": [
+      {
+        "from": [
+          0,
+          0,
+          0
+        ],
+        "to": [
+          16,
+          16,
+          16
+        ],
+        "faces": {
+          "down": {
+            "texture": "#down",
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ]
+          },
+          "up": {
+            "texture": "#up",
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ]
+          },
+          "north": {
+            "texture": "#north",
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ]
+          },
+          "south": {
+            "texture": "#south",
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ]
+          },
+          "west": {
+            "texture": "#west",
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ]
+          },
+          "east": {
+            "texture": "#east",
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "block/cube_all": {
+    "parent": "block/cube",
+    "textures": {
+      "particle": "#all",
+      "down": "#all",
+      "up": "#all",
+      "north": "#all",
+      "south": "#all",
+      "west": "#all",
+      "east": "#all"
+    }
+  },
+  "block/cube_column": {
+    "parent": "block/cube",
+    "textures": {
+      "particle": "#side",
+      "end": "#end",
+      "side": "#side",
+      "down": "#end",
+      "up": "#end",
+      "north": "#side",
+      "south": "#side",
+      "west": "#side",
+      "east": "#side"
+    }
+  },
+  "block/cube_bottom_top": {
+    "parent": "block/cube",
+    "textures": {
+      "particle": "#side",
+      "bottom": "#bottom",
+      "top": "#top",
+      "side": "#side",
+      "down": "#bottom",
+      "up": "#top",
+      "north": "#side",
+      "south": "#side",
+      "west": "#side",
+      "east": "#side"
+    }
+  },
+  "block/cross": {
+    "textures": {
+      "particle": "#cross"
+    },
+    "elements": [
+      {
+        "from": [
+          0.8,
+          0,
+          8
+        ],
+        "to": [
+          15.2,
+          16,
+          8
+        ],
+        "rotation": {
+          "origin": [
+            8,
+            8,
+            8
+          ],
+          "axis": "y",
+          "angle": 45,
+          "rescale": true
+        },
+        "shade": false,
+        "faces": {
+          "north": {
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ],
+            "texture": "#cross"
+          },
+          "south": {
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ],
+            "texture": "#cross"
+          }
+        }
+      },
+      {
+        "from": [
+          8,
+          0,
+          0.8
+        ],
+        "to": [
+          8,
+          16,
+          15.2
+        ],
+        "rotation": {
+          "origin": [
+            8,
+            8,
+            8
+          ],
+          "axis": "y",
+          "angle": 45,
+          "rescale": true
+        },
+        "shade": false,
+        "faces": {
+          "west": {
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ],
+            "texture": "#cross"
+          },
+          "east": {
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ],
+            "texture": "#cross"
+          }
+        }
+      }
+    ]
+  },
+  "block/tinted_cross": {
+    "parent": "block/cross",
+    "textures": {}
+  }
 }
 
 
@@ -890,10 +1100,20 @@ function installHost(ctx) {
     async function preload(dir, namespace) {
       const assets = dir + '/pack/assets/' + namespace
       const models = new Map()
+      const unreadableModels = new Map()
       for (const entry of await listDir(assets + '/models/block')) {
         if (entry.type !== 'file' || !/\.json$/.test(entry.name)) continue
-        const parsed = await readJson(assets + '/models/block/' + entry.name)
-        if (parsed !== undefined) models.set('block/' + entry.name.replace(/\.json$/, ''), parsed)
+        const key = 'block/' + entry.name.replace(/\.json$/, '')
+        const text = await readTextOf(assets + '/models/block/' + entry.name)
+        if (text === undefined || text === null) {
+          unreadableModels.set(key, { file: 'models/block/' + entry.name, why: '读不出文件内容' })
+          continue
+        }
+        try {
+          models.set(key, JSON.parse(String(text)))
+        } catch (error) {
+          unreadableModels.set(key, { file: 'models/block/' + entry.name, why: '不是合法 JSON：' + messageOf(error) })
+        }
       }
       const textures = new Map()
       const animations = new Map()
@@ -919,20 +1139,45 @@ function installHost(ctx) {
         }
       }
       return { dir: dir, namespace: namespace, assets: assets, models: models, textures: textures,
-        animations: animations, animationNotes: animationNotes }
+        animations: animations, animationNotes: animationNotes, unreadableModels: unreadableModels }
     }
+
 
     async function readLang(assets) {
       const merged = {}
+      const broken = []
+      const missing = []
       for (const locale of ['en_us', 'zh_cn']) {
-        const parsed = await readJson(assets + '/lang/' + locale + '.json')
-        if (parsed === undefined || parsed === null || typeof parsed !== 'object') continue
+        const file = 'lang/' + locale + '.json'
+        const full = assets + '/' + file
+        const info = await statOf(full)
+        if (info === undefined || info.type !== 'file') {
+          missing.push({ file: file, why: '文件不存在（缺失，不是读坏了）' })
+          continue
+        }
+        const text = await readTextOf(full)
+        if (text === undefined || text === null) {
+          broken.push({ file: file, why: '文件在，但读不出内容（权限或编码），不是缺失' })
+          continue
+        }
+        let parsed
+        try {
+          parsed = JSON.parse(String(text))
+        } catch (error) {
+          broken.push({ file: file, why: '不是合法 JSON：' + messageOf(error) })
+          continue
+        }
+        if (parsed === null || typeof parsed !== 'object') {
+          broken.push({ file: file, why: '不是 JSON 对象（顶层应该是一张键值表）' })
+          continue
+        }
         for (const key of Object.keys(parsed)) {
           const value = parsed[key]
           if (typeof value === 'string' && value.length > 0) merged[key] = value
         }
       }
-      return merged
+      const problems = broken.concat(Object.keys(merged).length === 0 ? missing : [])
+      return { table: merged, problems: problems }
     }
 
     let vanillaTextureHandles = new Map()
@@ -1303,8 +1548,10 @@ function installHost(ctx) {
           ? atlas.namespace : namespaces[0]
         if (namespace === undefined) continue
         const load = await preload(dir, namespace)
+        const lang = await readLang(load.assets)
+        load.langProblems = lang.problems
         nextPreloads.set(namespace, load)
-        nextLangs.set(namespace, await readLang(load.assets))
+        nextLangs.set(namespace, lang.table)
         staged.push({ entry: entry.name, dir: dir, atlas: atlas, namespace: namespace, load: load })
       }
       preloads = nextPreloads
@@ -1897,6 +2144,16 @@ function installHost(ctx) {
       return null
     }
 
+
+    function refIconEntryProblem(entry) {
+      if (entry === null || entry === undefined || typeof entry !== 'object' || Array.isArray(entry)) {
+        return '抽取器没有返回这个方块的条目'
+      }
+      if (typeof entry.png !== 'string') return '条目里没有 png 字段'
+      if (entry.png === '') return 'png 字段是空的'
+      return null
+    }
+
     async function itemIcon(namespace, parsed, have, project) {
       const load = virtualLoad(namespace, parsed)
       const text = (value, fallback) => (typeof value === 'string' && value !== '' ? value : fallback)
@@ -2361,6 +2618,7 @@ function installHost(ctx) {
     }
 
     function blockDiagnostic(load, namespace, id, found, built, directory) {
+      const langProblems = load === undefined || !Array.isArray(load.langProblems) ? [] : load.langProblems
       const project = Array.isArray(built.project) ? built.project : []
       const vanilla = Array.isArray(built.vanilla) ? built.vanilla : []
       const textures = Array.isArray(built.unresolvedTextures) ? built.unresolvedTextures : []
@@ -2415,6 +2673,9 @@ function installHost(ctx) {
       if (textures.length > 0) {
         tried.push('贴图现取（--textures）：' + (directory === '' ? '没设参考目录，没走' : directory))
       }
+      if (langProblems.length > 0) {
+        tried.push('语言文件：' + langProblems.map((info) => info.file + '（' + info.why + '）').join('、'))
+      }
 
       const lines = ['[MC 资产面板] 画不出 ' + namespace + ':' + id]
       if (found.guessed === true) {
@@ -2425,12 +2686,31 @@ function installHost(ctx) {
       }
       lines.push('· 选用的模型：' + String(found.model))
       if (project.length > 0) {
-        lines.push('· 项目自己的模型文件缺失（' + project.length + ' 个）：')
-        for (const entry of project) lines.push('  - ' + entry.name + ' → 补 ' + fixPathOf(load, entry, directory))
+        const unreadable = load === undefined || load.unreadableModels === undefined ? new Map() : load.unreadableModels
+        const broken = []
+        const missing = []
+        for (const entry of project) {
+          const bare = String(entry.bare === undefined ? entry.name : entry.bare).replace(/^block\//, '')
+          const info = unreadable.get('block/' + bare)
+          if (info === undefined) missing.push(entry)
+          else broken.push(info)
+        }
+        if (broken.length > 0) {
+          lines.push('· 项目自己的模型文件**在，但解析失败**（' + broken.length + ' 个）——不是缺失，不要照"补文件"处理：')
+          for (const info of broken) lines.push('  - ' + info.file + ' → ' + info.why)
+        }
+        if (missing.length > 0) {
+          lines.push('· 项目自己的模型文件缺失（' + missing.length + ' 个）：')
+          for (const entry of missing) lines.push('  - ' + entry.name + ' → 补 ' + fixPathOf(load, entry, directory))
+        }
       }
       if (vanilla.length > 0) {
         lines.push('· 原版母模型缺失（' + vanilla.length + ' 个）：')
         for (const entry of vanilla) lines.push('  - ' + entry.name + ' → ' + fixPathOf(load, entry, directory))
+      }
+      if (langProblems.length > 0) {
+        lines.push('· 语言文件读不出来（' + langProblems.length + ' 个）→ 这些文件里的方块名只能用原始 id：')
+        for (const info of langProblems) lines.push('  - ' + info.file + ' → ' + info.why)
       }
       if (bareWords.length > 0) {
         lines.push('· 有 ' + bareWords.length + ' 个面把**裸词**当贴图写（模型格式里裸词是路径，不是变量）：')
@@ -3585,11 +3865,8 @@ function installHost(ctx) {
         for (const id of Object.keys(parsed.icons || {})) {
           const item = parsed.icons[id]
           const key = namespace + ':' + id
-          if (item === null || item === undefined || typeof item !== 'object' ||
-              typeof item.png !== 'string' || item.png === '') {
-            failed.push(id + '（没有图标数据）')
-            continue
-          }
+          const problem = refIconEntryProblem(item)
+          if (problem !== null) { failed.push(id + '（没有图标数据：' + problem + '）'); continue }
           icons[key] = 'data:image/png;base64,' + item.png
           names[key] = typeof item.name === 'string' && item.name !== '' ? item.name : id
         }

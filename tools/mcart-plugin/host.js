@@ -149,39 +149,252 @@ function translateQuads(quads, offset) {
   }))
 }
 
-function cubeElements(pick) {
-  const faces = {}
-  for (const face of FACE_ORDER) faces[face] = { texture: pick[face], uv: [0, 0, 16, 16] }
-  return [{ from: [0, 0, 0], to: [16, 16, 16], faces: faces }]
-}
-
-const CROSS_ELEMENTS = [
-  { from: [0.8, 0, 8], to: [15.2, 16, 8], rotation: { origin: [8, 8, 8], axis: 'y', angle: 45, rescale: true }, shade: false,
-    faces: { north: { uv: [0, 0, 16, 16], texture: '#cross' }, south: { uv: [0, 0, 16, 16], texture: '#cross' } } },
-  { from: [8, 0, 0.8], to: [8, 16, 15.2], rotation: { origin: [8, 8, 8], axis: 'y', angle: 45, rescale: true }, shade: false,
-    faces: { west: { uv: [0, 0, 16, 16], texture: '#cross' }, east: { uv: [0, 0, 16, 16], texture: '#cross' } } },
-]
-
+// 生成物：由 panel/build.mjs 从 tools/mcart-plugin/vanilla-parents.json 生成 —— 勿手改。
+// 改表请改那份 JSON，然后 node panel/build.mjs（verify-build 会红着挡住漂移）。
+// 来源：Minecraft 1.18.2 原版 jar 里 block/*.json 的父模型链（block → cube → cube_all / cube_column / cube_bottom_top；cross 独立无父）。数值照抄 jar，不做简化。
+// 条目：7 个（block/block, block/cube, block/cube_all, block/cube_column, block/cube_bottom_top, block/cross, block/tinted_cross）
 const VANILLA_PARENTS = {
-  // The vanilla bases a project pack inherits without shipping.  Copied from the
-  // 1.18.2 jar, mapping and all, so a pack that parents `block/cube_all` and one
-  // that parents `block/cube` land on the same numbers -- and so the icon path
-  // (which reads the same table from the extractor) agrees with this one.
-  'block/block': { textures: {}, gui_light: 'side', display: { gui: {
-    rotation: [30, 225, 0], translation: [0, 0, 0], scale: [0.625, 0.625, 0.625] } } },
-  'block/cube': { parent: 'block/block', textures: { particle: '#north' },
-    elements: cubeElements({ down: '#down', up: '#up', north: '#north',
-      south: '#south', west: '#west', east: '#east' }) },
-  'block/cube_all': { parent: 'block/cube', textures: { particle: '#all', down: '#all', up: '#all',
-    north: '#all', south: '#all', west: '#all', east: '#all' } },
-  'block/cube_column': { parent: 'block/cube', textures: { particle: '#side', end: '#end', side: '#side',
-    down: '#end', up: '#end', north: '#side', south: '#side', west: '#side', east: '#side' } },
-  'block/cube_bottom_top': { parent: 'block/cube', textures: { particle: '#side', bottom: '#bottom',
-    top: '#top', side: '#side', down: '#bottom', up: '#top', north: '#side',
-    south: '#side', west: '#side', east: '#side' } },
-  'block/cross': { textures: { particle: '#cross' }, elements: CROSS_ELEMENTS },
-  'block/tinted_cross': { parent: 'block/cross', textures: {} },
+  "block/block": {
+    "textures": {},
+    "gui_light": "side",
+    "display": {
+      "gui": {
+        "rotation": [
+          30,
+          225,
+          0
+        ],
+        "translation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.625,
+          0.625,
+          0.625
+        ]
+      }
+    }
+  },
+  "block/cube": {
+    "parent": "block/block",
+    "textures": {
+      "particle": "#north"
+    },
+    "elements": [
+      {
+        "from": [
+          0,
+          0,
+          0
+        ],
+        "to": [
+          16,
+          16,
+          16
+        ],
+        "faces": {
+          "down": {
+            "texture": "#down",
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ]
+          },
+          "up": {
+            "texture": "#up",
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ]
+          },
+          "north": {
+            "texture": "#north",
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ]
+          },
+          "south": {
+            "texture": "#south",
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ]
+          },
+          "west": {
+            "texture": "#west",
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ]
+          },
+          "east": {
+            "texture": "#east",
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "block/cube_all": {
+    "parent": "block/cube",
+    "textures": {
+      "particle": "#all",
+      "down": "#all",
+      "up": "#all",
+      "north": "#all",
+      "south": "#all",
+      "west": "#all",
+      "east": "#all"
+    }
+  },
+  "block/cube_column": {
+    "parent": "block/cube",
+    "textures": {
+      "particle": "#side",
+      "end": "#end",
+      "side": "#side",
+      "down": "#end",
+      "up": "#end",
+      "north": "#side",
+      "south": "#side",
+      "west": "#side",
+      "east": "#side"
+    }
+  },
+  "block/cube_bottom_top": {
+    "parent": "block/cube",
+    "textures": {
+      "particle": "#side",
+      "bottom": "#bottom",
+      "top": "#top",
+      "side": "#side",
+      "down": "#bottom",
+      "up": "#top",
+      "north": "#side",
+      "south": "#side",
+      "west": "#side",
+      "east": "#side"
+    }
+  },
+  "block/cross": {
+    "textures": {
+      "particle": "#cross"
+    },
+    "elements": [
+      {
+        "from": [
+          0.8,
+          0,
+          8
+        ],
+        "to": [
+          15.2,
+          16,
+          8
+        ],
+        "rotation": {
+          "origin": [
+            8,
+            8,
+            8
+          ],
+          "axis": "y",
+          "angle": 45,
+          "rescale": true
+        },
+        "shade": false,
+        "faces": {
+          "north": {
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ],
+            "texture": "#cross"
+          },
+          "south": {
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ],
+            "texture": "#cross"
+          }
+        }
+      },
+      {
+        "from": [
+          8,
+          0,
+          0.8
+        ],
+        "to": [
+          8,
+          16,
+          15.2
+        ],
+        "rotation": {
+          "origin": [
+            8,
+            8,
+            8
+          ],
+          "axis": "y",
+          "angle": 45,
+          "rescale": true
+        },
+        "shade": false,
+        "faces": {
+          "west": {
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ],
+            "texture": "#cross"
+          },
+          "east": {
+            "uv": [
+              0,
+              0,
+              16,
+              16
+            ],
+            "texture": "#cross"
+          }
+        }
+      }
+    ]
+  },
+  "block/tinted_cross": {
+    "parent": "block/cross",
+    "textures": {}
+  }
 }
+// 原版母模型表（`VANILLA_PARENTS`）是**生成物**，定义在：
+//   tools/mcart-plugin/host/06-vanilla-parents.generated.js  ← tools/mcart-plugin/vanilla-parents.json
+// 它必须排在 05 之前（清单保证）；改表请改 JSON，别改生成片段。
 
 /**
  * `minecraft:block/cube_all` → `block/cube_all`；别的命名空间原样返回。
@@ -991,10 +1204,23 @@ function installHost(ctx) {
     async function preload(dir, namespace) {
       const assets = dir + '/pack/assets/' + namespace
       const models = new Map()
+      // **文件在、但读不出来**的模型：以前 `readJson` 把 JSON 解析错误吞成 undefined，
+      // 于是"模型文件写坏了"在报告里表现成"项目自己的模型文件缺失 → 补上它"（指向一个
+      // 明明就在那里的文件）。现在按文件名记下真实原因，诊断里说"解析失败"而不是"缺失"。
+      const unreadableModels = new Map()
       for (const entry of await listDir(assets + '/models/block')) {
         if (entry.type !== 'file' || !/\.json$/.test(entry.name)) continue
-        const parsed = await readJson(assets + '/models/block/' + entry.name)
-        if (parsed !== undefined) models.set('block/' + entry.name.replace(/\.json$/, ''), parsed)
+        const key = 'block/' + entry.name.replace(/\.json$/, '')
+        const text = await readTextOf(assets + '/models/block/' + entry.name)
+        if (text === undefined || text === null) {
+          unreadableModels.set(key, { file: 'models/block/' + entry.name, why: '读不出文件内容' })
+          continue
+        }
+        try {
+          models.set(key, JSON.parse(String(text)))
+        } catch (error) {
+          unreadableModels.set(key, { file: 'models/block/' + entry.name, why: '不是合法 JSON：' + messageOf(error) })
+        }
       }
       const textures = new Map()
       // 项目自己的动画：键是**包内相对路径**（和 `textures` 的 value 同一个形态），
@@ -1032,20 +1258,57 @@ function installHost(ctx) {
         }
       }
       return { dir: dir, namespace: namespace, assets: assets, models: models, textures: textures,
-        animations: animations, animationNotes: animationNotes }
+        animations: animations, animationNotes: animationNotes, unreadableModels: unreadableModels }
     }
 
+    /**
+     * 语言文件：读得出来就合并成一张名字表，读不出来就**把原因留着**。
+     *
+     * 以前这里用 `readJson`：它把 JSON 解析错误吞成 `undefined`，于是"写坏了的
+     * `lang/*.json`"与"根本没有这个文件"走同一条路 —— 名字表是空的，报告里却只有一句
+     * "方块名只能用原始 id"，没人知道是文件坏了。现在返回 `{ table, problems }`：
+     * `problems` 里每个元素带**文件**和**真实原因**（`{ file: 'lang/en_us.json',
+     * why: '不是合法 JSON：…' }`），诊断照着说"读不出来"，而不是说"缺失"。
+     *
+     * **缺文件只在"一个名字都没读出来"时才记进 problems**：那才是"方块名只能用原始 id"
+     * 的真话。项目只写了 `en_us`、没有 `zh_cn` 时名字是好的，不能把正常状态报成读坏了；
+     * 只有断掉的那个文件才拿得到真原因（缺失 / 不是合法 JSON / 读不出内容）。
+     */
     async function readLang(assets) {
       const merged = {}
+      const broken = []
+      const missing = []
       for (const locale of ['en_us', 'zh_cn']) {
-        const parsed = await readJson(assets + '/lang/' + locale + '.json')
-        if (parsed === undefined || parsed === null || typeof parsed !== 'object') continue
+        const file = 'lang/' + locale + '.json'
+        const full = assets + '/' + file
+        const info = await statOf(full)
+        if (info === undefined || info.type !== 'file') {
+          missing.push({ file: file, why: '文件不存在（缺失，不是读坏了）' })
+          continue
+        }
+        const text = await readTextOf(full)
+        if (text === undefined || text === null) {
+          broken.push({ file: file, why: '文件在，但读不出内容（权限或编码），不是缺失' })
+          continue
+        }
+        let parsed
+        try {
+          parsed = JSON.parse(String(text))
+        } catch (error) {
+          broken.push({ file: file, why: '不是合法 JSON：' + messageOf(error) })
+          continue
+        }
+        if (parsed === null || typeof parsed !== 'object') {
+          broken.push({ file: file, why: '不是 JSON 对象（顶层应该是一张键值表）' })
+          continue
+        }
         for (const key of Object.keys(parsed)) {
           const value = parsed[key]
           if (typeof value === 'string' && value.length > 0) merged[key] = value
         }
       }
-      return merged
+      const problems = broken.concat(Object.keys(merged).length === 0 ? missing : [])
+      return { table: merged, problems: problems }
     }
 
     // 从参考目录现取回来的**贴图**句柄（`ref:` 给 textureUrlFor 用），按请求名索引。
@@ -1502,8 +1765,12 @@ function installHost(ctx) {
           ? atlas.namespace : namespaces[0]
         if (namespace === undefined) continue
         const load = await preload(dir, namespace)
+        const lang = await readLang(load.assets)
+        // 语言文件"读不出来"的真原因要跟到诊断手里：`load` 就是 `preloads` 里缓存的那一份，
+        // 报告（`blockDiagnostic`）从它身上取 `langProblems`，`langs` 仍然只是一张名字表。
+        load.langProblems = lang.problems
         nextPreloads.set(namespace, load)
-        nextLangs.set(namespace, await readLang(load.assets))
+        nextLangs.set(namespace, lang.table)
         staged.push({ entry: entry.name, dir: dir, atlas: atlas, namespace: namespace, load: load })
       }
       preloads = nextPreloads
@@ -2247,6 +2514,20 @@ function installHost(ctx) {
       return null
     }
 
+    /**
+     * 抽取器 `--icons` 回来的一个方块条目能不能拼出图标：`null` = 能；否则是**缺数据的
+     * 真实原因**。`atlas.refIcons` 以前只写一句"没有图标数据"就把这一格丢掉，用户不知道
+     * 是 png 缺了、空了还是抽取器根本没回这一条 —— 报告要说得出原因。
+     */
+    function refIconEntryProblem(entry) {
+      if (entry === null || entry === undefined || typeof entry !== 'object' || Array.isArray(entry)) {
+        return '抽取器没有返回这个方块的条目'
+      }
+      if (typeof entry.png !== 'string') return '条目里没有 png 字段'
+      if (entry.png === '') return 'png 字段是空的'
+      return null
+    }
+
     async function itemIcon(namespace, parsed, have, project) {
       const load = virtualLoad(namespace, parsed)
       // 每个字段都要**有值**：宿主返回值里只要有一个 `undefined`，运行时就整条拒收
@@ -2907,6 +3188,9 @@ function installHost(ctx) {
     }
 
     function blockDiagnostic(load, namespace, id, found, built, directory) {
+      // 语言文件里的名字读不出来（坏 JSON / 读不出 / 一个表都没有）—— 名字为什么是原始 id
+      // 的答案。以前 `readLang` 把解析错误吞成空表，报告里只剩"名字是 id"，没人知道是文件坏了。
+      const langProblems = load === undefined || !Array.isArray(load.langProblems) ? [] : load.langProblems
       const project = Array.isArray(built.project) ? built.project : []
       const vanilla = Array.isArray(built.vanilla) ? built.vanilla : []
       const textures = Array.isArray(built.unresolvedTextures) ? built.unresolvedTextures : []
@@ -2976,6 +3260,10 @@ function installHost(ctx) {
       if (textures.length > 0) {
         tried.push('贴图现取（--textures）：' + (directory === '' ? '没设参考目录，没走' : directory))
       }
+      if (langProblems.length > 0) {
+        // "已试过的路"里也要看得见：这不是凭空猜的，是真去读了这些文件（而且读失败了）。
+        tried.push('语言文件：' + langProblems.map((info) => info.file + '（' + info.why + '）').join('、'))
+      }
 
       const lines = ['[MC 资产面板] 画不出 ' + namespace + ':' + id]
       if (found.guessed === true) {
@@ -2986,12 +3274,35 @@ function installHost(ctx) {
       }
       lines.push('· 选用的模型：' + String(found.model))
       if (project.length > 0) {
-        lines.push('· 项目自己的模型文件缺失（' + project.length + ' 个）：')
-        for (const entry of project) lines.push('  - ' + entry.name + ' → 补 ' + fixPathOf(load, entry, directory))
+        // **文件在、但读不出来** ≠ 缺失。以前 `readJson` 把 JSON 解析错误吞成 undefined，
+        // 报告于是说"项目自己的模型文件缺失 → 补上它"——指向一个明明就在那里的文件，
+        // 用户照着"补"只会覆盖掉自己写坏的那份，永远不知道是 JSON 写错了。
+        const unreadable = load === undefined || load.unreadableModels === undefined ? new Map() : load.unreadableModels
+        const broken = []
+        const missing = []
+        for (const entry of project) {
+          const bare = String(entry.bare === undefined ? entry.name : entry.bare).replace(/^block\//, '')
+          const info = unreadable.get('block/' + bare)
+          if (info === undefined) missing.push(entry)
+          else broken.push(info)
+        }
+        if (broken.length > 0) {
+          lines.push('· 项目自己的模型文件**在，但解析失败**（' + broken.length + ' 个）——不是缺失，不要照"补文件"处理：')
+          for (const info of broken) lines.push('  - ' + info.file + ' → ' + info.why)
+        }
+        if (missing.length > 0) {
+          lines.push('· 项目自己的模型文件缺失（' + missing.length + ' 个）：')
+          for (const entry of missing) lines.push('  - ' + entry.name + ' → 补 ' + fixPathOf(load, entry, directory))
+        }
       }
       if (vanilla.length > 0) {
         lines.push('· 原版母模型缺失（' + vanilla.length + ' 个）：')
         for (const entry of vanilla) lines.push('  - ' + entry.name + ' → ' + fixPathOf(load, entry, directory))
+      }
+      if (langProblems.length > 0) {
+        // "方块名为什么是原始 id"——点名文件与原因，缺文件和写坏了分开说。
+        lines.push('· 语言文件读不出来（' + langProblems.length + ' 个）→ 这些文件里的方块名只能用原始 id：')
+        for (const info of langProblems) lines.push('  - ' + info.file + ' → ' + info.why)
       }
       if (bareWords.length > 0) {
         lines.push('· 有 ' + bareWords.length + ' 个面把**裸词**当贴图写（模型格式里裸词是路径，不是变量）：')
@@ -4375,11 +4686,9 @@ function installHost(ctx) {
           // 以前这里直接拼 `item.png`、直接取 `item.name`：前者缺数据时变成字面量
           // `data:image/png;base64,undefined`（一格的破图），后者只要缺字段就是
           // `undefined` —— 而运行时拒收含 undefined 的返回值，整批一起失败。
-          if (item === null || item === undefined || typeof item !== 'object' ||
-              typeof item.png !== 'string' || item.png === '') {
-            failed.push(id + '（没有图标数据）')
-            continue
-          }
+          // 失败不只"丢掉这一格"：`failed` 里点名 id 和**真实原因**，报告才说得出话。
+          const problem = refIconEntryProblem(item)
+          if (problem !== null) { failed.push(id + '（没有图标数据：' + problem + '）'); continue }
           icons[key] = 'data:image/png;base64,' + item.png
           // Keyed exactly like a project icon (`namespace:id`) so the hotbar does
           // not care which kind of block it is holding.

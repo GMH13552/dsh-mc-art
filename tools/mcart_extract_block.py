@@ -771,74 +771,44 @@ def qualify_textures(repository, namespace, table):
     return out
 
 
-# The handful of vanilla BASE models a project pack inherits by unqualified
-# name but does not ship.  A pack's block model says `{"parent": "block/cube_all"}`
-# and `cube_all` lives in the game; when the game root is readable it is read
-# from there and this table is never consulted.  Without one, a project block
-# item had no geometry at all and read as "shape: none" -- our own resources with
-# no item form -- while the 3D view of the same block worked, because the host
-# carries this exact table for it.  Seven entries, same numbers, so that the icon
-# and the 3D view agree about a block nobody shipped a parent for.
+# 原版母模型表：**唯一真相**是 `tools/mcart-plugin/vanilla-parents.json`。
 #
-# `block/block` is also where the GUI matrix lives (`display.gui`), and those
-# numbers are the ones measured in `vanilla3d/tools/render_item_model.py`.
-def _cube_elements(pick):
-    faces = {name: {"texture": pick[name], "uv": [0, 0, 16, 16]}
-             for name in ("down", "up", "north", "south", "west", "east")}
-    return [{"from": [0, 0, 0], "to": [16, 16, 16], "faces": faces}]
+# 以前这里和宿主各有一份手写表（`host/05-model-shape.js` 里的 VANILLA_PARENTS），
+# 已经漂移过一次：`.mcmeta` / 父模型解释不一致，同一个方块的图标和 3D 视图给出不同结果。
+# 现在宿主片段由 `panel/build.mjs` 从 JSON 生成，这一侧**直接读同一份 JSON** ——
+# 不再有第二份表。找不到 JSON 就明确报错，**绝不静默回退到内部副本**：
+#   · 仓库里：   tools/mcart-plugin/vanilla-parents.json
+#   · 发布包里： panel/python/vanilla-parents.json（与这个脚本同目录，build 复制）
+VANILLA_PARENTS_CANDIDATES = (
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "vanilla-parents.json"),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcart-plugin", "vanilla-parents.json"),
+)
+_vanilla_parents = None
 
 
-_CROSS_ELEMENTS = [
-    {"from": [0.8, 0, 8], "to": [15.2, 16, 8], "shade": False,
-     "rotation": {"origin": [8, 8, 8], "axis": "y", "angle": 45, "rescale": True},
-     "faces": {"north": {"uv": [0, 0, 16, 16], "texture": "#cross"},
-               "south": {"uv": [0, 0, 16, 16], "texture": "#cross"}}},
-    {"from": [8, 0, 0.8], "to": [8, 16, 15.2], "shade": False,
-     "rotation": {"origin": [8, 8, 8], "axis": "y", "angle": 45, "rescale": True},
-     "faces": {"west": {"uv": [0, 0, 16, 16], "texture": "#cross"},
-               "east": {"uv": [0, 0, 16, 16], "texture": "#cross"}}},
-]
-
-BUILTIN_VANILLA_PARENTS = {
-    "block/block": {
-        "textures": {},
-        "gui_light": "side",
-        "display": {"gui": {"rotation": [30, 225, 0], "translation": [0, 0, 0],
-                            "scale": [0.625, 0.625, 0.625]}},
-    },
-    # `cube` holds the elements (one cube, six faces keyed `#down..#east`);
-    # the others only MAP those keys onto their own texture names.  Copied from
-    # the 1.18.2 jar rather than simplified, so a pack that says
-    # `{"parent": "block/cube_all"}` and one that says `{"parent": "block/cube"}`
-    # both land on the same numbers.
-    "block/cube": {
-        "parent": "block/block",
-        "textures": {"particle": "#north"},
-        "elements": _cube_elements({"down": "#down", "up": "#up", "north": "#north",
-                                    "south": "#south", "west": "#west", "east": "#east"}),
-    },
-    "block/cube_all": {
-        "parent": "block/cube",
-        "textures": {"particle": "#all", "down": "#all", "up": "#all",
-                     "north": "#all", "south": "#all", "west": "#all", "east": "#all"},
-    },
-    "block/cube_column": {
-        "parent": "block/cube",
-        "textures": {"particle": "#side", "end": "#end", "side": "#side",
-                     "down": "#end", "up": "#end", "north": "#side",
-                     "south": "#side", "west": "#side", "east": "#side"},
-    },
-    "block/cube_bottom_top": {
-        "parent": "block/cube",
-        "textures": {"particle": "#side", "bottom": "#bottom", "top": "#top", "side": "#side",
-                     "down": "#bottom", "up": "#top", "north": "#side",
-                     "south": "#side", "west": "#side", "east": "#side"},
-    },
-    # A cross is standalone in vanilla: no parent, so no `display` -- which is
-    # exactly why a cross-shaped block's item is drawn straight on.
-    "block/cross": {"textures": {"particle": "#cross"}, "elements": _CROSS_ELEMENTS},
-    "block/tinted_cross": {"parent": "block/cross", "textures": {}},
-}
+def vanilla_parents():
+    """`(table, source_path)`。缓存；缺失或形状不对时抛可读的 SystemExit。"""
+    global _vanilla_parents
+    if _vanilla_parents is not None:
+        return _vanilla_parents
+    tried = []
+    for path in VANILLA_PARENTS_CANDIDATES:
+        tried.append(path)
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        table = payload.get("parents")
+        if not isinstance(table, dict) or not table:
+            raise SystemExit("%s 形状不对：需要非空的对象字段 parents" % path)
+        _vanilla_parents = (table, path)
+        return _vanilla_parents
+    raise SystemExit(
+        "找不到原版母模型表 vanilla-parents.json（试过：%s）。\n"
+        "这张表只有一份真源 tools/mcart-plugin/vanilla-parents.json；宿主片段也由它生成，"
+        "这里不会静默回退到第二份副本。\n"
+        "仓库里跑：确认该文件存在；发布包里跑：确认 panel/python/vanilla-parents.json 随包发出。"
+        % "；".join(tried))
 
 
 def walk_model(repository, default_namespace, reference, out_models, sources, missing):
@@ -850,6 +820,7 @@ def walk_model(repository, default_namespace, reference, out_models, sources, mi
     textures = {}
     chain = []
     seen = set()
+    vanilla_bases = vanilla_parents()[0]      # 唯一真源：vanilla-parents.json（缓存）
     node_ref = reference
     current_namespace = default_namespace
     for _ in range(MAX_MODEL_DEPTH):
@@ -874,14 +845,14 @@ def walk_model(repository, default_namespace, reference, out_models, sources, mi
             if model is not None:
                 found_namespace = candidate_namespace
                 break
-        if model is None and ref_path in BUILTIN_VANILLA_PARENTS \
+        if model is None and ref_path in vanilla_bases \
                 and (":" not in node_ref or ref_namespace == "minecraft"):
             # Unqualified means `minecraft:` in the game, and this is the one
             # case where nothing on disk can answer: the pack inherits these
             # bases, it does not ship them, and there is no game root.  Marked so
             # the consumer can SAY it used a built-in instead of pretending the
             # chain was complete.
-            model = BUILTIN_VANILLA_PARENTS[ref_path]
+            model = vanilla_bases[ref_path]
             found_namespace = "minecraft"
             hit = None
             missing.append("内置:" + ref_path)
@@ -2534,6 +2505,14 @@ def ordered_unique(values):
 
 
 def main(argv):
+    # 漂移门禁用：把"我实际读到的母模型表"打出来（JSON），让 verify-build 与
+    # vanilla-parents.json 逐条比对 —— 宿主片段、JSON、这一侧三者必须是同一份数据。
+    if "--dump-vanilla-parents" in argv:
+        table, source = vanilla_parents()
+        sys.stdout.write(json.dumps({"source": source, "parents": table},
+                                    ensure_ascii=False, sort_keys=True) + "\n")
+        sys.stdout.flush()
+        sys.exit(0)      # 外层还会 print(main(...))，这里必须直接退出，否则多打一行 "0"
     # `--root` may repeat.  The FIRST root is the one that wins a lookup and the
     # one whose shape/version is reported; any others are searched after it, which
     # is how a project pack resolves the vanilla parents it inherits.

@@ -631,10 +631,18 @@ const CSS = [
     + '--mc-r-1:4px;--mc-r-2:6px;--mc-r-3:8px;--mc-r-pill:999px;'
     + '--mc-lh:1.45;--mc-focus:2px solid var(--mc-brand);'
     + '--mc-line:1px solid var(--mc-border);--mc-line-strong:1px solid var(--mc-border-strong);'
+    // 表单/列表的统一节奏：控件同高、开关缩进、滚动区同一档、顶栏底色
+    + '--mc-control-h:26px;--mc-indent:20px;--mc-scroll-h:220px;--mc-scroll-h-sm:124px;'
+    + '--mc-header-bg:var(--dsw-alias-bg-base,rgba(24,24,28,.96));'
     + 'display:flex;flex-direction:column;gap:var(--mc-sp-2);padding:var(--mc-sp-3);height:100%;'
     + 'box-sizing:border-box;overflow-y:auto;overflow-x:hidden;color:var(--mc-text);'
     + 'font-size:var(--mc-fs-md);line-height:var(--mc-lh)}',
   // ---- 版式 ---------------------------------------------------------------
+  // 顶栏钉在滚动区顶部：面板很长时"设置/物品列表"不跟着滚走（全宽 + 底边）。
+  '.mcart-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:var(--mc-sp-1);'
+    + 'background:var(--mc-header-bg);border-bottom:var(--mc-line);'
+    + 'margin:calc(-1 * var(--mc-sp-3)) calc(-1 * var(--mc-sp-3)) 0;'
+    + 'padding:var(--mc-sp-2) var(--mc-sp-3)}',
   '.mcart-bar{display:flex;align-items:center;gap:var(--mc-sp-1);flex-wrap:wrap}',
   '.mcart-title{font-size:var(--mc-fs-lg);font-weight:600}',
   '.mcart-sub{color:var(--mc-text-dim);opacity:.85;font-size:var(--mc-fs-sm)}',
@@ -648,7 +656,7 @@ const CSS = [
   '.mcart-tools{display:flex;gap:var(--mc-sp-1);flex-wrap:wrap;align-items:center}',
   // ---- 三态（空 / 加载 / 错误）一致：同一档字号，错误/警告用状态色 + 左侧细线 ----
   '.mcart-note{color:var(--mc-text-dim);font-size:var(--mc-fs-sm)}',
-  '.mcart-hint{font-size:var(--mc-fs-xs);color:var(--mc-text-dim);margin-left:var(--mc-sp-3);line-height:var(--mc-lh)}',
+  '.mcart-hint{font-size:var(--mc-fs-xs);color:var(--mc-text-dim);margin-left:var(--mc-indent);line-height:var(--mc-lh)}',
   '.mcart-empty{font-size:var(--mc-fs-sm);color:var(--mc-text-dim);padding:var(--mc-sp-2);'
     + 'border:1px dashed var(--mc-border);border-radius:var(--mc-r-2);text-align:center}',
   '.mcart-loading{font-size:var(--mc-fs-sm);color:var(--mc-text-dim);opacity:.9}',
@@ -659,23 +667,27 @@ const CSS = [
   // ---- 可交互控件：hover / active / disabled / focus-visible 四态一致 ----------
   '.mcart-btn{background:var(--mc-a-5);border:var(--mc-line);border-radius:var(--mc-r-2);'
     + 'color:inherit;font:inherit;font-size:var(--mc-fs-sm);padding:var(--mc-sp-1) var(--mc-sp-2);'
-    + 'cursor:pointer;flex:none}',
+    + 'min-height:var(--mc-control-h);box-sizing:border-box;line-height:1.2;'
+    + 'cursor:pointer;flex:none;white-space:nowrap}',
   '.mcart-btn:hover{background:var(--mc-a-9)}',
   '.mcart-btn:active{background:var(--mc-a-14)}',
   '.mcart-btn[disabled]{opacity:.4;cursor:default;background:var(--mc-a-2)}',
   '.mcart-tool[data-on="1"]{background:var(--mc-a-14);font-weight:600}',
   '.mcart-icon{background:none;border:0;color:inherit;font:inherit;font-size:var(--mc-fs-lg);'
-    + 'line-height:1;padding:var(--mc-sp-1);border-radius:var(--mc-r-2);cursor:pointer}',
+    + 'line-height:1;padding:var(--mc-sp-1);border-radius:var(--mc-r-2);cursor:pointer;'
+    + 'min-width:var(--mc-control-h);min-height:var(--mc-control-h);box-sizing:border-box;'
+    + 'display:inline-flex;align-items:center;justify-content:center}',
   '.mcart-icon:hover{background:var(--mc-a-9)}',
   '.mcart-icon[data-on="1"]{background:var(--mc-a-14)}',
   '.mcart-input{flex:1;min-width:0;background:var(--mc-surface);border:var(--mc-line);'
     + 'border-radius:var(--mc-r-2);color:inherit;font:inherit;font-size:var(--mc-fs-sm);'
-    + 'padding:var(--mc-sp-1) var(--mc-sp-2)}',
+    + 'padding:var(--mc-sp-1) var(--mc-sp-2);min-height:var(--mc-control-h);'
+    + 'box-sizing:border-box;line-height:1.2}',
   '.mcart-input:hover{border-color:var(--mc-border-strong)}',
   '.mcart-input:disabled,.mcart-select:disabled{opacity:.4;cursor:default}',
   '.mcart-select{flex:1;min-width:0;background:var(--mc-surface);border:var(--mc-line);'
     + 'border-radius:var(--mc-r-2);color:inherit;font:inherit;font-size:var(--mc-fs-sm);'
-    + 'padding:var(--mc-sp-1)}',
+    + 'padding:var(--mc-sp-1);min-height:var(--mc-control-h);box-sizing:border-box;line-height:1.2}',
   '.mcart-select:hover{border-color:var(--mc-border-strong)}',
   '.mcart-btn:focus-visible,.mcart-icon:focus-visible,.mcart-input:focus-visible,'
     + '.mcart-select:focus-visible,.mcart-item:focus-visible,.mcart-slot:focus-visible,'
@@ -685,7 +697,7 @@ const CSS = [
   '.mcart-card{border:var(--mc-line);border-radius:var(--mc-r-3);padding:var(--mc-sp-3);'
     + 'display:flex;flex-direction:column;gap:var(--mc-sp-2);background:var(--mc-surface)}',
   '.mcart-list{overflow:auto;border:var(--mc-line);border-radius:var(--mc-r-3);'
-    + 'padding:var(--mc-sp-1);max-height:220px}',
+    + 'padding:var(--mc-sp-1);max-height:var(--mc-scroll-h)}',
   '.mcart-row{display:flex;align-items:center;gap:var(--mc-sp-1);border-radius:var(--mc-r-2);'
     + 'padding:var(--mc-sp-1)}',
   '.mcart-row:hover{background:var(--mc-a-5)}',
@@ -695,14 +707,18 @@ const CSS = [
   '.mcart-item:hover{background:var(--mc-a-5)}',
   '.mcart-item:active{background:var(--mc-a-9)}',
   '.mcart-item[data-on="1"]{background:var(--mc-a-9);font-weight:600}',
-  '.mcart-projects{max-height:190px;overflow:auto;display:flex;flex-direction:column;gap:1px;'
+  '.mcart-projects{max-height:var(--mc-scroll-h);overflow:auto;display:flex;flex-direction:column;gap:1px;'
     + 'border:var(--mc-line);border-radius:var(--mc-r-3);padding:var(--mc-sp-1)}',
   '.mcart-mods{border:var(--mc-line);border-radius:var(--mc-r-3);padding:var(--mc-sp-1) var(--mc-sp-2);'
-    + 'display:flex;flex-direction:column;gap:1px;max-height:160px;overflow:auto}',
-  '.mcart-switch{display:flex;align-items:flex-start;gap:var(--mc-sp-1);cursor:pointer;'
-    + 'padding:var(--mc-sp-1) 0;border-radius:var(--mc-r-1)}',
-  '.mcart-switch input{margin:1px 0 0 0;flex:none;accent-color:var(--mc-brand)}',
+    + 'display:flex;flex-direction:column;gap:1px;max-height:var(--mc-scroll-h-sm);overflow:auto}',
+  '.mcart-switch{display:grid;grid-template-columns:var(--mc-indent) 1fr;column-gap:var(--mc-sp-2);'
+    + 'align-items:start;cursor:pointer;padding:var(--mc-sp-1) 0;border-radius:var(--mc-r-1)}',
+  '.mcart-switch input{margin:var(--mc-sp-1) 0 0 0;flex:none;accent-color:var(--mc-brand)}',
   '.mcart-switch:focus-within{outline:var(--mc-focus);outline-offset:1px}',
+  // 滚动区统一：细滚动条（颜色走宿主 token）、不要链式滚动、右留一点防贴边。
+  '.mcart-list,.mcart-hotbar,.mcart-swatches,.mcart-projects,.mcart-mods{'
+    + 'scrollbar-width:thin;scrollbar-color:var(--dsh-scrollbar-thumb,var(--mc-a-14)) transparent;'
+    + 'overscroll-behavior:contain;padding-right:var(--mc-sp-1)}',
   '.mcart-chip{font-size:var(--mc-fs-xs);padding:1px var(--mc-sp-2);border-radius:var(--mc-r-pill);'
     + 'background:var(--mc-a-9);color:var(--mc-text-dim)}',
   // ---- 取景框与 3D 视口（内容区：中性深底，不随主题变白） --------------------
@@ -744,7 +760,7 @@ const CSS = [
   '.mcart-hudpage:hover{opacity:1}',
   '.mcart-hudpage[disabled]{opacity:.22;cursor:default}',
   // ---- 物品栏/九宫格/缩略图 ------------------------------------------------
-  '.mcart-hotbar{display:flex;gap:var(--mc-sp-1);flex-wrap:wrap;max-height:124px;overflow:auto}',
+  '.mcart-hotbar{display:flex;gap:var(--mc-sp-1);flex-wrap:wrap;max-height:var(--mc-scroll-h-sm);overflow:auto}',
   '.mcart-slot{width:28px;height:28px;border:var(--mc-line);border-radius:var(--mc-r-1);'
     + 'background:none;background-size:cover;image-rendering:pixelated;padding:0;flex:none;'
     + 'cursor:pointer}',
@@ -760,7 +776,7 @@ const CSS = [
   '.mcart-edit{display:flex;flex-direction:column;gap:var(--mc-sp-1)}',
   '.mcart-edit-canvas{display:block;width:100%;height:auto;max-height:52vh;object-fit:contain;'
     + 'image-rendering:pixelated;border-radius:var(--mc-r-1);background:var(--mc-canvas-bg);'
-    + 'cursor:crosshair;touch-action:none}',
+    + 'margin:var(--mc-sp-1) 0;cursor:crosshair;touch-action:none}',
   '.mcart-swatches{display:flex;gap:var(--mc-sp-1);flex-wrap:wrap;max-height:56px;overflow:auto}',
   '.mcart-swatch{width:20px;height:20px;border-radius:var(--mc-r-1);border:var(--mc-line);'
     + 'cursor:pointer;padding:0;flex:none}',
@@ -3668,9 +3684,42 @@ return {
         }
       })
 
+      /**
+       * 把一段引用（`@路径` + 可选的一句话）**追加**到输入框草稿末尾。
+       *
+       * 这是「@ 提意见」和「告诉 AI」共用的唯一入口：只写草稿、**绝不发送**
+       * （0.1.26 写坏会话日志的教训：客户端没有、也不会有会话写入）。
+       * 用户的原话是"@提意见 的部分…直接插入对话框就行"，所以不再挂一条
+       * "引用给 AI / 插入输入框"的 bar 让人点第二次。
+       *
+       * 拿不到输入框把手（dock 还没挂上，冷启动少见）时返回 false —— 调用方退回
+       * "挂一条 bar"的兜底：宁可退化成两步，也绝不许点了没反应。
+       */
+      function insertReference(path, note) {
+        const target = path === undefined || path === null ? '' : String(path)
+        if (target === '') return false
+        const sentence = note === undefined || note === null ? '' : String(note)
+        const draft = composer.draft === undefined || composer.draft === null ? '' : String(composer.draft)
+        const base = draft.replace(/\s+$/, '')
+        if (typeof composer.write !== 'function') return false
+        const next = (base === '' ? '' : base + ' ') + '@' + target
+          + (sentence === '' ? '' : ' ' + sentence) + ' '
+        composer.write(next)
+        // 本地也记一份：连点两次时第二下读到的是刚写进去的内容，不会把第一下盖掉。
+        composer.draft = next
+        return true
+      }
+
       function complain() {
         if (scene !== null) {
-          setPending({ path: scene.ref || '', title: scene.title || '' })
+          const refPath = scene.ref === undefined || scene.ref === null ? '' : String(scene.ref)
+          if (refPath === '') {
+            // 一句话都没有等于"点了没反应"；这类病我们在别处修过太多次。
+            setItemMsg('这个资产没有可以引用的文件路径（报告里的 @ 引用不可用）')
+            return
+          }
+          if (insertReference(refPath)) { setPending(null); return }
+          setPending({ path: refPath, title: scene.title || '' })
           return
         }
         const asset = itemAsset()
@@ -3684,6 +3733,7 @@ return {
           return
         }
         setItemMsg(null)
+        if (insertReference(path)) { setPending(null); return }
         setPending({ path: path, title: asset.title })
       }
 
@@ -3847,12 +3897,16 @@ return {
           // the sentence and one click puts it (plus the settings file, which the
           // skill reads) in the composer.  This is the answer to "我改了设置会通知
           // agent 吗": now it can, without the user having to describe the change.
+          // 和「@ 提意见」同一条路：**直接追加进输入框草稿**，不再挂 bar 让人点第二次。
           if (savedSettings !== null && savedSettings.path !== '') {
             rows.push(React.createElement('div', { className: 'mcart-bar', key: 'tell' },
               React.createElement('span', { className: 'mcart-note mcart-grow' },
                 '已保存，要让 AI 按新设置重做的话：'),
               React.createElement('button', { className: 'mcart-btn', type: 'button',
-                onClick: () => setPending({ path: savedSettings.path, note: savedSettings.note }) },
+                onClick: () => {
+                  if (insertReference(savedSettings.path, savedSettings.note)) { setSavedSettings(null); return }
+                  setPending({ path: savedSettings.path, note: savedSettings.note })
+                } },
                 '告诉 AI'),
               React.createElement('button', { className: 'mcart-btn', type: 'button',
                 onClick: () => setSavedSettings(null) }, '不用了'),
@@ -4304,7 +4358,9 @@ return {
       }
 
       return React.createElement('div', { className: 'mcart-root' },
-        React.createElement('div', { className: 'mcart-bar' },
+        // 顶栏钉在滚动区顶部（`mcart-head`）：面板很长时"设置/物品列表"不会滚走，
+        // 这是专业工具的常规做法（VS Code 标题栏、Blender 属性面板的 header）。
+        React.createElement('div', { className: 'mcart-bar mcart-head' },
           React.createElement('span', { className: 'mcart-title' }, 'MC 资产'),
           React.createElement('span', { className: 'mcart-sub' },
             busy ? '加载中…' : (inRightColumn ? '右侧栏' : '中央面板')),
@@ -4348,6 +4404,19 @@ return {
       return React.createElement('span', null, 'MC 资产')
     }
 
+    /**
+     * 输入框 dock：**主要职责是捕获把手**。
+     *
+     * 壳把 `inputActions.setDraft` / `useInput` 只交给这个槽的 props，而报告卡、
+     * 渲染错误边界、「@ 提意见」都要写草稿 —— 所以每渲染一遍就把把手与"这一遍读到
+     * 的草稿"记进模块级 `composer`。**只是草稿**：这里没有、也不会有发送接口。
+     *
+     * 那条 "引用给 AI / 插入输入框 / 取消" 的 bar 已经**不再出现在正常路径**上：
+     * 用户要的是"@提意见 直接插进对话框"，`complain()` 现在直接写草稿并把 pending
+     * 清空，所以这里照常返回 null。它只在一种情况露头：点按钮那一刻 dock 还没挂上、
+     * 拿不到把手（冷启动少见），`complain()` 会退回 `setPending(...)` 把这条 bar
+     * 当兜底挂出来 —— 宁可退化成两步，也绝不许点了没反应。
+     */
     function ReferenceBar(props) {
       const current = usePending()
       const draft = props.useInput !== undefined ? props.useInput((state) => state.draft) : ''

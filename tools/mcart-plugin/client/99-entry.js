@@ -2695,9 +2695,42 @@ return {
         }
       })
 
+      /**
+       * 把一段引用（`@路径` + 可选的一句话）**追加**到输入框草稿末尾。
+       *
+       * 这是「@ 提意见」和「告诉 AI」共用的唯一入口：只写草稿、**绝不发送**
+       * （0.1.26 写坏会话日志的教训：客户端没有、也不会有会话写入）。
+       * 用户的原话是"@提意见 的部分…直接插入对话框就行"，所以不再挂一条
+       * "引用给 AI / 插入输入框"的 bar 让人点第二次。
+       *
+       * 拿不到输入框把手（dock 还没挂上，冷启动少见）时返回 false —— 调用方退回
+       * "挂一条 bar"的兜底：宁可退化成两步，也绝不许点了没反应。
+       */
+      function insertReference(path, note) {
+        const target = path === undefined || path === null ? '' : String(path)
+        if (target === '') return false
+        const sentence = note === undefined || note === null ? '' : String(note)
+        const draft = composer.draft === undefined || composer.draft === null ? '' : String(composer.draft)
+        const base = draft.replace(/\s+$/, '')
+        if (typeof composer.write !== 'function') return false
+        const next = (base === '' ? '' : base + ' ') + '@' + target
+          + (sentence === '' ? '' : ' ' + sentence) + ' '
+        composer.write(next)
+        // 本地也记一份：连点两次时第二下读到的是刚写进去的内容，不会把第一下盖掉。
+        composer.draft = next
+        return true
+      }
+
       function complain() {
         if (scene !== null) {
-          setPending({ path: scene.ref || '', title: scene.title || '' })
+          const refPath = scene.ref === undefined || scene.ref === null ? '' : String(scene.ref)
+          if (refPath === '') {
+            // 一句话都没有等于"点了没反应"；这类病我们在别处修过太多次。
+            setItemMsg('这个资产没有可以引用的文件路径（报告里的 @ 引用不可用）')
+            return
+          }
+          if (insertReference(refPath)) { setPending(null); return }
+          setPending({ path: refPath, title: scene.title || '' })
           return
         }
         const asset = itemAsset()
@@ -2711,6 +2744,7 @@ return {
           return
         }
         setItemMsg(null)
+        if (insertReference(path)) { setPending(null); return }
         setPending({ path: path, title: asset.title })
       }
 
@@ -2874,12 +2908,16 @@ return {
           // the sentence and one click puts it (plus the settings file, which the
           // skill reads) in the composer.  This is the answer to "我改了设置会通知
           // agent 吗": now it can, without the user having to describe the change.
+          // 和「@ 提意见」同一条路：**直接追加进输入框草稿**，不再挂 bar 让人点第二次。
           if (savedSettings !== null && savedSettings.path !== '') {
             rows.push(React.createElement('div', { className: 'mcart-bar', key: 'tell' },
               React.createElement('span', { className: 'mcart-note mcart-grow' },
                 '已保存，要让 AI 按新设置重做的话：'),
               React.createElement('button', { className: 'mcart-btn', type: 'button',
-                onClick: () => setPending({ path: savedSettings.path, note: savedSettings.note }) },
+                onClick: () => {
+                  if (insertReference(savedSettings.path, savedSettings.note)) { setSavedSettings(null); return }
+                  setPending({ path: savedSettings.path, note: savedSettings.note })
+                } },
                 '告诉 AI'),
               React.createElement('button', { className: 'mcart-btn', type: 'button',
                 onClick: () => setSavedSettings(null) }, '不用了'),
@@ -3331,7 +3369,9 @@ return {
       }
 
       return React.createElement('div', { className: 'mcart-root' },
-        React.createElement('div', { className: 'mcart-bar' },
+        // 顶栏钉在滚动区顶部（`mcart-head`）：面板很长时"设置/物品列表"不会滚走，
+        // 这是专业工具的常规做法（VS Code 标题栏、Blender 属性面板的 header）。
+        React.createElement('div', { className: 'mcart-bar mcart-head' },
           React.createElement('span', { className: 'mcart-title' }, 'MC 资产'),
           React.createElement('span', { className: 'mcart-sub' },
             busy ? '加载中…' : (inRightColumn ? '右侧栏' : '中央面板')),
@@ -3375,6 +3415,19 @@ return {
       return React.createElement('span', null, 'MC 资产')
     }
 
+    /**
+     * 输入框 dock：**主要职责是捕获把手**。
+     *
+     * 壳把 `inputActions.setDraft` / `useInput` 只交给这个槽的 props，而报告卡、
+     * 渲染错误边界、「@ 提意见」都要写草稿 —— 所以每渲染一遍就把把手与"这一遍读到
+     * 的草稿"记进模块级 `composer`。**只是草稿**：这里没有、也不会有发送接口。
+     *
+     * 那条 "引用给 AI / 插入输入框 / 取消" 的 bar 已经**不再出现在正常路径**上：
+     * 用户要的是"@提意见 直接插进对话框"，`complain()` 现在直接写草稿并把 pending
+     * 清空，所以这里照常返回 null。它只在一种情况露头：点按钮那一刻 dock 还没挂上、
+     * 拿不到把手（冷启动少见），`complain()` 会退回 `setPending(...)` 把这条 bar
+     * 当兜底挂出来 —— 宁可退化成两步，也绝不许点了没反应。
+     */
     function ReferenceBar(props) {
       const current = usePending()
       const draft = props.useInput !== undefined ? props.useInput((state) => state.draft) : ''

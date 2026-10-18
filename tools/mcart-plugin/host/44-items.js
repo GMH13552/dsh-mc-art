@@ -133,3 +133,17 @@
       return null
     }
 
+    /**
+     * 抽取器 `--icons` 回来的一个方块条目能不能拼出图标：`null` = 能；否则是**缺数据的
+     * 真实原因**。`atlas.refIcons` 以前只写一句"没有图标数据"就把这一格丢掉，用户不知道
+     * 是 png 缺了、空了还是抽取器根本没回这一条 —— 报告要说得出原因。
+     */
+    function refIconEntryProblem(entry) {
+      if (entry === null || entry === undefined || typeof entry !== 'object' || Array.isArray(entry)) {
+        return '抽取器没有返回这个方块的条目'
+      }
+      if (typeof entry.png !== 'string') return '条目里没有 png 字段'
+      if (entry.png === '') return 'png 字段是空的'
+      return null
+    }
+

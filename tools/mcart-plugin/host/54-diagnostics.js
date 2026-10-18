@@ -26,6 +26,9 @@
     }
 
     function blockDiagnostic(load, namespace, id, found, built, directory) {
+      // 语言文件里的名字读不出来（坏 JSON / 读不出 / 一个表都没有）—— 名字为什么是原始 id
+      // 的答案。以前 `readLang` 把解析错误吞成空表，报告里只剩"名字是 id"，没人知道是文件坏了。
+      const langProblems = load === undefined || !Array.isArray(load.langProblems) ? [] : load.langProblems
       const project = Array.isArray(built.project) ? built.project : []
       const vanilla = Array.isArray(built.vanilla) ? built.vanilla : []
       const textures = Array.isArray(built.unresolvedTextures) ? built.unresolvedTextures : []
@@ -95,6 +98,10 @@
       if (textures.length > 0) {
         tried.push('贴图现取（--textures）：' + (directory === '' ? '没设参考目录，没走' : directory))
       }
+      if (langProblems.length > 0) {
+        // "已试过的路"里也要看得见：这不是凭空猜的，是真去读了这些文件（而且读失败了）。
+        tried.push('语言文件：' + langProblems.map((info) => info.file + '（' + info.why + '）').join('、'))
+      }
 
       const lines = ['[MC 资产面板] 画不出 ' + namespace + ':' + id]
       if (found.guessed === true) {
@@ -105,12 +112,35 @@
       }
       lines.push('· 选用的模型：' + String(found.model))
       if (project.length > 0) {
-        lines.push('· 项目自己的模型文件缺失（' + project.length + ' 个）：')
-        for (const entry of project) lines.push('  - ' + entry.name + ' → 补 ' + fixPathOf(load, entry, directory))
+        // **文件在、但读不出来** ≠ 缺失。以前 `readJson` 把 JSON 解析错误吞成 undefined，
+        // 报告于是说"项目自己的模型文件缺失 → 补上它"——指向一个明明就在那里的文件，
+        // 用户照着"补"只会覆盖掉自己写坏的那份，永远不知道是 JSON 写错了。
+        const unreadable = load === undefined || load.unreadableModels === undefined ? new Map() : load.unreadableModels
+        const broken = []
+        const missing = []
+        for (const entry of project) {
+          const bare = String(entry.bare === undefined ? entry.name : entry.bare).replace(/^block\//, '')
+          const info = unreadable.get('block/' + bare)
+          if (info === undefined) missing.push(entry)
+          else broken.push(info)
+        }
+        if (broken.length > 0) {
+          lines.push('· 项目自己的模型文件**在，但解析失败**（' + broken.length + ' 个）——不是缺失，不要照"补文件"处理：')
+          for (const info of broken) lines.push('  - ' + info.file + ' → ' + info.why)
+        }
+        if (missing.length > 0) {
+          lines.push('· 项目自己的模型文件缺失（' + missing.length + ' 个）：')
+          for (const entry of missing) lines.push('  - ' + entry.name + ' → 补 ' + fixPathOf(load, entry, directory))
+        }
       }
       if (vanilla.length > 0) {
         lines.push('· 原版母模型缺失（' + vanilla.length + ' 个）：')
         for (const entry of vanilla) lines.push('  - ' + entry.name + ' → ' + fixPathOf(load, entry, directory))
+      }
+      if (langProblems.length > 0) {
+        // "方块名为什么是原始 id"——点名文件与原因，缺文件和写坏了分开说。
+        lines.push('· 语言文件读不出来（' + langProblems.length + ' 个）→ 这些文件里的方块名只能用原始 id：')
+        for (const info of langProblems) lines.push('  - ' + info.file + ' → ' + info.why)
       }
       if (bareWords.length > 0) {
         lines.push('· 有 ' + bareWords.length + ' 个面把**裸词**当贴图写（模型格式里裸词是路径，不是变量）：')

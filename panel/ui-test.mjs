@@ -530,7 +530,8 @@ function makeHandlers(options) {
       return { kind: wantStructure ? 'structure' : 'block', id: '', quads: [],
         textureIds: [], textures: {}, animations: {},
         cells: wantStructure ? [] : null, refs: [], box: null, errors: [],
-        // `@ 提意见` 要有东西可引用：`ref` 空的时候那条引用栏根本不出现。
+        // `@ 提意见` 要有东西可引用：`ref` 空时按钮会说"没有可引用的文件路径"
+        // （不再挂一条引用栏 —— 现在点了直接写草稿）。
         ref: o.sceneRef === undefined ? null : o.sceneRef,
         choices: [{ name: 'example_block', title: '示例方块' }] }
     }
@@ -628,10 +629,11 @@ async function main() {
     // 六张缓存表少清一张（用户实测："3D 换了、菜单图标还是旧的"）。
     { flag: FAULT_FORGET, name: '--fault-forget', hint: '找不到 forgetTextures 里清 itemRecipes 那一句',
       apply: (src) => src.replace('  for (const key of Object.keys(itemRecipes)) delete itemRecipes[key]\n', '') },
-    // 红线：把"插入输入框"改成往 agent 里塞消息（0.1.26 那条写坏会话日志的形状）。
-    { flag: FAULT_INJECT, name: '--fault-inject', hint: '找不到"插入输入框"里写进 draft 的那一句',
-      apply: (src) => src.replace("if (props.inputActions !== undefined) props.inputActions.setDraft(base + tail + ' ')",
-        "host.call('agent.steer', { text: base + tail })") },
+    // 红线：把"直接插进输入框"改成往 agent 里塞消息（0.1.26 那条写坏会话日志的形状）。
+    // 插入点跟着行为走：现在是 `insertReference()` 里**写草稿**的那一句（不是旧 bar 的按钮）。
+    { flag: FAULT_INJECT, name: '--fault-inject', hint: '找不到 insertReference 里写草稿的那一句',
+      apply: (src) => src.replace('        composer.write(next)',
+        "        host.call('agent.steer', { text: next })") },
     // 项目自己的缺失被说成"缺的原版母模型" —— 用户贴的那份报告就是这么指错方向的。
     { flag: FAULT_DIAGNOSTIC, name: '--fault-diagnostic', hint: '找不到 DIAG_KIND 那一行',
       apply: (src) => src.replace("{ project: '项目里缺', vanilla: '缺的原版母模型' }",
@@ -976,6 +978,13 @@ async function main() {
   const reactA = createReact()
   const hostA = makeHost(injectCalls)
   const builtA = buildPanel(faulted, hostA, reactA.api)
+  // dock **先挂**：真壳里输入框一直在。点「@ 提意见」那一刻就该直接把 @路径 写进草稿，
+  // 不再挂一条 bar 让人点第二次（用户原话："@提意见 的部分…直接插入对话框就行"）。
+  const uiDock = builtA.dock === null || builtA.dock === undefined ? null : await mount(builtA.dock, {
+    sessionId: 'ui-test',
+    useInput: (selector) => selector({ draft: '我本来打了一半的话 ' }),
+    inputActions: { setDraft: (text) => draftCalls.push(text) },
+  }, hostA, reactA, 'dock')
   const uiA = await mount(builtA.main, { sessionId: 'ui-test' }, hostA, reactA, 'main')
   if (uiA.buttonProps('用本会话目录') !== undefined) await uiA.click('用本会话目录')
   await uiA.settle()
@@ -983,29 +992,45 @@ async function main() {
   const couldComplain = await uiA.click('@ 提意见').then(() => true).catch(() => false)
   check('资产旁边有「@ 提意见」（没有它，用户只能自己描述问题）',
     couldComplain === true, uiA.buttons().join(' / '))
+  check('点「@ 提意见」**直接**把 @路径 追加进输入框草稿（保留用户已写的字，末尾一个空格）',
+    draftCalls.length === 1
+    && draftCalls[0] === '我本来打了一半的话 @pack/assets/ui_probe/models/block/example_block.json ',
+    JSON.stringify(draftCalls))
+  check('点完**不再出现**"引用给 AI / 插入输入框"那条 bar（不用点第二次）',
+    uiDock !== null && uiDock.text().indexOf('引用给 AI') < 0
+    && uiDock.text().indexOf('插入输入框') < 0 && uiA.text().indexOf('引用给 AI') < 0,
+    uiDock === null ? '没注册 dock' : (uiDock.text() + ' || ' + uiA.text()).slice(0, 160))
+  check('客户端注册了输入框 dock（报告卡 / 错误边界靠它拿写草稿的把手）',
+    builtA.dock !== null && builtA.dock !== undefined, builtA.registered.join(','))
   check('点「@ 提意见」不向宿主发一个字（更没有任何会话写入）',
     injectCalls.length === beforeComplain, injectCalls.slice(beforeComplain).map((call) => call.name).join(' / '))
 
-  check('客户端注册了输入框上方那条引用栏（conversation.input.dock）',
-    builtA.dock !== null && builtA.dock !== undefined, builtA.registered.join(','))
-  const uiDock = builtA.dock === null || builtA.dock === undefined ? null : await mount(builtA.dock, {
+  // 兜底：dock 还没挂上就点了 → 退化成"挂一条 bar"（宁可两步，绝不点了没反应）。
+  const reactFallback = createReact()
+  const fallbackCalls = []
+  const fallbackDrafts = []
+  const hostFallback = makeHost(fallbackCalls)
+  const builtFallback = buildPanel(faulted, hostFallback, reactFallback.api)
+  const uiFallback = await mount(builtFallback.main, { sessionId: 'ui-test' }, hostFallback, reactFallback, 'main')
+  if (uiFallback.buttonProps('用本会话目录') !== undefined) await uiFallback.click('用本会话目录')
+  await uiFallback.settle()
+  const fallbackClicked = await uiFallback.click('@ 提意见').then(() => true).catch(() => false)
+  const dockLate = builtFallback.dock === null ? null : await mount(builtFallback.dock, {
     sessionId: 'ui-test',
-    useInput: (selector) => selector({ draft: '我本来打了一半的话 ' }),
-    inputActions: { setDraft: (text) => draftCalls.push(text) },
-  }, hostA, reactA, 'dock')
-  check('引用栏画出来了，并且写着引用的是哪个文件',
-    uiDock !== null && uiDock.text().indexOf('引用给 AI') >= 0
-    && uiDock.text().indexOf('@pack/assets/ui_probe/models/block/example_block.json') >= 0,
-    uiDock === null ? '没注册 dock' : uiDock.text().slice(0, 160))
-  const beforeInsert = injectCalls.length
-  const inserted = uiDock !== null && await uiDock.click('插入输入框').then(() => true).catch(() => false)
-  check('点「插入输入框」只把文本放进输入框（@路径 + 一句话，用户自己按发送）',
-    inserted === true && draftCalls.length === 1
-    && draftCalls[0].indexOf('@pack/assets/ui_probe/models/block/example_block.json') >= 0
-    && draftCalls[0].indexOf('我本来打了一半的话') >= 0,
-    JSON.stringify(draftCalls))
-  check('「插入输入框」同样不向宿主发任何东西（尤其没有 agent.steer / inbox）',
-    injectCalls.length === beforeInsert, injectCalls.slice(beforeInsert).map((call) => call.name).join(' / '))
+    useInput: (selector) => selector({ draft: '' }),
+    inputActions: { setDraft: (text) => fallbackDrafts.push(text) },
+  }, hostFallback, reactFallback, 'dock')
+  check('拿不到输入框把手时：兜底的引用栏会挂出来（否则就是"点了没反应"）',
+    fallbackClicked === true && dockLate !== null
+    && dockLate.text().indexOf('引用给 AI') >= 0
+    && dockLate.text().indexOf('@pack/assets/ui_probe/models/block/example_block.json') >= 0,
+    dockLate === null ? '没注册 dock' : dockLate.text().slice(0, 160))
+  if (dockLate !== null) await dockLate.click('插入输入框').catch(() => {})
+  const fallbackWrites = fallbackCalls.filter((call) => /agent|steer|inbox|message/.test(call.name))
+  check('兜底那条 bar 点一下也只写草稿（宿主一个字节都没收到）',
+    fallbackDrafts.length === 1
+    && fallbackDrafts[0].indexOf('@pack/assets/ui_probe/models/block/example_block.json') >= 0
+    && fallbackWrites.length === 0, JSON.stringify(fallbackDrafts))
 
   // ── 画不出来：结构化 diagnostic 要看得懂、能复制、太长能折叠 ─────────────────
   function sceneMount(reply) {

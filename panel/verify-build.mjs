@@ -13,8 +13,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ENGINE_SCRIPTS, VENDOR_STATE, build, hostModule, clientBundle, isJunk, isSkipped, eolPolicy } from './build.mjs'
+import { ENGINE_SCRIPTS, VENDOR_STATE, VANILLA_PARENTS_JSON, VANILLA_PARENTS_FRAGMENT, vanillaParentsText, build, hostModule, clientBundle, isJunk, isSkipped, eolPolicy } from './build.mjs'
 import { SOURCES, checkBarrels } from './source.mjs'
+import { runPython } from '../tools/python_env.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const FAULT = process.argv.includes('--fault')
@@ -107,6 +108,92 @@ if (FAULT_BARREL) {
   for (const problem of problems) fail('  FAIL ' + problem)
   if (problems.length === 0 && Object.values(report).every((item) => item.mode === 'legacy')) {
     console.log('  · barrel 比对：当前仍是 legacy 单文件模式，没有可比的拼接结果（拆分后自动生效）')
+  }
+}
+
+// ②''' 原版母模型表：**唯一真源**是 `tools/mcart-plugin/vanilla-parents.json`。
+//   · 宿主片段 `host/06-vanilla-parents.generated.js` 必须 == 从 JSON 重新生成的结果；
+//   · 打包副本 `panel/python/vanilla-parents.json` 必须逐字节等于真源；
+//   · Python 实际读到的表必须 == JSON（漂移门禁：宿主片段 / JSON / Python 三者同一份）。
+// `--fault-vanilla`：把 JSON 改一个值 → 上面两条比对必须红（然后按字节还原）。
+const FAULT_VANILLA = process.argv.includes('--fault-vanilla')
+
+function canon(value) {
+  if (Array.isArray(value)) return '[' + value.map(canon).join(',') + ']'
+  if (value !== null && typeof value === 'object') {
+    return '{' + Object.keys(value).sort().map((key) => JSON.stringify(key) + ':' + canon(value[key])).join(',') + '}'
+  }
+  return JSON.stringify(value)
+}
+
+function vanillaChecks(referencePayload) {
+  const problems = []
+  // ① 生成片段 == 从**当前磁盘上的** JSON 重新生成的结果（确定性渲染）
+  let expectedFragment = null
+  try {
+    expectedFragment = vanillaParentsText(VANILLA_PARENTS_JSON)
+  } catch (error) {
+    problems.push('vanilla-parents.json 读不出来：' + error.message)
+  }
+  if (expectedFragment !== null) {
+    const actualFragment = existsSync(VANILLA_PARENTS_FRAGMENT) ? readFileSync(VANILLA_PARENTS_FRAGMENT, 'utf8') : null
+    if (actualFragment === null) problems.push('缺少生成片段 ' + VANILLA_PARENTS_FRAGMENT)
+    else if (actualFragment !== expectedFragment) {
+      problems.push('生成片段与从 JSON 重新生成的结果不同（' + actualFragment.length + ' vs ' + expectedFragment.length + ' 字符）'
+        + ' —— 改了 JSON 却没 node panel/build.mjs，或手改了生成片段')
+    }
+  }
+  // ② 打包副本逐字节（发布包里 python 读的就是它）
+  const packed = join(HERE, 'python', 'vanilla-parents.json')
+  if (!existsSync(packed)) problems.push('缺少打包副本 ' + packed)
+  else if (!readFileSync(packed).equals(readFileSync(VANILLA_PARENTS_JSON))) {
+    problems.push('打包副本 panel/python/vanilla-parents.json 与真源 JSON 不是逐字节相同')
+  }
+  // ③ Python 实际读到的表 == JSON（语义比较：对象键序无关）
+  const script = join(HERE, '..', 'tools', 'mcart_extract_block.py')
+  let dumped = null
+  try {
+    const done = runPython([script, '--dump-vanilla-parents'])
+    if (done.status !== 0) problems.push('Python --dump-vanilla-parents 失败（退出码 ' + done.status + '）：'
+      + String(done.stderr || '').trim().slice(0, 300))
+    else dumped = JSON.parse(String(done.stdout || '').trim())
+  } catch (error) {
+    problems.push('跑不动 Python 取表：' + error.message)
+  }
+  if (dumped !== null) {
+    if (dumped.parents === undefined) problems.push('Python 的输出里没有 parents')
+    else if (canon(dumped.parents) !== canon(referencePayload.parents)) {
+      problems.push('Python 实际读到的表与 JSON 不同 —— 两侧漂移（' + Object.keys(dumped.parents).length
+        + ' vs ' + Object.keys(referencePayload.parents).length + ' 条）')
+    }
+  }
+  return problems
+}
+
+{
+  const originalJson = readFileSync(VANILLA_PARENTS_JSON)
+  const originalPayload = JSON.parse(originalJson.toString('utf8'))
+  if (FAULT_VANILLA) {
+    try {
+      const mutated = JSON.parse(JSON.stringify(originalPayload))
+      mutated.parents['block/cross'].textures.particle = '#fault'
+      writeFileSync(VANILLA_PARENTS_JSON, JSON.stringify(mutated, null, 2) + '\n')
+      const problems = vanillaChecks(originalPayload)
+      if (problems.length === 0) fail('  FAIL --fault-vanilla：JSON 改了值，两侧比对却没红')
+      else for (const problem of problems) fail('  FAIL --fault-vanilla：' + problem)
+      console.log('  · --fault-vanilla：JSON 改了一个值 → 上面 ' + problems.length + ' 条比对报红（能红证明，JSON 已按字节还原）')
+    } finally {
+      writeFileSync(VANILLA_PARENTS_JSON, originalJson)
+      if (!readFileSync(VANILLA_PARENTS_JSON).equals(originalJson)) fail('  FAIL --fault-vanilla 还原失败')
+    }
+  } else {
+    const problems = vanillaChecks(originalPayload)
+    const entries = Object.keys(originalPayload.parents || {}).length
+    if (problems.length === 0) {
+      console.log('  OK   原版母模型表：生成片段 == JSON 重新生成（' + entries + ' 条）；'
+        + '打包副本逐字节相同；Python 读到的表 == JSON（漂移门禁）')
+    }
+    for (const problem of problems) fail('  FAIL ' + problem)
   }
 }
 

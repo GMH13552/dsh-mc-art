@@ -1,5 +1,6 @@
 [
   "host/00-math.js",
+  "host/06-vanilla-parents.generated.js",
   "host/05-model-shape.js",
   "host/10-fs.js",
   "host/20-runtime-state.js",

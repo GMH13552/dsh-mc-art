@@ -11,6 +11,68 @@ panel/report contract is stable, and whose shipped skills are general (no loader
 version, machine or project is baked in). Earlier 0.1.x releases were development
 snapshots and are not itemised here.
 
+## 0.3.1
+
+### Changed
+
+- **「@ 提意见」inserts straight into the composer.** It used to set a pending reference and open a
+  bar ("引用给 AI" / path / 插入输入框 / 取消) that needed a second click. It now appends `@<path>`
+  (plus the sentence describing a settings change) to the draft immediately, keeping what the user
+  had already typed and leaving a trailing space. The dock entry stays registered because its render
+  is the only place the shell hands over `inputActions.setDraft` — it renders nothing on the normal
+  path and is kept solely as the cold-start fallback: if the handle is not available yet the bar
+  appears once, so a click never silently does nothing. Settings' "tell the AI" reuses the same
+  insertion path, and the reference bar now says so when the scene has no file path instead of
+  ignoring the click.
+- The red-line gate was retargeted to the new insertion point, so "insert writes the draft and never
+  a session" is still proven to be able to fail (`ui-test --fault-inject` → 3 reds, exit 1).
+
+### Fixed — messages that accused the artifact
+
+- **A model file that exists but cannot be parsed was reported as "missing".** `readJson` turned any
+  JSON parse error into `undefined`, so the diagnosis said "项目自己的模型文件缺失 → 补上它" while
+  pointing at a file that was right there — following that advice overwrites the user's own file and
+  the real cause never surfaces. `preload` now records `{file, why}`, and the report has two distinct
+  sections: "**在，但解析失败**（不是缺失，不要照补文件处理）" with the parser's own message, versus
+  a genuine missing file.
+- **Broken `lang/*.json` was silently skipped.** `readLang` now returns `{table, problems}`; the
+  diagnosis names each unreadable language file with its reason and says what it means (block names
+  fall back to raw ids). A missing locale is only reported when no names could be read at all —
+  `en_us` fine and `zh_cn` absent is a normal state, not a failure.
+- **`atlas.refIcons` dropped a cell without saying why.** An entry with no `png`, an empty `png`, or
+  no entry at all now lands in `failed` with the reason (`<id>（没有图标数据：<原因>）`); the return
+  shape is unchanged.
+
+### Added
+
+- **`texture-path-parity-test.js`** — the same animated texture (16×N strip + `.mcmeta`) through
+  `atlas.scene` and `atlas.itemIcons` must resolve to the same data URL and the same animation facts
+  (strip, frames, frametime, order). Reverse fixture: stop the scene path from reading the project's
+  `.mcmeta` (the 0.2.9 bug) and five assertions go red. This is the invariant that keeps the two
+  paths from drifting apart again; unifying their implementations is still open.
+- `model-json-broken-test.js`, `lang-json-broken-test.js`, `ref-icons-failed-test.js` — each with a
+  reverse fixture and a distinct "missing" versus "unreadable" pair of messages.
+- **The vanilla-parent table has one source.** `tools/mcart-plugin/vanilla-parents.json` is the
+  truth: the build generates `host/06-vanilla-parents.generated.js` (marked generated, ordered before
+  its user) and copies the same JSON into the package for the Python extractor, which reads it and
+  **fails loudly** when it is absent instead of falling back to a second table. `verify-build`
+  asserts fragment == regenerated, packaged copy == source byte for byte, and Python's table == JSON;
+  `--fault-vanilla` proves all three can fail.
+- The gate list is **50** (was 46); the runner, README and the module-layout doc agree on the number.
+
+### Changed — UI (second batch)
+
+Sticky panel header; one control height (26px) across buttons, inputs, selects and icon buttons; the
+settings card's switches and hints share an indent column; lists, hotbar, swatches and project
+pickers share one thin scrollbar and scroll height; the editor canvas gets breathing room. Colours
+remain token-only, with no gradients, animations, glow or stacked shadows.
+
+### Known limits
+
+- The icon path and the scene path still have two implementations; the parity gate now makes drift
+  fail, but merging them is open.
+- The UI is verified by code and tests, not by eye in a browser.
+
 ## 0.3.0
 
 A structural release: the same behaviour, in files you can find things in — plus the build,

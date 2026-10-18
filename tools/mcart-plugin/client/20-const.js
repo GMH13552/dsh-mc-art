@@ -29,10 +29,18 @@ const CSS = [
     + '--mc-r-1:4px;--mc-r-2:6px;--mc-r-3:8px;--mc-r-pill:999px;'
     + '--mc-lh:1.45;--mc-focus:2px solid var(--mc-brand);'
     + '--mc-line:1px solid var(--mc-border);--mc-line-strong:1px solid var(--mc-border-strong);'
+    // 表单/列表的统一节奏：控件同高、开关缩进、滚动区同一档、顶栏底色
+    + '--mc-control-h:26px;--mc-indent:20px;--mc-scroll-h:220px;--mc-scroll-h-sm:124px;'
+    + '--mc-header-bg:var(--dsw-alias-bg-base,rgba(24,24,28,.96));'
     + 'display:flex;flex-direction:column;gap:var(--mc-sp-2);padding:var(--mc-sp-3);height:100%;'
     + 'box-sizing:border-box;overflow-y:auto;overflow-x:hidden;color:var(--mc-text);'
     + 'font-size:var(--mc-fs-md);line-height:var(--mc-lh)}',
   // ---- 版式 ---------------------------------------------------------------
+  // 顶栏钉在滚动区顶部：面板很长时"设置/物品列表"不跟着滚走（全宽 + 底边）。
+  '.mcart-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:var(--mc-sp-1);'
+    + 'background:var(--mc-header-bg);border-bottom:var(--mc-line);'
+    + 'margin:calc(-1 * var(--mc-sp-3)) calc(-1 * var(--mc-sp-3)) 0;'
+    + 'padding:var(--mc-sp-2) var(--mc-sp-3)}',
   '.mcart-bar{display:flex;align-items:center;gap:var(--mc-sp-1);flex-wrap:wrap}',
   '.mcart-title{font-size:var(--mc-fs-lg);font-weight:600}',
   '.mcart-sub{color:var(--mc-text-dim);opacity:.85;font-size:var(--mc-fs-sm)}',
@@ -46,7 +54,7 @@ const CSS = [
   '.mcart-tools{display:flex;gap:var(--mc-sp-1);flex-wrap:wrap;align-items:center}',
   // ---- 三态（空 / 加载 / 错误）一致：同一档字号，错误/警告用状态色 + 左侧细线 ----
   '.mcart-note{color:var(--mc-text-dim);font-size:var(--mc-fs-sm)}',
-  '.mcart-hint{font-size:var(--mc-fs-xs);color:var(--mc-text-dim);margin-left:var(--mc-sp-3);line-height:var(--mc-lh)}',
+  '.mcart-hint{font-size:var(--mc-fs-xs);color:var(--mc-text-dim);margin-left:var(--mc-indent);line-height:var(--mc-lh)}',
   '.mcart-empty{font-size:var(--mc-fs-sm);color:var(--mc-text-dim);padding:var(--mc-sp-2);'
     + 'border:1px dashed var(--mc-border);border-radius:var(--mc-r-2);text-align:center}',
   '.mcart-loading{font-size:var(--mc-fs-sm);color:var(--mc-text-dim);opacity:.9}',
@@ -57,23 +65,27 @@ const CSS = [
   // ---- 可交互控件：hover / active / disabled / focus-visible 四态一致 ----------
   '.mcart-btn{background:var(--mc-a-5);border:var(--mc-line);border-radius:var(--mc-r-2);'
     + 'color:inherit;font:inherit;font-size:var(--mc-fs-sm);padding:var(--mc-sp-1) var(--mc-sp-2);'
-    + 'cursor:pointer;flex:none}',
+    + 'min-height:var(--mc-control-h);box-sizing:border-box;line-height:1.2;'
+    + 'cursor:pointer;flex:none;white-space:nowrap}',
   '.mcart-btn:hover{background:var(--mc-a-9)}',
   '.mcart-btn:active{background:var(--mc-a-14)}',
   '.mcart-btn[disabled]{opacity:.4;cursor:default;background:var(--mc-a-2)}',
   '.mcart-tool[data-on="1"]{background:var(--mc-a-14);font-weight:600}',
   '.mcart-icon{background:none;border:0;color:inherit;font:inherit;font-size:var(--mc-fs-lg);'
-    + 'line-height:1;padding:var(--mc-sp-1);border-radius:var(--mc-r-2);cursor:pointer}',
+    + 'line-height:1;padding:var(--mc-sp-1);border-radius:var(--mc-r-2);cursor:pointer;'
+    + 'min-width:var(--mc-control-h);min-height:var(--mc-control-h);box-sizing:border-box;'
+    + 'display:inline-flex;align-items:center;justify-content:center}',
   '.mcart-icon:hover{background:var(--mc-a-9)}',
   '.mcart-icon[data-on="1"]{background:var(--mc-a-14)}',
   '.mcart-input{flex:1;min-width:0;background:var(--mc-surface);border:var(--mc-line);'
     + 'border-radius:var(--mc-r-2);color:inherit;font:inherit;font-size:var(--mc-fs-sm);'
-    + 'padding:var(--mc-sp-1) var(--mc-sp-2)}',
+    + 'padding:var(--mc-sp-1) var(--mc-sp-2);min-height:var(--mc-control-h);'
+    + 'box-sizing:border-box;line-height:1.2}',
   '.mcart-input:hover{border-color:var(--mc-border-strong)}',
   '.mcart-input:disabled,.mcart-select:disabled{opacity:.4;cursor:default}',
   '.mcart-select{flex:1;min-width:0;background:var(--mc-surface);border:var(--mc-line);'
     + 'border-radius:var(--mc-r-2);color:inherit;font:inherit;font-size:var(--mc-fs-sm);'
-    + 'padding:var(--mc-sp-1)}',
+    + 'padding:var(--mc-sp-1);min-height:var(--mc-control-h);box-sizing:border-box;line-height:1.2}',
   '.mcart-select:hover{border-color:var(--mc-border-strong)}',
   '.mcart-btn:focus-visible,.mcart-icon:focus-visible,.mcart-input:focus-visible,'
     + '.mcart-select:focus-visible,.mcart-item:focus-visible,.mcart-slot:focus-visible,'
@@ -83,7 +95,7 @@ const CSS = [
   '.mcart-card{border:var(--mc-line);border-radius:var(--mc-r-3);padding:var(--mc-sp-3);'
     + 'display:flex;flex-direction:column;gap:var(--mc-sp-2);background:var(--mc-surface)}',
   '.mcart-list{overflow:auto;border:var(--mc-line);border-radius:var(--mc-r-3);'
-    + 'padding:var(--mc-sp-1);max-height:220px}',
+    + 'padding:var(--mc-sp-1);max-height:var(--mc-scroll-h)}',
   '.mcart-row{display:flex;align-items:center;gap:var(--mc-sp-1);border-radius:var(--mc-r-2);'
     + 'padding:var(--mc-sp-1)}',
   '.mcart-row:hover{background:var(--mc-a-5)}',
@@ -93,14 +105,18 @@ const CSS = [
   '.mcart-item:hover{background:var(--mc-a-5)}',
   '.mcart-item:active{background:var(--mc-a-9)}',
   '.mcart-item[data-on="1"]{background:var(--mc-a-9);font-weight:600}',
-  '.mcart-projects{max-height:190px;overflow:auto;display:flex;flex-direction:column;gap:1px;'
+  '.mcart-projects{max-height:var(--mc-scroll-h);overflow:auto;display:flex;flex-direction:column;gap:1px;'
     + 'border:var(--mc-line);border-radius:var(--mc-r-3);padding:var(--mc-sp-1)}',
   '.mcart-mods{border:var(--mc-line);border-radius:var(--mc-r-3);padding:var(--mc-sp-1) var(--mc-sp-2);'
-    + 'display:flex;flex-direction:column;gap:1px;max-height:160px;overflow:auto}',
-  '.mcart-switch{display:flex;align-items:flex-start;gap:var(--mc-sp-1);cursor:pointer;'
-    + 'padding:var(--mc-sp-1) 0;border-radius:var(--mc-r-1)}',
-  '.mcart-switch input{margin:1px 0 0 0;flex:none;accent-color:var(--mc-brand)}',
+    + 'display:flex;flex-direction:column;gap:1px;max-height:var(--mc-scroll-h-sm);overflow:auto}',
+  '.mcart-switch{display:grid;grid-template-columns:var(--mc-indent) 1fr;column-gap:var(--mc-sp-2);'
+    + 'align-items:start;cursor:pointer;padding:var(--mc-sp-1) 0;border-radius:var(--mc-r-1)}',
+  '.mcart-switch input{margin:var(--mc-sp-1) 0 0 0;flex:none;accent-color:var(--mc-brand)}',
   '.mcart-switch:focus-within{outline:var(--mc-focus);outline-offset:1px}',
+  // 滚动区统一：细滚动条（颜色走宿主 token）、不要链式滚动、右留一点防贴边。
+  '.mcart-list,.mcart-hotbar,.mcart-swatches,.mcart-projects,.mcart-mods{'
+    + 'scrollbar-width:thin;scrollbar-color:var(--dsh-scrollbar-thumb,var(--mc-a-14)) transparent;'
+    + 'overscroll-behavior:contain;padding-right:var(--mc-sp-1)}',
   '.mcart-chip{font-size:var(--mc-fs-xs);padding:1px var(--mc-sp-2);border-radius:var(--mc-r-pill);'
     + 'background:var(--mc-a-9);color:var(--mc-text-dim)}',
   // ---- 取景框与 3D 视口（内容区：中性深底，不随主题变白） --------------------
@@ -142,7 +158,7 @@ const CSS = [
   '.mcart-hudpage:hover{opacity:1}',
   '.mcart-hudpage[disabled]{opacity:.22;cursor:default}',
   // ---- 物品栏/九宫格/缩略图 ------------------------------------------------
-  '.mcart-hotbar{display:flex;gap:var(--mc-sp-1);flex-wrap:wrap;max-height:124px;overflow:auto}',
+  '.mcart-hotbar{display:flex;gap:var(--mc-sp-1);flex-wrap:wrap;max-height:var(--mc-scroll-h-sm);overflow:auto}',
   '.mcart-slot{width:28px;height:28px;border:var(--mc-line);border-radius:var(--mc-r-1);'
     + 'background:none;background-size:cover;image-rendering:pixelated;padding:0;flex:none;'
     + 'cursor:pointer}',
@@ -158,7 +174,7 @@ const CSS = [
   '.mcart-edit{display:flex;flex-direction:column;gap:var(--mc-sp-1)}',
   '.mcart-edit-canvas{display:block;width:100%;height:auto;max-height:52vh;object-fit:contain;'
     + 'image-rendering:pixelated;border-radius:var(--mc-r-1);background:var(--mc-canvas-bg);'
-    + 'cursor:crosshair;touch-action:none}',
+    + 'margin:var(--mc-sp-1) 0;cursor:crosshair;touch-action:none}',
   '.mcart-swatches{display:flex;gap:var(--mc-sp-1);flex-wrap:wrap;max-height:56px;overflow:auto}',
   '.mcart-swatch{width:20px;height:20px;border-radius:var(--mc-r-1);border:var(--mc-line);'
     + 'cursor:pointer;padding:0;flex:none}',

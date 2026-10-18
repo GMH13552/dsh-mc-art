@@ -1005,9 +1005,12 @@ async function main() {
   check('那句话会被一起插进输入框（不只是 @ 一个路径）',
     /const tail = '@' \+ current\.path \+ \(note === '' \? ' ' : ' ' \+ note\)/.test(client)
     && /参考目录改成了/.test(client))
-  // 真注入：把那一行按钮去掉，上面第一条必须不成立。
-  const noTell = client.replace(/React\.createElement\('button', \{ className: 'mcart-btn', type: 'button',\n\s*onClick: \(\) => setPending\(\{ path: savedSettings\.path, note: savedSettings\.note \}\) \},\n\s*'告诉 AI'\)/, '')
-  check('注入"把告诉 AI 那个按钮删掉"：上面那条断言立刻不成立',
+  // 真注入：把按钮上的那句话改掉，上面第一条必须不成立。
+  // **不按 JSX 形状注入**：旧实现按整段 onClick 的字面量正则注入，按钮一改形状
+  // （"告诉 AI" 现在直接调 insertReference 写草稿）注入就静默失效、永远不红。
+  // 这里改的是断言真正关心的东西 —— 那句可见文案。
+  const noTell = client.replace("'告诉 AI'", "'告诉 助手'")
+  check('注入"把告诉 AI 那句话改掉"：上面那条断言立刻不成立',
     noTell !== client && !/'告诉 AI'/.test(noTell))
   check('来源里有「本项目」', /'本项目 ' \+ ours/.test(client))
   check('点本项目里的格子是打开它（3D + 这一格），不是另开一个面板',

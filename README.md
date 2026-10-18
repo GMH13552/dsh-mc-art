@@ -268,7 +268,7 @@ Automation Token（`npm config set //registry.npmjs.org/:_authToken=<token>`）�
 ## 十、门禁（能红才算门禁）
 
 ```powershell
-node tools/gates.mjs                 # 全量 46 条：输出 绿 N / SKIP N / 红 N
+node tools/gates.mjs                 # 全量 50 条：输出 绿 N / SKIP N / 红 N
 node tools/gates.mjs --encoding gbk  # 第二遍（PYTHONIOENCODING=gbk），计数必须一样
 node tools/gates.mjs --fault         # 自证 runner 能红（一条已知绿 + 一条必然失败）
 node tools/gates.mjs --only strip    # 调试：只跑名字/命令里含 strip 的条目

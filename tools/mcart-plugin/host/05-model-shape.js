@@ -1,36 +1,6 @@
-function cubeElements(pick) {
-  const faces = {}
-  for (const face of FACE_ORDER) faces[face] = { texture: pick[face], uv: [0, 0, 16, 16] }
-  return [{ from: [0, 0, 0], to: [16, 16, 16], faces: faces }]
-}
-
-const CROSS_ELEMENTS = [
-  { from: [0.8, 0, 8], to: [15.2, 16, 8], rotation: { origin: [8, 8, 8], axis: 'y', angle: 45, rescale: true }, shade: false,
-    faces: { north: { uv: [0, 0, 16, 16], texture: '#cross' }, south: { uv: [0, 0, 16, 16], texture: '#cross' } } },
-  { from: [8, 0, 0.8], to: [8, 16, 15.2], rotation: { origin: [8, 8, 8], axis: 'y', angle: 45, rescale: true }, shade: false,
-    faces: { west: { uv: [0, 0, 16, 16], texture: '#cross' }, east: { uv: [0, 0, 16, 16], texture: '#cross' } } },
-]
-
-const VANILLA_PARENTS = {
-  // The vanilla bases a project pack inherits without shipping.  Copied from the
-  // 1.18.2 jar, mapping and all, so a pack that parents `block/cube_all` and one
-  // that parents `block/cube` land on the same numbers -- and so the icon path
-  // (which reads the same table from the extractor) agrees with this one.
-  'block/block': { textures: {}, gui_light: 'side', display: { gui: {
-    rotation: [30, 225, 0], translation: [0, 0, 0], scale: [0.625, 0.625, 0.625] } } },
-  'block/cube': { parent: 'block/block', textures: { particle: '#north' },
-    elements: cubeElements({ down: '#down', up: '#up', north: '#north',
-      south: '#south', west: '#west', east: '#east' }) },
-  'block/cube_all': { parent: 'block/cube', textures: { particle: '#all', down: '#all', up: '#all',
-    north: '#all', south: '#all', west: '#all', east: '#all' } },
-  'block/cube_column': { parent: 'block/cube', textures: { particle: '#side', end: '#end', side: '#side',
-    down: '#end', up: '#end', north: '#side', south: '#side', west: '#side', east: '#side' } },
-  'block/cube_bottom_top': { parent: 'block/cube', textures: { particle: '#side', bottom: '#bottom',
-    top: '#top', side: '#side', down: '#bottom', up: '#top', north: '#side',
-    south: '#side', west: '#side', east: '#side' } },
-  'block/cross': { textures: { particle: '#cross' }, elements: CROSS_ELEMENTS },
-  'block/tinted_cross': { parent: 'block/cross', textures: {} },
-}
+// 原版母模型表（`VANILLA_PARENTS`）是**生成物**，定义在：
+//   tools/mcart-plugin/host/06-vanilla-parents.generated.js  ← tools/mcart-plugin/vanilla-parents.json
+// 它必须排在 05 之前（清单保证）；改表请改 JSON，别改生成片段。
 
 /**
  * `minecraft:block/cube_all` → `block/cube_all`；别的命名空间原样返回。

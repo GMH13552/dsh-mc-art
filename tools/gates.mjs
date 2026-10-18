@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 全量门禁 runner —— **"46 条"的唯一出处**。
+ * 全量门禁 runner —— **"47 条"的唯一出处**。
  *
  * 为什么要有它：以前"全量门禁"是某人临时写的一条 PowerShell 循环，清单散在文档里，
  * 数出来的 45 绿 / 1 SKIP 没有可复现的出处。现在清单只在这个文件里；文档只写
@@ -35,19 +35,24 @@ const SKIP_CODE = 3
 const node = (id, script, args = []) => ({ id, cmd: 'node', args: [script, ...args] })
 const python = (id, args) => ({ id, cmd: 'python', args })
 const pluginTests = [
-  'model', 'report', 'batch-page', 'texture-edit', 'texture-syntax', 'project-animation',
-  'parent-fallback', 'encoding', 'publish-vocab', 'refs', 'multipart', 'orient', 'icon',
-  'icon-render', 'engine', 'project', 'roots', 'loader', 'zoom', 'hotbar', 'anim', 'derive',
-  'helpers',
+  'model', 'report', 'batch-page', 'texture-edit', 'texture-syntax',
+  'project-animation', 'parent-fallback', 'encoding', 'publish-vocab', 'refs', 'multipart',
+  'orient', 'icon', 'icon-render', 'engine', 'project', 'roots', 'loader', 'zoom', 'hotbar',
+  'anim', 'derive', 'helpers',
+  'lang-json-broken', 'ref-icons-failed', 'texture-path-parity',
 ]
 
 /**
- * 46 条。顺序固定：
+ * 50 条。顺序固定：
  *   1–12   Node：面板构建/入口/界面/发布物/词表/预设/构建产物/python 探测/安装器
- *   13–35  面板插件的 23 个行为门禁（`tools/mcart-plugin/*-test.js`）
- *   36     参考字典的测试（`test-reference.js`，不是 `*-test` 名字但一样是门禁）
- *   37–40  Python：抽取器 pytest / 注释剥离 / skill 词表 / JDK 判定
- *   41–46  GameTest 运行器的 6 个自测（机器相关的那部分会自己 SKIP，不是红）
+ *   13–39  面板插件的 27 个行为门禁（`tools/mcart-plugin/*-test.js`）
+ *   40     参考字典的测试（`test-reference.js`，不是 `*-test` 名字但一样是门禁）
+ *   41–44  Python：抽取器 pytest / 注释剥离 / skill 词表 / JDK 判定
+ *   45–50  GameTest 运行器的 6 个自测（机器相关的那部分会自己 SKIP，不是红）
+ *
+ * 面板插件的门禁多数按 `<名字>-test.js` 映射；文件名不规则的条目（例如
+ * `model-json-broken-test.js` 的 id 是 `plugin-model-json`）单独列，**id 由 Lead 指定**，
+ * 不要靠文件名自动拼 —— 改文件名不该悄悄改掉门禁 id。
  */
 const GATES = [
   node('verify-build', 'panel/verify-build.mjs'),
@@ -63,6 +68,7 @@ const GATES = [
   node('build-selftest', 'panel/build.mjs', ['--selftest']),
   node('install-selftest', 'install.mjs', ['--selftest']),
   ...pluginTests.map((name) => node('plugin-' + name, `tools/mcart-plugin/${name}-test.js`)),
+  node('plugin-model-json', 'tools/mcart-plugin/model-json-broken-test.js'),
   node('test-reference', 'tools/mcart-plugin/test-reference.js'),
   { id: 'pytest-extract', cmd: 'python', args: ['-m', 'pytest', 'tools/test_extract_block.py', '-q'], needsBasetemp: true },
   python('strip-gate', ['tools/strip_gate.py']),

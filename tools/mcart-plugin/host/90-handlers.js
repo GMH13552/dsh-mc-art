@@ -704,11 +704,9 @@
           // 以前这里直接拼 `item.png`、直接取 `item.name`：前者缺数据时变成字面量
           // `data:image/png;base64,undefined`（一格的破图），后者只要缺字段就是
           // `undefined` —— 而运行时拒收含 undefined 的返回值，整批一起失败。
-          if (item === null || item === undefined || typeof item !== 'object' ||
-              typeof item.png !== 'string' || item.png === '') {
-            failed.push(id + '（没有图标数据）')
-            continue
-          }
+          // 失败不只"丢掉这一格"：`failed` 里点名 id 和**真实原因**，报告才说得出话。
+          const problem = refIconEntryProblem(item)
+          if (problem !== null) { failed.push(id + '（没有图标数据：' + problem + '）'); continue }
           icons[key] = 'data:image/png;base64,' + item.png
           // Keyed exactly like a project icon (`namespace:id`) so the hotbar does
           // not care which kind of block it is holding.

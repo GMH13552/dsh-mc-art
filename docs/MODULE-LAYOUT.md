@@ -17,7 +17,7 @@ tools/mcart-plugin/client.js        **生成物**
 panel/source.mjs                    **唯一**拼接实现（读清单 → 拼；`--write` 写 barrel）
 panel/build.mjs                     先 `--write` 再生成 panel/lib/（去注释 + 内联包装）
 panel/verify-build.mjs              校验 barrel == 清单拼接（逐字节）且 lib == 源码
-tools/gates.mjs                     全量门禁（46 条）
+tools/gates.mjs                     全量门禁（50 条）
 tools/mcart-plugin/client-body.js   门禁的**取体助手**（不是片段，不进任何清单）
 ```
 
@@ -47,7 +47,35 @@ tools/mcart-plugin/client-body.js   门禁的**取体助手**（不是片段，�
 6. 片段目录里的 `.js` 文件如果没进清单，**不会**被拼接；而"片段目录有文件、清单却是空的"
    会直接报错（这是故意的：静默忽略片段的症状是"某些函数突然不存在"）。
 
-## 三、增删片段
+## 三、生成片段（generated）
+
+除了手写片段，还有一类片段是**由 build 从数据文件生成**的。目前只有一个：
+
+```
+tools/mcart-plugin/vanilla-parents.json                  ← **唯一真源**（表本身 + 来源说明 + 改表须知）
+        │  panel/build.mjs 的 generateVanillaParents()（禁止手改生成物）
+        ▼
+tools/mcart-plugin/host/06-vanilla-parents.generated.js   ← 生成片段：const VANILLA_PARENTS = {…}
+        │
+        ├─ 参与 host 拼接（清单里排在 05-model-shape.js **之前**，05 引用它）
+        ▼
+tools/mcart_extract_block.py                              ← 直接读同一份 JSON（不再自带第二份表）
+```
+
+- 为什么：这张原版母模型表以前有**两份手写副本**（宿主 `05-model-shape.js` 与
+  `mcart_extract_block.py` 的 `BUILTIN_VANILLA_PARENTS`），已经漂移过一次（`.mcmeta` /
+  父模型解释不一致，同一个方块的图标和 3D 视图给出不同结果）。
+- **重新生成**：改 `vanilla-parents.json` → `node panel/build.mjs`（它先刷新生成片段、
+  再拼 barrel、最后生成 `lib/`）；`node panel/source.mjs --write` 也能刷新 barrel。
+- **不要手改** `06-vanilla-parents.generated.js`：文件头一行写明它是生成物；
+  `verify-build` 会按 JSON 重新渲染后逐字节比对（`--fault-vanilla` 证明它会红）。
+- **发布包**：build 会把 JSON 复制到 `panel/python/vanilla-parents.json`（与提取器同目录），
+  所以发布包里 Python 也读得到；仓库布局下提取器按 `tools/mcart-plugin/vanilla-parents.json`
+  找。**找不到 JSON 时它明确报错**（不会静默回退到内部第二份表）。
+- **门禁**：`verify-build` 的三条——生成片段 == 按 JSON 重新渲染；打包副本逐字节等于真源；
+  Python 的 `--dump-vanilla-parents` 输出（它实际读到的表）== JSON。
+
+## 四、增删片段
 
 新增一个片段：
 
@@ -66,7 +94,7 @@ node tools/gates.mjs              # 全量门禁
 **不要手改 barrel**：它会在下一次 `--write`/build 时被覆盖；手改造成的漂移由
 `panel/verify-build.mjs` 的 `barrel == 拼接` 断言当场抓住（`--fault-barrel` 证明它会红）。
 
-## 四、过渡期（legacy）与报错
+## 五、过渡期（legacy）与报错
 
 | 状态 | 行为 |
 | --- | --- |
@@ -78,20 +106,22 @@ node tools/gates.mjs              # 全量门禁
 `node panel/source.mjs --check` 会打印当前是 `split` 还是 `legacy`，并在 split 模式下
 逐字节比对 barrel 与拼接结果（不一致退出码 1）。
 
-## 五、门禁怎么验证
+## 六、门禁怎么验证
 
 - `panel/source.mjs --selftest`：临时树里证明拼接顺序、`--write`、`--check`、四种报错，
   以及 `--fault` 下"老行为（忽略清单）会丢声明"。
 - `panel/verify-build.mjs`：`barrel == 清单拼接`（逐字节）＋ `lib == 源码`；
-  `--fault-barrel` 把 barrel 弄坏，要求比对当场红。
+  `--fault-barrel` 把 barrel 弄坏，要求比对当场红。另有**生成片段**三条：
+  生成片段 == 按 JSON 重新渲染、打包副本逐字节等于真源、Python 实际读到的表 == JSON；
+  `--fault-vanilla` 改 JSON 一个值，要求三条当场红。
 - `tools/strip_gate.py`：`panel/source.mjs` 的拼接结果与 barrel 逐字节一致；
   **清单里每个片段声明的名字都出现在 barrel 里**（漏拼一个片段就会红）；
   剥注释后声明一个不少。
 - `tools/mcart-plugin/report-test.js`：静态扫描的对象是**拼接源码**，并交叉验证
   barrel 与拼接一致（不是信任某个可能过期的副本）。
-- `tools/gates.mjs`：46 条一起跑；任一条红退出码非 0。
+- `tools/gates.mjs`：50 条一起跑；任一条红退出码非 0。
 
-## 六、常见问题
+## 七、常见问题
 
 - **"barrel 与拼接结果不同"**：片段改了但没 `--write`/build。跑 `node panel/source.mjs --write`。
 - **"清单指向不存在的文件"**：清单先落地、片段文件还没写（或名字拼错）。补齐文件或改清单。

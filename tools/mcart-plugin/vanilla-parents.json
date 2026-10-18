@@ -1,0 +1,244 @@
+{
+  "schema": "mcart/vanilla-parents@1",
+  "source": "Minecraft 1.18.2 原版 jar 里 block/*.json 的父模型链（block → cube → cube_all / cube_column / cube_bottom_top；cross 独立无父）。数值照抄 jar，不做简化。",
+  "note": "唯一真相。宿主片段 tools/mcart-plugin/host/06-vanilla-parents.generated.js 与 tools/mcart_extract_block.py 都从这份 JSON 来；手改那两处会被 verify-build 抓住。改表请改这里，然后 node panel/build.mjs。",
+  "parents": {
+    "block/block": {
+      "textures": {},
+      "gui_light": "side",
+      "display": {
+        "gui": {
+          "rotation": [
+            30,
+            225,
+            0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            0.625,
+            0.625,
+            0.625
+          ]
+        }
+      }
+    },
+    "block/cube": {
+      "parent": "block/block",
+      "textures": {
+        "particle": "#north"
+      },
+      "elements": [
+        {
+          "from": [
+            0,
+            0,
+            0
+          ],
+          "to": [
+            16,
+            16,
+            16
+          ],
+          "faces": {
+            "down": {
+              "texture": "#down",
+              "uv": [
+                0,
+                0,
+                16,
+                16
+              ]
+            },
+            "up": {
+              "texture": "#up",
+              "uv": [
+                0,
+                0,
+                16,
+                16
+              ]
+            },
+            "north": {
+              "texture": "#north",
+              "uv": [
+                0,
+                0,
+                16,
+                16
+              ]
+            },
+            "south": {
+              "texture": "#south",
+              "uv": [
+                0,
+                0,
+                16,
+                16
+              ]
+            },
+            "west": {
+              "texture": "#west",
+              "uv": [
+                0,
+                0,
+                16,
+                16
+              ]
+            },
+            "east": {
+              "texture": "#east",
+              "uv": [
+                0,
+                0,
+                16,
+                16
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "block/cube_all": {
+      "parent": "block/cube",
+      "textures": {
+        "particle": "#all",
+        "down": "#all",
+        "up": "#all",
+        "north": "#all",
+        "south": "#all",
+        "west": "#all",
+        "east": "#all"
+      }
+    },
+    "block/cube_column": {
+      "parent": "block/cube",
+      "textures": {
+        "particle": "#side",
+        "end": "#end",
+        "side": "#side",
+        "down": "#end",
+        "up": "#end",
+        "north": "#side",
+        "south": "#side",
+        "west": "#side",
+        "east": "#side"
+      }
+    },
+    "block/cube_bottom_top": {
+      "parent": "block/cube",
+      "textures": {
+        "particle": "#side",
+        "bottom": "#bottom",
+        "top": "#top",
+        "side": "#side",
+        "down": "#bottom",
+        "up": "#top",
+        "north": "#side",
+        "south": "#side",
+        "west": "#side",
+        "east": "#side"
+      }
+    },
+    "block/cross": {
+      "textures": {
+        "particle": "#cross"
+      },
+      "elements": [
+        {
+          "from": [
+            0.8,
+            0,
+            8
+          ],
+          "to": [
+            15.2,
+            16,
+            8
+          ],
+          "rotation": {
+            "origin": [
+              8,
+              8,
+              8
+            ],
+            "axis": "y",
+            "angle": 45,
+            "rescale": true
+          },
+          "shade": false,
+          "faces": {
+            "north": {
+              "uv": [
+                0,
+                0,
+                16,
+                16
+              ],
+              "texture": "#cross"
+            },
+            "south": {
+              "uv": [
+                0,
+                0,
+                16,
+                16
+              ],
+              "texture": "#cross"
+            }
+          }
+        },
+        {
+          "from": [
+            8,
+            0,
+            0.8
+          ],
+          "to": [
+            8,
+            16,
+            15.2
+          ],
+          "rotation": {
+            "origin": [
+              8,
+              8,
+              8
+            ],
+            "axis": "y",
+            "angle": 45,
+            "rescale": true
+          },
+          "shade": false,
+          "faces": {
+            "west": {
+              "uv": [
+                0,
+                0,
+                16,
+                16
+              ],
+              "texture": "#cross"
+            },
+            "east": {
+              "uv": [
+                0,
+                0,
+                16,
+                16
+              ],
+              "texture": "#cross"
+            }
+          }
+        }
+      ]
+    },
+    "block/tinted_cross": {
+      "parent": "block/cross",
+      "textures": {}
+    }
+  }
+}

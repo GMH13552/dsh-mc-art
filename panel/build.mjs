@@ -503,6 +503,15 @@ export function vendored(options = {}) {
     copyFileSync(from, to)
     pythonTargets.push([from, to])
   }
+  // 原版母模型表的 JSON 也跟着走：`mcart_extract_block.py` 读它（不再自带第二份表）。
+  // 打包后两文件同目录（panel/python/），脚本按 `__file__` 找；仓库里则从 tools/ 往上找。
+  {
+    const from = join(SOURCES, 'vanilla-parents.json')
+    const to = join(pythonDir, 'vanilla-parents.json')
+    if (!existsSync(from)) throw new Error('缺少原版母模型表 ' + from + '（它必须随包发出去，否则提取器没有父模型表可用）')
+    copyFileSync(from, to)
+    pythonTargets.push([from, to])
+  }
   // **来源 provenance**：把这份 mc-art 是从哪个 clone、哪个 commit 快照来的记下来。
   // "来源是个旧 clone"这次之所以没被发现，就是因为生成物里没有任何来源信息。
   const state = {
@@ -537,8 +546,48 @@ function countFiles(root) {
 /** 随包发布的 Python 引擎脚本（只依赖标准库）。 */
 export const ENGINE_SCRIPTS = ['mcart_scan_refs.py', 'mcart_extract_block.py']
 
+// ---------------------------------------------------------------------------
+// 原版母模型表：**唯一真相**是 `tools/mcart-plugin/vanilla-parents.json`。
+//
+// 以前有两份手写表（宿主 `host/05-model-shape.js` 的 `VANILLA_PARENTS` 与
+// `tools/mcart_extract_block.py` 的 `BUILTIN_VANILLA_PARENTS`），已经漂移过一次
+// （`.mcmeta` / 父模型解释不一致，图标和 3D 视图对同一个方块给出不同结果）。
+// 现在：JSON → 生成宿主片段；Python 直接读同一份 JSON。两边都不再手写表。
+// ---------------------------------------------------------------------------
+export const VANILLA_PARENTS_JSON = join(SOURCES, 'vanilla-parents.json')
+export const VANILLA_PARENTS_FRAGMENT = join(SOURCES, 'host', '06-vanilla-parents.generated.js')
+
+/** JSON → 宿主片段正文（**确定性**：verify-build 按这一份重新生成后逐字节比对）。 */
+export function vanillaParentsText(jsonPath = VANILLA_PARENTS_JSON) {
+  const payload = JSON.parse(readFileSync(jsonPath, 'utf8'))
+  if (payload === null || typeof payload !== 'object' || typeof payload.parents !== 'object' || payload.parents === null) {
+    throw new Error('vanilla-parents.json 形状不对：需要 { schema, source, note, parents: {...} }')
+  }
+  const names = Object.keys(payload.parents)
+  const header = [
+    '// 生成物：由 panel/build.mjs 从 tools/mcart-plugin/vanilla-parents.json 生成 —— 勿手改。',
+    '// 改表请改那份 JSON，然后 node panel/build.mjs（verify-build 会红着挡住漂移）。',
+    '// 来源：' + String(payload.source || '(JSON 里没写来源)').replace(/\s*\n\s*/g, ' '),
+    '// 条目：' + names.length + ' 个（' + names.join(', ') + '）',
+  ].join('\n')
+  return header + '\nconst VANILLA_PARENTS = ' + JSON.stringify(payload.parents, null, 2) + '\n'
+}
+
+/** 生成宿主片段（内容没变就不动文件，保持 mtime 稳定）。 */
+export function generateVanillaParents() {
+  const text = vanillaParentsText()
+  mkdirSync(dirname(VANILLA_PARENTS_FRAGMENT), { recursive: true })
+  const current = existsSync(VANILLA_PARENTS_FRAGMENT) ? readFileSync(VANILLA_PARENTS_FRAGMENT, 'utf8') : null
+  if (current === text) return { written: false, bytes: text.length }
+  writeFileSync(VANILLA_PARENTS_FRAGMENT, text)
+  return { written: true, bytes: text.length }
+}
+
 export function build(options = {}) {
-  // **先 --write**：把每一半按 `<half>.manifest.json`（片段按序，入口列最后）拼成 barrel
+  // **先**把生成片段刷新（它在 host.manifest.json 里排在 05 之前，05 引用它），
+  // 再拼 barrel，最后生成 lib/。顺序反了就会拿旧片段拼 barrel。
+  const vanilla = generateVanillaParents()
+  // **再 --write**：把每一半按 `<half>.manifest.json`（片段按序，入口列最后）拼成 barrel
   // （`tools/mcart-plugin/host.js` / `client.js` 是生成物）。拼接实现只有 `panel/source.mjs`
   // 一份；这里不重复实现。清单指向不存在的文件时 `writeBarrels()` 会明确抛错。
   const barrels = writeBarrels()
@@ -550,7 +599,7 @@ export function build(options = {}) {
   writeFileSync(join(HERE, 'lib', 'index.js'), hostModule(host))
   writeFileSync(join(HERE, 'lib', 'client.js'), clientBundle(client))
   const copied = vendored({ release: options.release })
-  return { host, client, copied, barrels }
+  return { host, client, copied, barrels, vanilla }
 }
 
 /**

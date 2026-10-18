@@ -14,8 +14,12 @@
           ? atlas.namespace : namespaces[0]
         if (namespace === undefined) continue
         const load = await preload(dir, namespace)
+        const lang = await readLang(load.assets)
+        // 语言文件"读不出来"的真原因要跟到诊断手里：`load` 就是 `preloads` 里缓存的那一份，
+        // 报告（`blockDiagnostic`）从它身上取 `langProblems`，`langs` 仍然只是一张名字表。
+        load.langProblems = lang.problems
         nextPreloads.set(namespace, load)
-        nextLangs.set(namespace, await readLang(load.assets))
+        nextLangs.set(namespace, lang.table)
         staged.push({ entry: entry.name, dir: dir, atlas: atlas, namespace: namespace, load: load })
       }
       preloads = nextPreloads
