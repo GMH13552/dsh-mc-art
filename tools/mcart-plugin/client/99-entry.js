@@ -2796,6 +2796,12 @@ return {
       function settingsCard() {
         if (settings === null) return null
         const rows = []
+        // 属性表：label 固定 88px 右对齐 + 值占满（见 docs/UI-STYLE.md §3）。
+        const prop = (key, label, value) => React.createElement('div', { className: 'mcart-prop', key: key },
+          React.createElement('span', { className: 'mcart-prop-label' }, label),
+          React.createElement('span', { className: 'mcart-prop-value' }, value))
+        const group = (key, children) => React.createElement('div', { className: 'mcart-group', key: key }, children)
+        const hint = (key, text) => prop(key, '', React.createElement('span', { className: 'mcart-note' }, text))
         if (settings.loading === true) {
           rows.push(React.createElement('div', { className: 'mcart-note', key: 'l' }, '读取设置…'))
         } else if (settings.error !== undefined) {
@@ -2805,112 +2811,111 @@ return {
             React.createElement('span', { className: 'mcart-title' }, '设置'),
             React.createElement('span', { className: 'mcart-sub' }, settings.title || settings.project || ''),
           ))
-          rows.push(React.createElement('div', { className: 'mcart-note', key: 'reflabel' }, '参考目录'))
-          rows.push(React.createElement('div', { className: 'mcart-path', key: 'refpath' }, settings.directory || '（未设置）'))
-          const dirButtons = [
-            React.createElement('button', { className: 'mcart-btn', type: 'button', key: 'pick', disabled: picking,
-              onClick: () => runPicker(settings.directory || root, (picked) => patchSettings({ directory: picked }, true)) },
-              picking ? '对话框已打开…' : '选择目录…'),
-          ]
-          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'dirbuttons' }, dirButtons))
+          // 组 1：参考目录（行是属性行；组内不画分隔线，组间才有 1px 线）
+          const dirRows = []
+          dirRows.push(prop('refpath', '参考目录',
+            React.createElement('span', { className: 'mcart-path mcart-grow' }, settings.directory || '（未设置）')))
+          dirRows.push(prop('pick', '选择', React.createElement('button', {
+            className: 'mcart-btn', type: 'button', disabled: picking,
+            onClick: () => runPicker(settings.directory || root, (picked) => patchSettings({ directory: picked }, true)),
+          }, picking ? '对话框已打开…' : '选择目录…')))
           // 手输/粘贴这条路是**必须**有的：系统目录对话框在某些环境里弹不出来
           // （shell 服务跑在非交互窗口站上时，FolderBrowserDialog 既不显示也不返回），
           // 而 fs 服务通常是好的 —— 那就让人把路径贴进来。
           // 以前这里只有一个"选择目录…"按钮，于是"点了没反应"就真的没有下一步了。
-          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'dirinput' },
+          dirRows.push(prop('dirinput', '路径', [
             React.createElement('input', {
-              className: 'mcart-input mcart-grow', type: 'text',
-              placeholder: '参考目录：%APPDATA%\\.minecraft\\versions\\<版本号>',
+              className: 'mcart-input', type: 'text', placeholder: '参考目录：%APPDATA%\\.minecraft\\versions\\<版本号>',
               value: dirDraft,
               onChange: (event) => setDirDraft(String(event.target.value)),
               onKeyDown: (event) => { if (event.key === 'Enter') applyDirDraft() },
             }),
             React.createElement('button', { className: 'mcart-btn', type: 'button',
               disabled: dirDraft.trim() === '', onClick: () => applyDirDraft() }, '用这个路径'),
-          ))
-          rows.push(React.createElement('div', { className: 'mcart-hint', key: 'dirhint' },
-            '对话框弹不出来时可以在这里贴路径（.minecraft、版本目录、mods 目录，或单个 jar 都行）。'))
+          ]))
+          dirRows.push(hint('dirhint', '对话框弹不出来时可以在这里贴路径（.minecraft、版本目录、mods 目录，或单个 jar 都行）。'))
           if (settings.directory !== '' && settings.directory !== undefined) {
             if (settings.scanError !== null && settings.scanError !== undefined) {
-              rows.push(React.createElement('div', { className: 'mcart-err', key: 'scanerr' }, '没读到里面的资源：' + String(settings.scanError)))
+              dirRows.push(React.createElement('div', { className: 'mcart-err', key: 'scanerr' },
+                '没读到里面的资源：' + String(settings.scanError)))
             } else {
-              rows.push(React.createElement('div', { className: 'mcart-hint', key: 'shape' },
+              dirRows.push(hint('shape',
                 '识别为 ' + (settings.shape || '？') + ' · ' + (settings.textures || 0) + ' 张贴图 · '
                 + ((settings.sources || []).length) + ' 个资源文件'))
             }
           }
-          for (const hint of (settings.directory === '' || settings.directory === undefined ? (settings.detected || []) : []).slice(0, 4)) {
-            rows.push(React.createElement('div', { className: 'mcart-bar', key: 'det' + hint },
-              React.createElement('span', { className: 'mcart-note mcart-grow' }, '检测到 ' + hint),
+          for (const detected of (settings.directory === '' || settings.directory === undefined ? (settings.detected || []) : []).slice(0, 4)) {
+            dirRows.push(prop('det' + detected, '检测到', [
+              React.createElement('span', { className: 'mcart-path mcart-grow' }, detected),
               React.createElement('button', { className: 'mcart-btn', type: 'button',
-                onClick: () => patchSettings({ directory: hint }, true) }, '用它'),
-            ))
+                onClick: () => patchSettings({ directory: detected }, true) }, '用它'),
+            ]))
           }
           if ((settings.directory === '' || settings.directory === undefined) && (settings.detected || []).length === 0) {
-            rows.push(React.createElement('div', { className: 'mcart-hint', key: 'nodir' },
-              '没设置就不参考外部资源。可以指向 .minecraft、某个版本目录、mods 目录，或单个 jar。'))
-            rows.push(React.createElement('div', { className: 'mcart-hint', key: 'nodir2' },
-              '没有自动检测到游戏目录 —— 直接把路径贴进上面的输入框也一样能用。'))
+            dirRows.push(hint('nodir', '没设置就不参考外部资源。可以指向 .minecraft、某个版本目录、mods 目录，或单个 jar。'))
+            dirRows.push(hint('nodir2', '没有自动检测到游戏目录 —— 直接把路径贴进上面的输入框也一样能用。'))
           }
+          rows.push(group('dirgroup', dirRows))
 
-          rows.push(React.createElement('label', { className: 'mcart-switch', key: 'gen' },
-            React.createElement('input', { type: 'checkbox', checked: settings.includeGenerated !== false,
-              onChange: (event) => patchSettings({ includeGenerated: event.target.checked }) }),
-            React.createElement('span', null, '参考本目录已生成内容'),
-          ))
-          rows.push(React.createElement('div', { className: 'mcart-hint', key: 'genhint' }, '有助于保持生成风格一致'))
-
-          rows.push(React.createElement('label', { className: 'mcart-switch', key: 'mods' },
-            React.createElement('input', { type: 'checkbox', checked: settings.includeMods !== false,
-              onChange: (event) => patchSettings({ includeMods: event.target.checked }) }),
-            React.createElement('span', null, '参考目录中的模组资源文件'),
-          ))
-
+          // 组 2：参考范围
+          const scopeRows = []
+          scopeRows.push(prop('gen', '已生成内容',
+            React.createElement('label', { className: 'mcart-switch' },
+              React.createElement('input', { type: 'checkbox', checked: settings.includeGenerated !== false,
+                onChange: (event) => patchSettings({ includeGenerated: event.target.checked }) }),
+              React.createElement('span', null, '参考本目录已生成内容'))))
+          scopeRows.push(hint('genhint', '有助于保持生成风格一致'))
+          scopeRows.push(prop('mods', '模组资源',
+            React.createElement('label', { className: 'mcart-switch' },
+              React.createElement('input', { type: 'checkbox', checked: settings.includeMods !== false,
+                onChange: (event) => patchSettings({ includeMods: event.target.checked }) }),
+              React.createElement('span', null, '参考目录中的模组资源文件'))))
           if (settings.includeMods !== false) {
             const mods = settings.mods || []
             const missing = settings.directory === '' || settings.directory === undefined
             const message = missing ? '还没指定参考目录'
               : (mods.length === 0 ? '参考目录里没有找到任何资源命名空间' : ('发现 ' + mods.length + ' 个命名空间'))
-            rows.push(React.createElement('div', { className: 'mcart-bar', key: 'modbar' },
-              React.createElement('span', { className: 'mcart-note' }, message),
+            scopeRows.push(prop('modbar', '命名空间', [
+              React.createElement('span', { className: 'mcart-note mcart-grow' }, message),
               mods.length === 0 ? null : React.createElement('button', { className: 'mcart-btn', type: 'button',
                 onClick: () => setModsOpen(!modsOpen) }, modsOpen ? '收起 ▴' : '展开 ▾'),
-            ))
+            ]))
             if (modsOpen) {
               const list = []
-              for (const item of mods) {
-                const from = (item.from || []).slice(0, 2).join('、')
-                list.push(React.createElement('label', { className: 'mcart-switch', key: item.name },
-                  React.createElement('input', { type: 'checkbox', checked: item.on === true,
-                    onChange: (event) => toggleMod(item.name, event.target.checked) }),
-                  React.createElement('span', { className: 'mcart-grow' }, item.name,
+              for (const mod of mods) {
+                const from = (mod.from || []).slice(0, 2).join('、')
+                list.push(React.createElement('label', { className: 'mcart-switch', key: mod.name },
+                  React.createElement('input', { type: 'checkbox', checked: mod.on === true,
+                    onChange: (event) => toggleMod(mod.name, event.target.checked) }),
+                  React.createElement('span', { className: 'mcart-grow' }, mod.name,
                     from === '' ? null : React.createElement('span', { className: 'mcart-id' }, from)),
-                  React.createElement('span', { className: 'mcart-id' }, item.count + ' 张贴图'),
+                  React.createElement('span', { className: 'mcart-id' }, mod.count + ' 张贴图'),
                 ))
               }
-              rows.push(React.createElement('div', { className: 'mcart-mods', key: 'modlist' }, list))
+              scopeRows.push(React.createElement('div', { className: 'mcart-mods', key: 'modlist' }, list))
             }
           }
+          rows.push(group('scopegroup', scopeRows))
 
-          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'foot' },
-            React.createElement('span', { className: 'mcart-note mcart-grow' }, settings.file || ''),
+          // 组 3：通知与设置文件
+          const notifyRows = []
+          notifyRows.push(prop('autoreport', '自动报告',
+            React.createElement('label', { className: 'mcart-switch' },
+              React.createElement('input', { type: 'checkbox', checked: autoReportOn === true,
+                onChange: (event) => { setAutoReport(event.target.checked); setAutoTick(autoTick + 1) } }),
+              React.createElement('span', null, '出错时自动把报告放进输入框'))))
+          notifyRows.push(hint('autoreporthint', '只是草稿：不会自动发送，输入框里已经有你写的字时也不动它。'))
+          notifyRows.push(prop('foot', '设置文件', [
+            React.createElement('span', { className: 'mcart-path mcart-grow' }, settings.file || ''),
             React.createElement('span', { className: 'mcart-bad' }, saveState === null ? '' : saveState),
-          ))
-          // 「出错时自动把报告放进输入框」：默认开，且**只到草稿为止**（见 autoFillDraft）。
-          rows.push(React.createElement('label', { className: 'mcart-switch', key: 'autoreport' },
-            React.createElement('input', { type: 'checkbox', checked: autoReportOn === true,
-              onChange: (event) => { setAutoReport(event.target.checked); setAutoTick(autoTick + 1) } }),
-            React.createElement('span', null, '出错时自动把报告放进输入框'),
-          ))
-          rows.push(React.createElement('div', { className: 'mcart-hint', key: 'autoreporthint' },
-            '只是草稿：不会自动发送，输入框里已经有你写的字时也不动它。'))
+          ]))
           // Nothing pushes a message into the conversation, so the panel offers
           // the sentence and one click puts it (plus the settings file, which the
           // skill reads) in the composer.  This is the answer to "我改了设置会通知
           // agent 吗": now it can, without the user having to describe the change.
           // 和「@ 提意见」同一条路：**直接追加进输入框草稿**，不再挂 bar 让人点第二次。
           if (savedSettings !== null && savedSettings.path !== '') {
-            rows.push(React.createElement('div', { className: 'mcart-bar', key: 'tell' },
+            notifyRows.push(prop('tell', '已保存', [
               React.createElement('span', { className: 'mcart-note mcart-grow' },
                 '已保存，要让 AI 按新设置重做的话：'),
               React.createElement('button', { className: 'mcart-btn', type: 'button',
@@ -2921,8 +2926,9 @@ return {
                 '告诉 AI'),
               React.createElement('button', { className: 'mcart-btn', type: 'button',
                 onClick: () => setSavedSettings(null) }, '不用了'),
-            ))
+            ]))
           }
+          rows.push(group('notifygroup', notifyRows))
         }
         // 提示与报错**必须在这张卡里也出现**：这张设置卡原来不渲染 notice，
         // 于是"选择目录…"失败（对话框弹不出来、没有 shell 服务…）时，

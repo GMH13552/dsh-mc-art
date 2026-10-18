@@ -38,3 +38,6 @@ panel/private-markers.txt
 
 # 协作简报与证据（不属于发布物）
 /.team/
+
+# 本地实验目录（CUA bundle、临时产物）——不进版本库
+.local/

@@ -600,201 +600,237 @@ function variantSummary(axes, props) {
   return parts.length === 0 ? '按方块默认' : parts.join(' · ')
 }
 
-// 设计令牌：**颜色只从这里出**。官方主题 token（DSH client Theme 的 BUILTIN_INSPECT_TOKENS）
-// 优先，宿主没提供时回退到中性灰阶/深色可见值（浅色/深色两套都能看）。间距走 4/8 网格，
-// 字号/圆角各有一档。目标是"专业工具"（VS Code / Blender 属性面板）的克制感：
-// 不用渐变、不用发光、不用多层阴影、不做动画炫技。
+// 设计令牌与样式表。**判据是 docs/UI-STYLE.md**：专业 3D 工具 / IDE 检查器面板
+// （平、密、窄、静）。颜色只走宿主 token（带中性兜底），间距只用 2/4/6/8，
+// 控件圆角 2px、面板 3px，禁止渐变/阴影/动画/过渡/硬编码灰。
 //
-// 注意：这个文件在绘制片段之后（清单顺序 00-math → 10-icon → 20-const → …），
+// 这个文件在绘制片段之后（清单顺序 00-math → 10-icon → 20-const → …）：
 // icon-test / icon-render-test 用 `const sub =` 到 `const CSS = [` 切片重建绘制区。
 const CSS = [
-  '.mcart-root{--mc-text:var(--dsw-alias-label-primary,inherit);'
-    + '--mc-text-dim:var(--dsw-alias-label-secondary,currentColor);'
-    + '--mc-surface:var(--dsw-alias-bg-layer-1,rgba(127,127,127,.07));'
-    + '--mc-surface-2:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.12));'
-    + '--mc-border:var(--dsw-alias-border-l1,rgba(127,127,127,.26));'
-    + '--mc-border-strong:var(--dsw-alias-border-l2,rgba(127,127,127,.42));'
-    + '--mc-brand:var(--dsw-alias-brand-primary,#6aa9ff);'
+  '.mcart-root{'
+    // 面与线（全部来自宿主主题，兜底为中性色）
+    + '--mc-bg-0:var(--dsw-alias-bg-base,Canvas);'
+    + '--mc-bg-1:var(--dsw-alias-bg-layer-1,rgba(255,255,255,.04));'
+    + '--mc-bg-2:var(--dsw-alias-bg-layer-2,rgba(255,255,255,.07));'
+    + '--mc-overlay:var(--dsw-alias-bg-overlay,rgba(24,24,28,.98));'
+    + '--mc-line-1:var(--dsw-alias-border-l1,rgba(255,255,255,.13));'
+    + '--mc-line-2:var(--dsw-alias-border-l2,rgba(255,255,255,.24));'
+    + '--mc-text-1:var(--dsw-alias-label-primary,rgba(236,236,241,.94));'
+    + '--mc-text-2:var(--dsw-alias-label-secondary,rgba(236,236,241,.58));'
+    + '--mc-brand:var(--dsw-alias-brand-primary,#4f9cf9);'
     + '--mc-error:var(--dsw-alias-state-error-primary,#e06c6c);'
     + '--mc-warn:var(--dsw-alias-state-warn-primary,#e0a06c);'
     + '--mc-ok:var(--dsw-alias-state-success-primary,#7fc98a);'
-    + '--mc-idle:var(--dsw-alias-state-idle-primary,rgba(127,127,127,.6));'
-    // 官方 token 没有"hover/选中底色"这一类，集中定义一次（中性灰，两种主题都成立）。
-    + '--mc-a-2:rgba(127,127,127,.06);--mc-a-5:rgba(127,127,127,.14);'
-    + '--mc-a-9:rgba(127,127,127,.26);--mc-a-14:rgba(127,127,127,.42);'
-    // 取景框与 HUD 是**内容**不是界面：3D 视口像 Blender 视口一样固定中性深底，
-    // HUD 是模仿游戏物品栏的深色玻璃。这两个不做主题双份，集中在这里一次定义。
-    + '--mc-canvas-bg:#141317;--mc-hud-bg:rgba(20,20,24,.72);--mc-hud-border:rgba(200,200,210,.32);'
-    // 间距 4/8 网格、字号、圆角、行高
-    + '--mc-sp-1:4px;--mc-sp-2:8px;--mc-sp-3:12px;--mc-sp-4:16px;'
-    + '--mc-fs-xs:10px;--mc-fs-sm:11px;--mc-fs-md:12px;--mc-fs-lg:13px;'
-    + '--mc-r-1:4px;--mc-r-2:6px;--mc-r-3:8px;--mc-r-pill:999px;'
-    + '--mc-lh:1.45;--mc-focus:2px solid var(--mc-brand);'
-    + '--mc-line:1px solid var(--mc-border);--mc-line-strong:1px solid var(--mc-border-strong);'
-    // 表单/列表的统一节奏：控件同高、开关缩进、滚动区同一档、顶栏底色
-    + '--mc-control-h:26px;--mc-indent:20px;--mc-scroll-h:220px;--mc-scroll-h-sm:124px;'
-    + '--mc-header-bg:var(--dsw-alias-bg-base,rgba(24,24,28,.96));'
-    + 'display:flex;flex-direction:column;gap:var(--mc-sp-2);padding:var(--mc-sp-3);height:100%;'
-    + 'box-sizing:border-box;overflow-y:auto;overflow-x:hidden;color:var(--mc-text);'
-    + 'font-size:var(--mc-fs-md);line-height:var(--mc-lh)}',
-  // ---- 版式 ---------------------------------------------------------------
-  // 顶栏钉在滚动区顶部：面板很长时"设置/物品列表"不跟着滚走（全宽 + 底边）。
-  '.mcart-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:var(--mc-sp-1);'
-    + 'background:var(--mc-header-bg);border-bottom:var(--mc-line);'
-    + 'margin:calc(-1 * var(--mc-sp-3)) calc(-1 * var(--mc-sp-3)) 0;'
-    + 'padding:var(--mc-sp-2) var(--mc-sp-3)}',
-  '.mcart-bar{display:flex;align-items:center;gap:var(--mc-sp-1);flex-wrap:wrap}',
-  '.mcart-title{font-size:var(--mc-fs-lg);font-weight:600}',
-  '.mcart-sub{color:var(--mc-text-dim);opacity:.85;font-size:var(--mc-fs-sm)}',
-  '.mcart-path{color:var(--mc-text-dim);font-size:var(--mc-fs-sm);word-break:break-all;flex:1;min-width:0}',
-  '.mcart-group{font-size:var(--mc-fs-xs);letter-spacing:.05em;text-transform:uppercase;'
-    + 'color:var(--mc-text-dim);opacity:.8;padding:var(--mc-sp-2) var(--mc-sp-2) var(--mc-sp-1)}',
-  '.mcart-id{font-size:var(--mc-fs-xs);color:var(--mc-text-dim);opacity:.8;margin-left:var(--mc-sp-1)}',
+    + '--mc-idle:var(--dsw-alias-state-idle-primary,rgba(236,236,241,.6));'
+    // 中性叠底由文字色算出来（4% hover / 8% active / 8% 强调选中），不是硬编码灰
+    + '--mc-hover:color-mix(in srgb,var(--mc-text-1) 4%,transparent);'
+    + '--mc-active:color-mix(in srgb,var(--mc-text-1) 8%,transparent);'
+    + '--mc-select:color-mix(in srgb,var(--mc-brand) 8%,transparent);'
+    // 间距刻度只有 2/4/6/8
+    + '--mc-s1:2px;--mc-s2:4px;--mc-s3:6px;--mc-s4:8px;'
+    // 尺寸：正文 12 / 次要 11 / 行高 22 / 表单行 26 / 工具栏 28 / 控件 22 / 标题 22
+    + '--mc-fs:12px;--mc-fs2:11px;--mc-lh:22px;--mc-row:26px;--mc-toolbar:28px;'
+    + '--mc-control:22px;--mc-section:22px;--mc-label:88px;--mc-icon:14px;'
+    + '--mc-radius:2px;--mc-radius-panel:3px;'
+    + '--mc-mono:ui-monospace,Consolas,monospace;'
+    // 内容区（视口 / 像素画布 / HUD）是内容不是界面：固定中性深底
+    + '--mc-canvas-bg:#141317;--mc-hud-bg:rgba(20,20,24,.8);'
+    + 'display:flex;flex-direction:column;gap:var(--mc-s4);padding:var(--mc-s4);'
+    + 'height:100%;box-sizing:border-box;overflow-y:auto;overflow-x:hidden;'
+    + 'color:var(--mc-text-1);background:var(--mc-bg-0);'
+    + 'font:var(--mc-fs)/var(--mc-lh) system-ui,-apple-system,"Segoe UI",sans-serif}',
+  // ---- 标签 / 文字层级 -----------------------------------------------------
+  '.mcart-title{font-size:var(--mc-fs2);font-weight:600;color:var(--mc-text-2)}',
+  '.mcart-sub{font-size:var(--mc-fs2);color:var(--mc-text-2)}',
+  '.mcart-note{font-size:var(--mc-fs2);color:var(--mc-text-2)}',
+  '.mcart-hint{font-size:var(--mc-fs2);line-height:14px;color:var(--mc-text-2);'
+    + 'padding-left:calc(var(--mc-label) + var(--mc-s3))}',
+  '.mcart-path,.mcart-id,.mcart-report,.mcart-reportnote{font-family:var(--mc-mono);'
+    + 'font-size:var(--mc-fs2);font-variant-numeric:tabular-nums}',
+  '.mcart-path{color:var(--mc-text-2);word-break:break-all;min-width:0}',
+  '.mcart-id{color:var(--mc-text-2);margin-left:var(--mc-s2)}',
   '.mcart-grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  '.mcart-src{display:flex;align-items:center;gap:var(--mc-sp-1)}',
-  '.mcart-tabs{display:flex;gap:var(--mc-sp-1);flex-wrap:wrap;align-items:center}',
-  '.mcart-tools{display:flex;gap:var(--mc-sp-1);flex-wrap:wrap;align-items:center}',
-  // ---- 三态（空 / 加载 / 错误）一致：同一档字号，错误/警告用状态色 + 左侧细线 ----
-  '.mcart-note{color:var(--mc-text-dim);font-size:var(--mc-fs-sm)}',
-  '.mcart-hint{font-size:var(--mc-fs-xs);color:var(--mc-text-dim);margin-left:var(--mc-indent);line-height:var(--mc-lh)}',
-  '.mcart-empty{font-size:var(--mc-fs-sm);color:var(--mc-text-dim);padding:var(--mc-sp-2);'
-    + 'border:1px dashed var(--mc-border);border-radius:var(--mc-r-2);text-align:center}',
-  '.mcart-loading{font-size:var(--mc-fs-sm);color:var(--mc-text-dim);opacity:.9}',
-  '.mcart-bad,.mcart-err{font-size:var(--mc-fs-sm);word-break:break-all;padding-left:var(--mc-sp-2);'
-    + 'border-left:2px solid currentColor;line-height:var(--mc-lh)}',
-  '.mcart-bad{color:var(--mc-warn)}',
-  '.mcart-err{color:var(--mc-error)}',
-  // ---- 可交互控件：hover / active / disabled / focus-visible 四态一致 ----------
-  '.mcart-btn{background:var(--mc-a-5);border:var(--mc-line);border-radius:var(--mc-r-2);'
-    + 'color:inherit;font:inherit;font-size:var(--mc-fs-sm);padding:var(--mc-sp-1) var(--mc-sp-2);'
-    + 'min-height:var(--mc-control-h);box-sizing:border-box;line-height:1.2;'
-    + 'cursor:pointer;flex:none;white-space:nowrap}',
-  '.mcart-btn:hover{background:var(--mc-a-9)}',
-  '.mcart-btn:active{background:var(--mc-a-14)}',
-  '.mcart-btn[disabled]{opacity:.4;cursor:default;background:var(--mc-a-2)}',
-  '.mcart-tool[data-on="1"]{background:var(--mc-a-14);font-weight:600}',
-  '.mcart-icon{background:none;border:0;color:inherit;font:inherit;font-size:var(--mc-fs-lg);'
-    + 'line-height:1;padding:var(--mc-sp-1);border-radius:var(--mc-r-2);cursor:pointer;'
-    + 'min-width:var(--mc-control-h);min-height:var(--mc-control-h);box-sizing:border-box;'
-    + 'display:inline-flex;align-items:center;justify-content:center}',
-  '.mcart-icon:hover{background:var(--mc-a-9)}',
-  '.mcart-icon[data-on="1"]{background:var(--mc-a-14)}',
-  '.mcart-input{flex:1;min-width:0;background:var(--mc-surface);border:var(--mc-line);'
-    + 'border-radius:var(--mc-r-2);color:inherit;font:inherit;font-size:var(--mc-fs-sm);'
-    + 'padding:var(--mc-sp-1) var(--mc-sp-2);min-height:var(--mc-control-h);'
-    + 'box-sizing:border-box;line-height:1.2}',
-  '.mcart-input:hover{border-color:var(--mc-border-strong)}',
+  '.mcart-group{display:flex;flex-direction:column}',
+  '.mcart-group+.mcart-group{border-top:1px solid var(--mc-line-1);'
+    + 'margin-top:var(--mc-s2);padding-top:var(--mc-s2)}',
+  // ---- 工具栏 / 区块标题 ---------------------------------------------------
+  '.mcart-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;'
+    + 'height:var(--mc-toolbar);min-height:var(--mc-toolbar);gap:var(--mc-s2);'
+    + 'padding:0 var(--mc-s4);margin:calc(-1 * var(--mc-s4)) calc(-1 * var(--mc-s4)) 0;'
+    + 'background:var(--mc-bg-0);border-bottom:1px solid var(--mc-line-1)}',
+  '.mcart-head>.mcart-title{color:var(--mc-text-1)}',
+  // 工具栏按钮：透明底、组间 1px 竖线（只在 header 内）
+  '.mcart-head .mcart-btn,.mcart-head .mcart-icon{background:transparent;border-color:transparent;'
+    + 'height:var(--mc-control)}',
+  '.mcart-head .mcart-btn:hover,.mcart-head .mcart-icon:hover{background:var(--mc-hover)}',
+  '.mcart-head .mcart-btn+.mcart-btn,.mcart-head .mcart-btn+.mcart-icon,'
+    + '.mcart-head .mcart-icon+.mcart-btn{border-left:1px solid var(--mc-line-1);'
+    + 'border-top-left-radius:0;border-bottom-left-radius:0;padding-left:var(--mc-s3)}',
+  '.mcart-bar{display:flex;align-items:center;gap:var(--mc-s2);flex-wrap:wrap}',
+  // 卡片去掉"卡片感"：面 + 顶部分隔线 + 4/8 留白，无圆角无阴影
+  '.mcart-card{border:0;border-top:1px solid var(--mc-line-1);border-radius:0;'
+    + 'padding:var(--mc-s2) 0;display:flex;flex-direction:column;gap:var(--mc-s2);'
+    + 'background:transparent}',
+  // 卡片第一行是区块标题：22px 高、11px/600、次要色、底部 1px 线
+  '.mcart-card>.mcart-bar:first-child{min-height:var(--mc-section);height:var(--mc-section);'
+    + 'padding:0;border-bottom:1px solid var(--mc-line-1)}',
+  // ---- 属性行：label 88px 右对齐 + 值占满；组内不画线，组间才画 -------------
+  '.mcart-prop{display:grid;grid-template-columns:var(--mc-label) 1fr;align-items:center;'
+    + 'min-height:var(--mc-row);column-gap:var(--mc-s3);padding:1px 0}',
+  '.mcart-prop-label{font-size:var(--mc-fs2);color:var(--mc-text-2);text-align:right;'
+    + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+  '.mcart-prop-value{display:flex;align-items:center;gap:var(--mc-s2);min-width:0;'
+    + 'font-size:var(--mc-fs2);color:var(--mc-text-1)}',
+  '.mcart-src{display:flex;align-items:center;gap:var(--mc-s2)}',
+  '.mcart-tabs,.mcart-tools{display:flex;gap:var(--mc-s2);flex-wrap:wrap;align-items:center}',
+  // ---- 控件（与规范同高 22px，圆角 2px） -----------------------------------
+  '.mcart-btn{height:var(--mc-control);padding:0 var(--mc-s3);box-sizing:border-box;'
+    + 'border:1px solid var(--mc-line-1);border-radius:var(--mc-radius);'
+    + 'background:var(--mc-bg-1);color:var(--mc-text-1);font:inherit;font-size:var(--mc-fs2);'
+    + 'line-height:20px;white-space:nowrap;cursor:pointer;flex:none}',
+  '.mcart-btn:hover{background:var(--mc-active);border-color:var(--mc-line-2)}',
+  '.mcart-btn:active{background:var(--mc-active)}',
+  '.mcart-btn[disabled]{opacity:.4;cursor:default;background:var(--mc-bg-1)}',
+  '.mcart-tool[data-on="1"]{background:var(--mc-select);border-color:var(--mc-brand)}',
+  '.mcart-icon{width:var(--mc-control);height:var(--mc-control);display:inline-flex;'
+    + 'align-items:center;justify-content:center;padding:0;border:0;border-radius:var(--mc-radius);'
+    + 'background:none;color:var(--mc-text-2);font:inherit;font-size:var(--mc-icon);'
+    + 'line-height:1;cursor:pointer}',
+  '.mcart-icon:hover{background:var(--mc-hover);color:var(--mc-text-1)}',
+  '.mcart-icon[data-on="1"]{background:var(--mc-select);color:var(--mc-text-1)}',
+  '.mcart-input,.mcart-select{height:var(--mc-control);box-sizing:border-box;min-width:0;'
+    + 'padding:0 var(--mc-s3);border:1px solid var(--mc-line-1);border-radius:var(--mc-radius);'
+    + 'background:var(--mc-bg-2);color:var(--mc-text-1);font:inherit;font-size:var(--mc-fs2)}',
+  '.mcart-input{flex:1}',
+  '.mcart-select{flex:1;padding:0 var(--mc-s1)}',
+  '.mcart-input:hover,.mcart-select:hover{border-color:var(--mc-line-2)}',
   '.mcart-input:disabled,.mcart-select:disabled{opacity:.4;cursor:default}',
-  '.mcart-select{flex:1;min-width:0;background:var(--mc-surface);border:var(--mc-line);'
-    + 'border-radius:var(--mc-r-2);color:inherit;font:inherit;font-size:var(--mc-fs-sm);'
-    + 'padding:var(--mc-sp-1);min-height:var(--mc-control-h);box-sizing:border-box;line-height:1.2}',
-  '.mcart-select:hover{border-color:var(--mc-border-strong)}',
+  '.mcart-input[type="number"]{text-align:right;font-family:var(--mc-mono);'
+    + 'font-variant-numeric:tabular-nums}',
+  '.mcart-input[type="range"],.mcart-alpha{accent-color:var(--mc-brand)}',
+  '.mcart-slot[disabled],.mcart-swatch[disabled]{opacity:.4;cursor:default}',
+  // 四态一致：hover 4% / active 8% / focus-visible 1px 强调内描边 / disabled 40%
   '.mcart-btn:focus-visible,.mcart-icon:focus-visible,.mcart-input:focus-visible,'
     + '.mcart-select:focus-visible,.mcart-item:focus-visible,.mcart-slot:focus-visible,'
     + '.mcart-hudslot:focus-visible,.mcart-swatch:focus-visible,.mcart-picker:focus-visible,'
-    + '.mcart-hudpage:focus-visible{outline:var(--mc-focus);outline-offset:1px}',
-  // ---- 面板/卡片/列表 -----------------------------------------------------
-  '.mcart-card{border:var(--mc-line);border-radius:var(--mc-r-3);padding:var(--mc-sp-3);'
-    + 'display:flex;flex-direction:column;gap:var(--mc-sp-2);background:var(--mc-surface)}',
-  '.mcart-list{overflow:auto;border:var(--mc-line);border-radius:var(--mc-r-3);'
-    + 'padding:var(--mc-sp-1);max-height:var(--mc-scroll-h)}',
-  '.mcart-row{display:flex;align-items:center;gap:var(--mc-sp-1);border-radius:var(--mc-r-2);'
-    + 'padding:var(--mc-sp-1)}',
-  '.mcart-row:hover{background:var(--mc-a-5)}',
-  '.mcart-item{display:block;width:100%;text-align:left;background:none;border:0;'
-    + 'border-radius:var(--mc-r-2);color:inherit;font:inherit;font-size:var(--mc-fs-md);'
-    + 'padding:var(--mc-sp-1) var(--mc-sp-2);cursor:pointer}',
-  '.mcart-item:hover{background:var(--mc-a-5)}',
-  '.mcart-item:active{background:var(--mc-a-9)}',
-  '.mcart-item[data-on="1"]{background:var(--mc-a-9);font-weight:600}',
-  '.mcart-projects{max-height:var(--mc-scroll-h);overflow:auto;display:flex;flex-direction:column;gap:1px;'
-    + 'border:var(--mc-line);border-radius:var(--mc-r-3);padding:var(--mc-sp-1)}',
-  '.mcart-mods{border:var(--mc-line);border-radius:var(--mc-r-3);padding:var(--mc-sp-1) var(--mc-sp-2);'
-    + 'display:flex;flex-direction:column;gap:1px;max-height:var(--mc-scroll-h-sm);overflow:auto}',
-  '.mcart-switch{display:grid;grid-template-columns:var(--mc-indent) 1fr;column-gap:var(--mc-sp-2);'
-    + 'align-items:start;cursor:pointer;padding:var(--mc-sp-1) 0;border-radius:var(--mc-r-1)}',
-  '.mcart-switch input{margin:var(--mc-sp-1) 0 0 0;flex:none;accent-color:var(--mc-brand)}',
-  '.mcart-switch:focus-within{outline:var(--mc-focus);outline-offset:1px}',
-  // 滚动区统一：细滚动条（颜色走宿主 token）、不要链式滚动、右留一点防贴边。
+    + '.mcart-hudpage:focus-visible,.mcart-switch:focus-within{'
+    + 'outline:1px solid var(--mc-brand);outline-offset:-1px}',
+  // 开关：12×20 轨道（2px 圆角），不是 iOS 大开关
+  '.mcart-switch{display:flex;align-items:center;gap:var(--mc-s2);min-height:var(--mc-row);'
+    + 'font-size:var(--mc-fs2);cursor:pointer}',
+  '.mcart-switch input[type="checkbox"]{appearance:none;-webkit-appearance:none;'
+    + 'width:20px;height:12px;margin:0;flex:none;position:relative;border-radius:var(--mc-radius);'
+    + 'border:1px solid var(--mc-line-2);background:var(--mc-bg-2);cursor:pointer}',
+  '.mcart-switch input[type="checkbox"]::after{content:"";position:absolute;top:1px;left:1px;'
+    + 'width:8px;height:8px;border-radius:var(--mc-radius);background:var(--mc-text-2)}',
+  '.mcart-switch input[type="checkbox"]:checked{background:var(--mc-brand);border-color:var(--mc-brand)}',
+  '.mcart-switch input[type="checkbox"]:checked::after{left:9px;background:var(--mc-bg-0)}',
+  // ---- 三态（空 / 加载 / 错误）一致 ---------------------------------------
+  '.mcart-empty{font-size:var(--mc-fs2);color:var(--mc-text-2);padding:var(--mc-s2) 0}',
+  '.mcart-loading{font-size:var(--mc-fs2);color:var(--mc-text-2)}',
+  '.mcart-bad,.mcart-err{font-size:var(--mc-fs2);line-height:14px;word-break:break-all;'
+    + 'border-left:2px solid;padding-left:var(--mc-s3)}',
+  '.mcart-bad{color:var(--mc-warn);border-left-color:var(--mc-warn)}',
+  '.mcart-err{color:var(--mc-error);border-left-color:var(--mc-error)}',
+  // ---- 列表：行高 22，选中 8% 叠底 + 左侧 2px 强调条 ------------------------
+  '.mcart-list{overflow:auto;border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);'
+    + 'padding:var(--mc-s1);max-height:240px}',
+  '.mcart-row{display:flex;align-items:center;gap:var(--mc-s2);height:var(--mc-lh);'
+    + 'padding:0 var(--mc-s2);border-left:2px solid transparent}',
+  '.mcart-row:hover{background:var(--mc-hover)}',
+  '.mcart-item{display:block;width:100%;height:var(--mc-lh);padding:0 var(--mc-s2);text-align:left;'
+    + 'border:0;border-left:2px solid transparent;border-radius:0;background:none;'
+    + 'color:var(--mc-text-1);font:inherit;font-size:var(--mc-fs);cursor:pointer}',
+  '.mcart-item:hover{background:var(--mc-hover)}',
+  '.mcart-item:active{background:var(--mc-active)}',
+  '.mcart-item[data-on="1"]{background:var(--mc-select);border-left-color:var(--mc-brand)}',
+  '.mcart-projects{max-height:240px;overflow:auto;display:flex;flex-direction:column;'
+    + 'border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);padding:var(--mc-s1)}',
+  '.mcart-mods{border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);'
+    + 'padding:var(--mc-s1) var(--mc-s2);display:flex;flex-direction:column;max-height:200px;'
+    + 'overflow:auto}',
+  '.mcart-chip{font-size:var(--mc-fs2);padding:0 var(--mc-s3);height:var(--mc-control);'
+    + 'box-sizing:border-box;border-radius:var(--mc-radius);background:var(--mc-bg-1);'
+    + 'color:var(--mc-text-2)}',
+  // 滚动区统一：细滚动条、不链式滚动
   '.mcart-list,.mcart-hotbar,.mcart-swatches,.mcart-projects,.mcart-mods{'
-    + 'scrollbar-width:thin;scrollbar-color:var(--dsh-scrollbar-thumb,var(--mc-a-14)) transparent;'
-    + 'overscroll-behavior:contain;padding-right:var(--mc-sp-1)}',
-  '.mcart-chip{font-size:var(--mc-fs-xs);padding:1px var(--mc-sp-2);border-radius:var(--mc-r-pill);'
-    + 'background:var(--mc-a-9);color:var(--mc-text-dim)}',
-  // ---- 取景框与 3D 视口（内容区：中性深底，不随主题变白） --------------------
-  '.mcart-stage{flex:none;display:flex;flex-direction:column;gap:var(--mc-sp-1)}',
-  '.mcart-canvas{width:100%;height:240px;display:block;border-radius:var(--mc-r-3);'
-    + 'background:var(--mc-canvas-bg);border:var(--mc-line);cursor:grab;touch-action:none}',
+    + 'scrollbar-width:thin;scrollbar-color:var(--dsw-scrollbar-thumb,var(--mc-line-2)) transparent;'
+    + 'overscroll-behavior:contain}',
+  // ---- 取景框（内容区，固定深底） ------------------------------------------
+  '.mcart-stage{flex:none;display:flex;flex-direction:column;gap:var(--mc-s2)}',
+  '.mcart-canvas{width:100%;height:240px;display:block;border-radius:var(--mc-radius-panel);'
+    + 'background:var(--mc-canvas-bg);border:1px solid var(--mc-line-1);cursor:grab;touch-action:none}',
   '.mcart-canvas:active{cursor:grabbing}',
   '.mcart-viewport{position:relative;flex:none}',
-  '.mcart-zoom{position:absolute;right:var(--mc-sp-1);top:var(--mc-sp-1);display:flex;'
-    + 'gap:var(--mc-sp-1);opacity:.8}',
+  '.mcart-zoom{position:absolute;right:var(--mc-s2);top:var(--mc-s2);display:flex;'
+    + 'gap:var(--mc-s1);opacity:.9}',
   '.mcart-zoom:hover{opacity:1}',
-  '.mcart-zoombtn{width:24px;height:24px;padding:0;display:flex;align-items:center;'
-    + 'justify-content:center;font-size:var(--mc-fs-md);line-height:1;background:var(--mc-hud-bg);'
-    + 'border-color:var(--mc-hud-border);color:var(--mc-text)}',
+  '.mcart-zoombtn{width:var(--mc-control);height:var(--mc-control);padding:0;display:inline-flex;'
+    + 'align-items:center;justify-content:center;font-size:var(--mc-fs);line-height:1;'
+    + 'background:var(--mc-hud-bg);border-color:var(--mc-line-2);color:var(--mc-text-1)}',
   '.mcart-poster{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);'
     + 'image-rendering:pixelated;pointer-events:none}',
-  '.mcart-grip{display:flex;align-items:center;justify-content:center;height:13px;'
+  '.mcart-grip{display:flex;align-items:center;justify-content:center;height:5px;'
     + 'cursor:ns-resize;touch-action:none}',
-  '.mcart-gripbar{width:48px;height:4px;border-radius:var(--mc-r-pill);background:var(--mc-a-14)}',
-  '.mcart-grip:hover .mcart-gripbar{background:var(--mc-a-9)}',
-  '.mcart-grip:active .mcart-gripbar{background:var(--mc-brand)}',
-  // ---- 游戏物品栏（HUD）：模仿游戏，固定深色玻璃；只借主题的文字色 --------------
+  '.mcart-gripbar{width:32px;height:1px;background:var(--mc-line-2)}',
+  '.mcart-grip:hover .mcart-gripbar{background:var(--mc-brand)}',
+  // ---- HUD（游戏物品栏）：槽位 22px、2px 圆角、选中 1px 强调内描边 ----------
   '.mcart-hud{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;'
-    + 'align-items:center;gap:var(--mc-sp-1);padding:0 var(--mc-sp-2) var(--mc-sp-2);pointer-events:none}',
-  '.mcart-hudname{font-size:var(--mc-fs-sm);padding:1px var(--mc-sp-2);border-radius:var(--mc-r-pill);'
-    + 'background:var(--mc-hud-bg);border:1px solid var(--mc-hud-border)}',
-  '.mcart-hudbar{display:flex;align-items:center;gap:var(--mc-sp-1);padding:var(--mc-sp-1);'
-    + 'border-radius:var(--mc-r-3);background:var(--mc-hud-bg);border:1px solid var(--mc-hud-border);'
-    + 'pointer-events:auto}',
-  '.mcart-hudslot{width:34px;height:34px;padding:0;flex:none;display:flex;align-items:center;'
-    + 'justify-content:center;border-radius:var(--mc-r-1);border:1px solid var(--mc-hud-border);'
-    + 'background:rgba(0,0,0,.32);cursor:pointer}',
-  '.mcart-hudslot:hover{border-color:var(--mc-brand);background:var(--mc-a-9)}',
-  '.mcart-hudslot[data-on="1"]{border-color:var(--mc-brand);outline:1px solid var(--mc-brand)}',
-  '.mcart-hudicon{width:30px;height:30px;display:block;image-rendering:pixelated}',
-  '.mcart-hudempty{background:rgba(0,0,0,.22);border-color:rgba(120,120,130,.26);cursor:default}',
-  '.mcart-hudpage{width:16px;height:34px;padding:0;flex:none;font:inherit;font-size:var(--mc-fs-md);'
-    + 'line-height:1;color:inherit;background:none;border:0;cursor:pointer;opacity:.7}',
-  '.mcart-hudpage:hover{opacity:1}',
-  '.mcart-hudpage[disabled]{opacity:.22;cursor:default}',
-  // ---- 物品栏/九宫格/缩略图 ------------------------------------------------
-  '.mcart-hotbar{display:flex;gap:var(--mc-sp-1);flex-wrap:wrap;max-height:var(--mc-scroll-h-sm);overflow:auto}',
-  '.mcart-slot{width:28px;height:28px;border:var(--mc-line);border-radius:var(--mc-r-1);'
-    + 'background:none;background-size:cover;image-rendering:pixelated;padding:0;flex:none;'
+    + 'align-items:center;gap:var(--mc-s1);padding:0 var(--mc-s2) var(--mc-s2);pointer-events:none}',
+  '.mcart-hudname{font-family:var(--mc-mono);font-size:var(--mc-fs2);padding:0 var(--mc-s2);'
+    + 'border-radius:var(--mc-radius);background:var(--mc-hud-bg);'
+    + 'border:1px solid var(--mc-line-2)}',
+  '.mcart-hudbar{display:flex;align-items:center;gap:var(--mc-s1);padding:var(--mc-s1);'
+    + 'border-radius:var(--mc-radius-panel);background:var(--mc-hud-bg);'
+    + 'border:1px solid var(--mc-line-2);pointer-events:auto}',
+  '.mcart-hudslot{width:var(--mc-control);height:var(--mc-control);padding:0;flex:none;'
+    + 'display:flex;align-items:center;justify-content:center;box-sizing:border-box;'
+    + 'border-radius:var(--mc-radius);border:1px solid var(--mc-line-2);'
+    + 'background:var(--mc-bg-1);cursor:pointer}',
+  '.mcart-hudslot:hover{border-color:var(--mc-brand)}',
+  '.mcart-hudslot[data-on="1"]{border-color:var(--mc-brand);outline:1px solid var(--mc-brand);'
+    + 'outline-offset:-2px}',
+  '.mcart-hudicon{width:18px;height:18px;display:block;image-rendering:pixelated}',
+  '.mcart-hudempty{background:transparent;border-color:var(--mc-line-1);cursor:default}',
+  '.mcart-hudpage{width:12px;height:var(--mc-control);padding:0;flex:none;font:inherit;'
+    + 'font-size:var(--mc-fs);line-height:1;color:var(--mc-text-2);background:none;border:0;'
     + 'cursor:pointer}',
-  '.mcart-slot:hover{border-color:var(--mc-border-strong);background-color:var(--mc-a-5)}',
-  '.mcart-slot:active{background-color:var(--mc-a-9)}',
-  '.mcart-slot[data-on="1"]{outline:2px solid var(--mc-brand);outline-offset:1px}',
-  '.mcart-slotq{font-size:var(--mc-fs-lg);line-height:1;color:var(--mc-text-dim)}',
-  // 缺图标的那一格：说"缺"，不装没事，也别看起来像"还在加载"。
-  '.mcart-slotmissing{font-size:var(--mc-fs-xs);font-weight:600;color:var(--mc-warn);letter-spacing:0}',
-  '.mcart-slot[data-missing="1"],.mcart-hudslot[data-missing="1"]{'
-    + 'border-color:var(--mc-warn);background:rgba(224,160,108,.12)}',
-  // ---- 像素编辑器 ----------------------------------------------------------
-  '.mcart-edit{display:flex;flex-direction:column;gap:var(--mc-sp-1)}',
+  '.mcart-hudpage:hover{color:var(--mc-text-1)}',
+  '.mcart-hudpage[disabled]{opacity:.4;cursor:default}',
+  // ---- 物品栏 / 九宫格 / 缩略图 -------------------------------------------
+  '.mcart-hotbar{display:flex;gap:var(--mc-s1);flex-wrap:wrap;max-height:124px;overflow:auto}',
+  '.mcart-slot{width:var(--mc-control);height:var(--mc-control);box-sizing:border-box;'
+    + 'border:1px solid var(--mc-line-1);border-radius:var(--mc-radius);background:none;'
+    + 'background-size:cover;image-rendering:pixelated;padding:0;flex:none;cursor:pointer}',
+  '.mcart-slot:hover{border-color:var(--mc-line-2);background-color:var(--mc-hover)}',
+  '.mcart-slot[data-on="1"]{border-color:var(--mc-brand);outline:1px solid var(--mc-brand);'
+    + 'outline-offset:-2px}',
+  '.mcart-slotq{font-size:var(--mc-fs);line-height:1;color:var(--mc-text-2)}',
+  '.mcart-slotmissing{font-size:var(--mc-fs2);font-weight:600;color:var(--mc-warn)}',
+  '.mcart-slot[data-missing="1"],.mcart-hudslot[data-missing="1"]{border-color:var(--mc-warn)}',
+  // ---- 像素编辑器 ---------------------------------------------------------
+  '.mcart-edit{display:flex;flex-direction:column;gap:var(--mc-s2)}',
   '.mcart-edit-canvas{display:block;width:100%;height:auto;max-height:52vh;object-fit:contain;'
-    + 'image-rendering:pixelated;border-radius:var(--mc-r-1);background:var(--mc-canvas-bg);'
-    + 'margin:var(--mc-sp-1) 0;cursor:crosshair;touch-action:none}',
-  '.mcart-swatches{display:flex;gap:var(--mc-sp-1);flex-wrap:wrap;max-height:56px;overflow:auto}',
-  '.mcart-swatch{width:20px;height:20px;border-radius:var(--mc-r-1);border:var(--mc-line);'
-    + 'cursor:pointer;padding:0;flex:none}',
-  '.mcart-swatch:hover{border-color:var(--mc-border-strong)}',
-  '.mcart-color{width:24px;height:24px;border-radius:var(--mc-r-1);border:var(--mc-line);flex:none}',
-  '.mcart-picker{width:36px;height:24px;padding:0;border:var(--mc-line);border-radius:var(--mc-r-1);'
-    + 'background:none;flex:none;cursor:pointer}',
-  '.mcart-alpha{flex:1;min-width:60px;accent-color:var(--mc-brand)}',
-  // ---- 引用条 / 报告（只上屏，可复制） --------------------------------------
-  '.mcart-ref{display:flex;align-items:center;gap:var(--mc-sp-2);flex-wrap:wrap;'
-    + 'margin:0 0 var(--mc-sp-1);padding:var(--mc-sp-2) var(--mc-sp-3);border-radius:var(--mc-r-3);'
-    + 'background:var(--mc-surface-2);border:var(--mc-line);font-size:var(--mc-fs-md)}',
-  '.mcart-ref-path{color:var(--mc-text-dim);word-break:break-all}',
-  '.mcart-report{white-space:pre-wrap;word-break:break-word;background:var(--mc-surface);'
-    + 'border:var(--mc-line);border-radius:var(--mc-r-2);padding:var(--mc-sp-2);'
-    + 'margin:2px 0;font-size:var(--mc-fs-sm);line-height:var(--mc-lh);max-height:280px;'
-    + 'overflow:auto;user-select:text;font-family:inherit}',
-  '.mcart-reportnote{font-size:var(--mc-fs-xs);color:var(--mc-text-dim);word-break:break-all}',
+    + 'image-rendering:pixelated;border-radius:var(--mc-radius);background:var(--mc-canvas-bg);'
+    + 'margin:var(--mc-s2) 0;cursor:crosshair;touch-action:none}',
+  '.mcart-swatches{display:flex;gap:var(--mc-s1);flex-wrap:wrap;max-height:56px;overflow:auto}',
+  '.mcart-swatch{width:16px;height:16px;box-sizing:border-box;border-radius:var(--mc-radius);'
+    + 'border:1px solid var(--mc-line-2);cursor:pointer;padding:0;flex:none}',
+  '.mcart-swatch:hover{border-color:var(--mc-text-2)}',
+  '.mcart-color{width:var(--mc-control);height:var(--mc-control);box-sizing:border-box;'
+    + 'border-radius:var(--mc-radius);border:1px solid var(--mc-line-1);flex:none}',
+  '.mcart-picker{width:32px;height:var(--mc-control);padding:0;border:1px solid var(--mc-line-1);'
+    + 'border-radius:var(--mc-radius);background:none;flex:none;cursor:pointer}',
+  // ---- 引用条（冷启动兜底）/ 报告（只上屏、可复制） ------------------------
+  '.mcart-ref{display:flex;align-items:center;gap:var(--mc-s2);flex-wrap:wrap;'
+    + 'padding:var(--mc-s2) var(--mc-s4);border:1px solid var(--mc-line-1);'
+    + 'border-radius:var(--mc-radius-panel);background:var(--mc-bg-1);font-size:var(--mc-fs2)}',
+  '.mcart-ref-path{font-family:var(--mc-mono);color:var(--mc-text-2);word-break:break-all}',
+  '.mcart-report{white-space:pre-wrap;word-break:break-word;background:var(--mc-bg-2);'
+    + 'border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);'
+    + 'padding:var(--mc-s3);margin:var(--mc-s1) 0;line-height:14px;max-height:240px;'
+    + 'overflow:auto;user-select:text}',
+  '.mcart-reportnote{color:var(--mc-text-2);word-break:break-all}',
 ].join('')
 
 const CATEGORIES = [
@@ -803,7 +839,6 @@ const CATEGORIES = [
   { key: 'entity', label: '实体' },
   { key: 'block', label: '方块' },
 ]
-
 const TAB_ID = 'mc-art.atlas'
 
 // 最近打开的 project id：换了项目就丢像素缓存（见 forgetTextures）。
@@ -3785,6 +3820,12 @@ return {
       function settingsCard() {
         if (settings === null) return null
         const rows = []
+        // 属性表：label 固定 88px 右对齐 + 值占满（见 docs/UI-STYLE.md §3）。
+        const prop = (key, label, value) => React.createElement('div', { className: 'mcart-prop', key: key },
+          React.createElement('span', { className: 'mcart-prop-label' }, label),
+          React.createElement('span', { className: 'mcart-prop-value' }, value))
+        const group = (key, children) => React.createElement('div', { className: 'mcart-group', key: key }, children)
+        const hint = (key, text) => prop(key, '', React.createElement('span', { className: 'mcart-note' }, text))
         if (settings.loading === true) {
           rows.push(React.createElement('div', { className: 'mcart-note', key: 'l' }, '读取设置…'))
         } else if (settings.error !== undefined) {
@@ -3794,112 +3835,111 @@ return {
             React.createElement('span', { className: 'mcart-title' }, '设置'),
             React.createElement('span', { className: 'mcart-sub' }, settings.title || settings.project || ''),
           ))
-          rows.push(React.createElement('div', { className: 'mcart-note', key: 'reflabel' }, '参考目录'))
-          rows.push(React.createElement('div', { className: 'mcart-path', key: 'refpath' }, settings.directory || '（未设置）'))
-          const dirButtons = [
-            React.createElement('button', { className: 'mcart-btn', type: 'button', key: 'pick', disabled: picking,
-              onClick: () => runPicker(settings.directory || root, (picked) => patchSettings({ directory: picked }, true)) },
-              picking ? '对话框已打开…' : '选择目录…'),
-          ]
-          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'dirbuttons' }, dirButtons))
+          // 组 1：参考目录（行是属性行；组内不画分隔线，组间才有 1px 线）
+          const dirRows = []
+          dirRows.push(prop('refpath', '参考目录',
+            React.createElement('span', { className: 'mcart-path mcart-grow' }, settings.directory || '（未设置）')))
+          dirRows.push(prop('pick', '选择', React.createElement('button', {
+            className: 'mcart-btn', type: 'button', disabled: picking,
+            onClick: () => runPicker(settings.directory || root, (picked) => patchSettings({ directory: picked }, true)),
+          }, picking ? '对话框已打开…' : '选择目录…')))
           // 手输/粘贴这条路是**必须**有的：系统目录对话框在某些环境里弹不出来
           // （shell 服务跑在非交互窗口站上时，FolderBrowserDialog 既不显示也不返回），
           // 而 fs 服务通常是好的 —— 那就让人把路径贴进来。
           // 以前这里只有一个"选择目录…"按钮，于是"点了没反应"就真的没有下一步了。
-          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'dirinput' },
+          dirRows.push(prop('dirinput', '路径', [
             React.createElement('input', {
-              className: 'mcart-input mcart-grow', type: 'text',
-              placeholder: '参考目录：%APPDATA%\\.minecraft\\versions\\<版本号>',
+              className: 'mcart-input', type: 'text', placeholder: '参考目录：%APPDATA%\\.minecraft\\versions\\<版本号>',
               value: dirDraft,
               onChange: (event) => setDirDraft(String(event.target.value)),
               onKeyDown: (event) => { if (event.key === 'Enter') applyDirDraft() },
             }),
             React.createElement('button', { className: 'mcart-btn', type: 'button',
               disabled: dirDraft.trim() === '', onClick: () => applyDirDraft() }, '用这个路径'),
-          ))
-          rows.push(React.createElement('div', { className: 'mcart-hint', key: 'dirhint' },
-            '对话框弹不出来时可以在这里贴路径（.minecraft、版本目录、mods 目录，或单个 jar 都行）。'))
+          ]))
+          dirRows.push(hint('dirhint', '对话框弹不出来时可以在这里贴路径（.minecraft、版本目录、mods 目录，或单个 jar 都行）。'))
           if (settings.directory !== '' && settings.directory !== undefined) {
             if (settings.scanError !== null && settings.scanError !== undefined) {
-              rows.push(React.createElement('div', { className: 'mcart-err', key: 'scanerr' }, '没读到里面的资源：' + String(settings.scanError)))
+              dirRows.push(React.createElement('div', { className: 'mcart-err', key: 'scanerr' },
+                '没读到里面的资源：' + String(settings.scanError)))
             } else {
-              rows.push(React.createElement('div', { className: 'mcart-hint', key: 'shape' },
+              dirRows.push(hint('shape',
                 '识别为 ' + (settings.shape || '？') + ' · ' + (settings.textures || 0) + ' 张贴图 · '
                 + ((settings.sources || []).length) + ' 个资源文件'))
             }
           }
-          for (const hint of (settings.directory === '' || settings.directory === undefined ? (settings.detected || []) : []).slice(0, 4)) {
-            rows.push(React.createElement('div', { className: 'mcart-bar', key: 'det' + hint },
-              React.createElement('span', { className: 'mcart-note mcart-grow' }, '检测到 ' + hint),
+          for (const detected of (settings.directory === '' || settings.directory === undefined ? (settings.detected || []) : []).slice(0, 4)) {
+            dirRows.push(prop('det' + detected, '检测到', [
+              React.createElement('span', { className: 'mcart-path mcart-grow' }, detected),
               React.createElement('button', { className: 'mcart-btn', type: 'button',
-                onClick: () => patchSettings({ directory: hint }, true) }, '用它'),
-            ))
+                onClick: () => patchSettings({ directory: detected }, true) }, '用它'),
+            ]))
           }
           if ((settings.directory === '' || settings.directory === undefined) && (settings.detected || []).length === 0) {
-            rows.push(React.createElement('div', { className: 'mcart-hint', key: 'nodir' },
-              '没设置就不参考外部资源。可以指向 .minecraft、某个版本目录、mods 目录，或单个 jar。'))
-            rows.push(React.createElement('div', { className: 'mcart-hint', key: 'nodir2' },
-              '没有自动检测到游戏目录 —— 直接把路径贴进上面的输入框也一样能用。'))
+            dirRows.push(hint('nodir', '没设置就不参考外部资源。可以指向 .minecraft、某个版本目录、mods 目录，或单个 jar。'))
+            dirRows.push(hint('nodir2', '没有自动检测到游戏目录 —— 直接把路径贴进上面的输入框也一样能用。'))
           }
+          rows.push(group('dirgroup', dirRows))
 
-          rows.push(React.createElement('label', { className: 'mcart-switch', key: 'gen' },
-            React.createElement('input', { type: 'checkbox', checked: settings.includeGenerated !== false,
-              onChange: (event) => patchSettings({ includeGenerated: event.target.checked }) }),
-            React.createElement('span', null, '参考本目录已生成内容'),
-          ))
-          rows.push(React.createElement('div', { className: 'mcart-hint', key: 'genhint' }, '有助于保持生成风格一致'))
-
-          rows.push(React.createElement('label', { className: 'mcart-switch', key: 'mods' },
-            React.createElement('input', { type: 'checkbox', checked: settings.includeMods !== false,
-              onChange: (event) => patchSettings({ includeMods: event.target.checked }) }),
-            React.createElement('span', null, '参考目录中的模组资源文件'),
-          ))
-
+          // 组 2：参考范围
+          const scopeRows = []
+          scopeRows.push(prop('gen', '已生成内容',
+            React.createElement('label', { className: 'mcart-switch' },
+              React.createElement('input', { type: 'checkbox', checked: settings.includeGenerated !== false,
+                onChange: (event) => patchSettings({ includeGenerated: event.target.checked }) }),
+              React.createElement('span', null, '参考本目录已生成内容'))))
+          scopeRows.push(hint('genhint', '有助于保持生成风格一致'))
+          scopeRows.push(prop('mods', '模组资源',
+            React.createElement('label', { className: 'mcart-switch' },
+              React.createElement('input', { type: 'checkbox', checked: settings.includeMods !== false,
+                onChange: (event) => patchSettings({ includeMods: event.target.checked }) }),
+              React.createElement('span', null, '参考目录中的模组资源文件'))))
           if (settings.includeMods !== false) {
             const mods = settings.mods || []
             const missing = settings.directory === '' || settings.directory === undefined
             const message = missing ? '还没指定参考目录'
               : (mods.length === 0 ? '参考目录里没有找到任何资源命名空间' : ('发现 ' + mods.length + ' 个命名空间'))
-            rows.push(React.createElement('div', { className: 'mcart-bar', key: 'modbar' },
-              React.createElement('span', { className: 'mcart-note' }, message),
+            scopeRows.push(prop('modbar', '命名空间', [
+              React.createElement('span', { className: 'mcart-note mcart-grow' }, message),
               mods.length === 0 ? null : React.createElement('button', { className: 'mcart-btn', type: 'button',
                 onClick: () => setModsOpen(!modsOpen) }, modsOpen ? '收起 ▴' : '展开 ▾'),
-            ))
+            ]))
             if (modsOpen) {
               const list = []
-              for (const item of mods) {
-                const from = (item.from || []).slice(0, 2).join('、')
-                list.push(React.createElement('label', { className: 'mcart-switch', key: item.name },
-                  React.createElement('input', { type: 'checkbox', checked: item.on === true,
-                    onChange: (event) => toggleMod(item.name, event.target.checked) }),
-                  React.createElement('span', { className: 'mcart-grow' }, item.name,
+              for (const mod of mods) {
+                const from = (mod.from || []).slice(0, 2).join('、')
+                list.push(React.createElement('label', { className: 'mcart-switch', key: mod.name },
+                  React.createElement('input', { type: 'checkbox', checked: mod.on === true,
+                    onChange: (event) => toggleMod(mod.name, event.target.checked) }),
+                  React.createElement('span', { className: 'mcart-grow' }, mod.name,
                     from === '' ? null : React.createElement('span', { className: 'mcart-id' }, from)),
-                  React.createElement('span', { className: 'mcart-id' }, item.count + ' 张贴图'),
+                  React.createElement('span', { className: 'mcart-id' }, mod.count + ' 张贴图'),
                 ))
               }
-              rows.push(React.createElement('div', { className: 'mcart-mods', key: 'modlist' }, list))
+              scopeRows.push(React.createElement('div', { className: 'mcart-mods', key: 'modlist' }, list))
             }
           }
+          rows.push(group('scopegroup', scopeRows))
 
-          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'foot' },
-            React.createElement('span', { className: 'mcart-note mcart-grow' }, settings.file || ''),
+          // 组 3：通知与设置文件
+          const notifyRows = []
+          notifyRows.push(prop('autoreport', '自动报告',
+            React.createElement('label', { className: 'mcart-switch' },
+              React.createElement('input', { type: 'checkbox', checked: autoReportOn === true,
+                onChange: (event) => { setAutoReport(event.target.checked); setAutoTick(autoTick + 1) } }),
+              React.createElement('span', null, '出错时自动把报告放进输入框'))))
+          notifyRows.push(hint('autoreporthint', '只是草稿：不会自动发送，输入框里已经有你写的字时也不动它。'))
+          notifyRows.push(prop('foot', '设置文件', [
+            React.createElement('span', { className: 'mcart-path mcart-grow' }, settings.file || ''),
             React.createElement('span', { className: 'mcart-bad' }, saveState === null ? '' : saveState),
-          ))
-          // 「出错时自动把报告放进输入框」：默认开，且**只到草稿为止**（见 autoFillDraft）。
-          rows.push(React.createElement('label', { className: 'mcart-switch', key: 'autoreport' },
-            React.createElement('input', { type: 'checkbox', checked: autoReportOn === true,
-              onChange: (event) => { setAutoReport(event.target.checked); setAutoTick(autoTick + 1) } }),
-            React.createElement('span', null, '出错时自动把报告放进输入框'),
-          ))
-          rows.push(React.createElement('div', { className: 'mcart-hint', key: 'autoreporthint' },
-            '只是草稿：不会自动发送，输入框里已经有你写的字时也不动它。'))
+          ]))
           // Nothing pushes a message into the conversation, so the panel offers
           // the sentence and one click puts it (plus the settings file, which the
           // skill reads) in the composer.  This is the answer to "我改了设置会通知
           // agent 吗": now it can, without the user having to describe the change.
           // 和「@ 提意见」同一条路：**直接追加进输入框草稿**，不再挂 bar 让人点第二次。
           if (savedSettings !== null && savedSettings.path !== '') {
-            rows.push(React.createElement('div', { className: 'mcart-bar', key: 'tell' },
+            notifyRows.push(prop('tell', '已保存', [
               React.createElement('span', { className: 'mcart-note mcart-grow' },
                 '已保存，要让 AI 按新设置重做的话：'),
               React.createElement('button', { className: 'mcart-btn', type: 'button',
@@ -3910,8 +3950,9 @@ return {
                 '告诉 AI'),
               React.createElement('button', { className: 'mcart-btn', type: 'button',
                 onClick: () => setSavedSettings(null) }, '不用了'),
-            ))
+            ]))
           }
+          rows.push(group('notifygroup', notifyRows))
         }
         // 提示与报错**必须在这张卡里也出现**：这张设置卡原来不渲染 notice，
         // 于是"选择目录…"失败（对话框弹不出来、没有 shell 服务…）时，
