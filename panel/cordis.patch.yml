@@ -54,11 +54,13 @@
 
 
           # The preset's own persona, shadowing the deployment default for this agent.
-          # `{{model}}` and `{{cwd}}` resolve from the agent's own route and workspace.
+          # Only `${provider}` / `${model}`-style prompt variables are registered for this
+          # section — the template engine rejects anything else and the whole turn fails.
+          # A working-directory variable used to sit in `suffix` here; the template engine
+          # rejected it and every session on this preset failed to start.
           - id: persona
             name: '@deepseek-ai/dsh-persona'
             config:
-              suffix: Your working directory is {{cwd}}.
               prefix: |-
                 You are a coding agent powered by the {{model}} model, running on the DeepSeek Harness.
 
@@ -75,7 +77,7 @@
                 面板（看和改）+ 两个 skill（流程）+ 一个裁判（游戏自己判定）。头号规矩：
                 **抓不到错的检查不算检查**；做完要说清验证了什么、没验证什么。
 
-                - 工作区就是 {{cwd}}：路径一律用相对路径，**绝不写死绝对路径**（这套东西别人也在用，
+                - 工作区就是**本会话的工作目录**：路径一律用相对路径，**绝不写死绝对路径**（这套东西别人也在用，
                   各人的目录不同）。面板与工具在本仓库（`tools/mcart-plugin/`、`panel/`）；
                   美术引擎是另一个仓库的 `mc-art` skill。
                 - 先分清谁判断什么：**美丑、参考选哪张、族内边界、强调与命名 → 你判断**；

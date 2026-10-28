@@ -11,6 +11,29 @@ panel/report contract is stable, and whose shipped skills are general (no loader
 version, machine or project is baked in). Earlier 0.1.x releases were development
 snapshots and are not itemised here.
 
+## 0.3.4
+
+### Fixed — one preset variable broke every session on the mode
+
+`presets/mc-studio/agent.cordis.yml` carried `suffix: Your working directory is {{cwd}}.` in the
+persona, and named the same variable again inside the prefix body. The current runtime registers only
+`provider` and `model` for that prompt section, so rendering the system prompt threw
+`unknown prompt variable "{{cwd}}"` and **the whole turn failed before the model ever ran** — the
+session showed nothing but "处理失败 · 本轮运行失败".
+
+- The working-directory sentence is gone and the prefix now says `本会话的工作目录`; no prompt text
+  in the preset references an unregistered variable.
+- `tools/gen_preset_patch.mjs --write` regenerated both the standalone `desktop-generation.patch.yml`
+  and the copy embedded in `panel/cordis.patch.yml`, so the shipped package carries the fix.
+- New gate **`preset-vars-test.js`** (`plugin-preset-vars`): every `{{var}}` in the preset YAMLs and
+  the packaged patch must be within `{provider, model}`; `--fault` injects an unknown variable and
+  exits 1.
+
+### Note
+
+An agent's composition is fixed when its session is created, so a session that already failed keeps
+failing. Restart DSH, then start a new conversation on the mode.
+
 ## 0.3.3
 
 Round one of the UI review targeted the **settings view**, because that is where "AI-made" showed

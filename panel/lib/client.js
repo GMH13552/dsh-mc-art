@@ -4080,7 +4080,7 @@ return {
 }
 
     // <<< mcart:embedded-source
-    })(React, host, styles, console, "0.3.3")
+    })(React, host, styles, console, "0.3.4")
     if (plugin === null || typeof plugin !== 'object' || typeof plugin.apply !== 'function') {
       throw new Error('mcart 客户端源码没有返回一个带 apply 的插件')
     }
