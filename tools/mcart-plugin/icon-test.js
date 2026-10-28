@@ -1075,9 +1075,11 @@ async function main() {
     && /const hud = Math\.min\(56/.test(client)
     && /const target = sub\(centre, mul\(camera\.up, shift\)\)/.test(client))
   check('切换资产后重新 fit（缩放复位）', /setZoom\(1\)/.test(client))
-  check('取景框里画了极淡的地面网格（不碰拾取缓冲）',
-    /function drawGroundGrid\(paint, camera, width, height, box\)/.test(client)
-    && /drawGroundGrid\(paint, camera, size\[0\], size\[1\], box\)/.test(client))
+  check('取景框里画了极淡的地面网格，且网格参与深度（被方块正确挡住）',
+    /function drawGroundGridInto\(colour, depth, width, height, camera, box\)/.test(client)
+    && /drawGroundGridInto\(colourBuf, depthBuf, size\[0\], size\[1\], camera, box\)/.test(client)
+    // 旧的画布版本必须不再出现在渲染路径上：它会盖在方块上，看起来像半透明。
+    && !/drawGroundGrid\(paint, camera/.test(client))
   check('视口左下角有轴指示器（X/Y/Z 三根短线）',
     /className: 'mcart-axis'/.test(client) && /mcart-axis-x/.test(client)
     && /mcart-axis-y/.test(client) && /mcart-axis-z/.test(client))

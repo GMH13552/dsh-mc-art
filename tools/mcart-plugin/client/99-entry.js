@@ -1244,6 +1244,10 @@ return {
             renderScene(Object.assign({ quads: ghostQuads, overlay: 0.5, tint: null }, pass))
           }
         }
+        // 地面网格：**画进像素/深度缓冲**，参与深度判定。以前是在 putImageData
+        // 之后用 canvas 2D 描线，等于盖在方块上——用户看到的是"网格线透过方块"，
+        // 像方块半透明。现在方块会正确地挡住地面的线。
+        drawGroundGridInto(colourBuf, depthBuf, size[0], size[1], camera, box)
         for (let i = 0; i < bytes.length; i++) {
           const value = Math.round(colourBuf[i] * 255)
           bytes[i] = value < 0 ? 0 : (value > 255 ? 255 : value)
@@ -1254,8 +1258,6 @@ return {
         const frame = paint.createImageData(size[0], size[1])
         frame.data.set(bytes)
         paint.putImageData(frame, 0, 0)
-        // 极淡的地面网格：有参照物，模型才"站"在地上而不是浮在虚空里（内容区）。
-        drawGroundGrid(paint, camera, size[0], size[1], box)
       })
 
       /** The icon recipes whose textures have to be decoded right now: the hotbar's
@@ -2885,28 +2887,38 @@ return {
       function settingsCard() {
         if (settings === null) return null
         const rows = []
-        // 属性表：label 固定 88px 右对齐 + 值占满（见 docs/UI-STYLE.md §3）。
+        // 真正的两列属性网格：label 固定 88px 右对齐、值左对齐（列位置由 CSS 定）。
         const prop = (key, label, value) => React.createElement('div', { className: 'mcart-prop', key: key },
           React.createElement('span', { className: 'mcart-prop-label' }, label),
           React.createElement('span', { className: 'mcart-prop-value' }, value))
-        const group = (key, children) => React.createElement('div', { className: 'mcart-group', key: key }, children)
+        // 提示行放在值列下方：11px 次要色、与值列同缩进（label 空占位）。
         const hint = (key, text) => prop(key, '', React.createElement('span', { className: 'mcart-note' }, text))
+        // 数字一律 mono + tabular-nums（2242 这种要能一眼读）。
+        const num = (key, value) => React.createElement('span', { className: 'mcart-num', key: key }, String(value))
+        // 路径行：不换行、超长省略号、title 里是全路径（所有路径行都走这里）。
+        const pathValue = (key, text) => React.createElement('span', {
+          className: 'mcart-path', title: text, key: key,
+        }, text)
+        // 分组标题：11px/600 次要色、22px 高、底部 1px 发丝线。
+        const section = (key, title, children) => React.createElement('div', { className: 'mcart-group', key: key },
+          React.createElement('div', { className: 'mcart-group-title' }, title), children)
+        const switchRow = (key, label, checked, onChange, text) => prop(key, label,
+          React.createElement('label', { className: 'mcart-switch' },
+            React.createElement('input', { type: 'checkbox', checked: checked, onChange: onChange }),
+            React.createElement('span', null, text)))
         if (settings.loading === true) {
           rows.push(React.createElement('div', { className: 'mcart-note', key: 'l' }, '读取设置…'))
         } else if (settings.error !== undefined) {
           rows.push(React.createElement('div', { className: 'mcart-err', key: 'e' }, String(settings.error)))
         } else {
-          rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },
-            React.createElement('span', { className: 'mcart-title' }, '设置'),
-            React.createElement('span', { className: 'mcart-sub' }, settings.title || settings.project || ''),
-          ))
-          // 组 1：参考目录（行是属性行；组内不画分隔线，组间才有 1px 线）
+          const directory = settings.directory === undefined || settings.directory === null
+            ? '' : String(settings.directory)
+          // ── 组 1：参考目录 ─────────────────────────────────────────────────
           const dirRows = []
-          dirRows.push(prop('refpath', '参考目录',
-            React.createElement('span', { className: 'mcart-path mcart-grow' }, settings.directory || '（未设置）')))
+          dirRows.push(prop('refpath', '参考目录', pathValue('refpath-v', directory === '' ? '（未设置）' : directory)))
           dirRows.push(prop('pick', '选择', React.createElement('button', {
             className: 'mcart-btn', type: 'button', disabled: picking,
-            onClick: () => runPicker(settings.directory || root, (picked) => patchSettings({ directory: picked }, true)),
+            onClick: () => runPicker(directory === '' ? root : directory, (picked) => patchSettings({ directory: picked }, true)),
           }, picking ? '对话框已打开…' : '选择目录…')))
           // 手输/粘贴这条路是**必须**有的：系统目录对话框在某些环境里弹不出来
           // （shell 服务跑在非交互窗口站上时，FolderBrowserDialog 既不显示也不返回），
@@ -2923,51 +2935,51 @@ return {
               disabled: dirDraft.trim() === '', onClick: () => applyDirDraft() }, '用这个路径'),
           ]))
           dirRows.push(hint('dirhint', '对话框弹不出来时可以在这里贴路径（.minecraft、版本目录、mods 目录，或单个 jar 都行）。'))
-          if (settings.directory !== '' && settings.directory !== undefined) {
+          if (directory !== '') {
             if (settings.scanError !== null && settings.scanError !== undefined) {
               dirRows.push(React.createElement('div', { className: 'mcart-err', key: 'scanerr' },
                 '没读到里面的资源：' + String(settings.scanError)))
             } else {
-              dirRows.push(hint('shape',
-                '识别为 ' + (settings.shape || '？') + ' · ' + (settings.textures || 0) + ' 张贴图 · '
-                + ((settings.sources || []).length) + ' 个资源文件'))
+              dirRows.push(prop('shape', '识别为', React.createElement('span', null,
+                (settings.shape || '？') + ' · ', num('tex', settings.textures || 0), ' 张贴图 · ',
+                num('src', (settings.sources || []).length), ' 个资源文件')))
             }
           }
-          for (const detected of (settings.directory === '' || settings.directory === undefined ? (settings.detected || []) : []).slice(0, 4)) {
+          for (const detected of (directory === '' ? (settings.detected || []) : []).slice(0, 4)) {
             dirRows.push(prop('det' + detected, '检测到', [
-              React.createElement('span', { className: 'mcart-path mcart-grow' }, detected),
+              pathValue('detv' + detected, detected),
               React.createElement('button', { className: 'mcart-btn', type: 'button',
                 onClick: () => patchSettings({ directory: detected }, true) }, '用它'),
             ]))
           }
-          if ((settings.directory === '' || settings.directory === undefined) && (settings.detected || []).length === 0) {
+          if (directory === '' && (settings.detected || []).length === 0) {
             dirRows.push(hint('nodir', '没设置就不参考外部资源。可以指向 .minecraft、某个版本目录、mods 目录，或单个 jar。'))
             dirRows.push(hint('nodir2', '没有自动检测到游戏目录 —— 直接把路径贴进上面的输入框也一样能用。'))
           }
-          rows.push(group('dirgroup', dirRows))
+          rows.push(section('refgroup', '参考目录', dirRows))
 
-          // 组 2：参考范围
-          const scopeRows = []
-          scopeRows.push(prop('gen', '已生成内容',
-            React.createElement('label', { className: 'mcart-switch' },
-              React.createElement('input', { type: 'checkbox', checked: settings.includeGenerated !== false,
-                onChange: (event) => patchSettings({ includeGenerated: event.target.checked }) }),
-              React.createElement('span', null, '参考本目录已生成内容'))))
-          scopeRows.push(hint('genhint', '有助于保持生成风格一致'))
-          scopeRows.push(prop('mods', '模组资源',
-            React.createElement('label', { className: 'mcart-switch' },
-              React.createElement('input', { type: 'checkbox', checked: settings.includeMods !== false,
-                onChange: (event) => patchSettings({ includeMods: event.target.checked }) }),
-              React.createElement('span', null, '参考目录中的模组资源文件'))))
+          // ── 组 2：生成 ─────────────────────────────────────────────────────
+          const genRows = []
+          genRows.push(switchRow('gen', '已生成内容', settings.includeGenerated !== false,
+            (event) => patchSettings({ includeGenerated: event.target.checked }), '参考目录里已生成内容'))
+          genRows.push(hint('genhint', '有助于保持生成风格一致'))
+          genRows.push(switchRow('mods', '模组资源', settings.includeMods !== false,
+            (event) => patchSettings({ includeMods: event.target.checked }), '参考目录中的模组资源文件'))
+          rows.push(section('gengroup', '生成', genRows))
+
+          // ── 组 3：命名空间 ─────────────────────────────────────────────────
           if (settings.includeMods !== false) {
+            const nsRows = []
             const mods = settings.mods || []
-            const missing = settings.directory === '' || settings.directory === undefined
+            const missing = directory === ''
             const message = missing ? '还没指定参考目录'
-              : (mods.length === 0 ? '参考目录里没有找到任何资源命名空间' : ('发现 ' + mods.length + ' 个命名空间'))
-            scopeRows.push(prop('modbar', '命名空间', [
+              : (mods.length === 0 ? '参考目录里没有找到任何资源命名空间'
+                : ('发现 ' + mods.length + ' 个命名空间'))
+            nsRows.push(prop('modbar', '命名空间', [
               React.createElement('span', { className: 'mcart-note mcart-grow' }, message),
-              mods.length === 0 ? null : React.createElement('button', { className: 'mcart-btn', type: 'button',
-                onClick: () => setModsOpen(!modsOpen) }, modsOpen ? '收起 ▴' : '展开 ▾'),
+              mods.length === 0 ? null : React.createElement('button', {
+                className: 'mcart-btn', type: 'button', onClick: () => setModsOpen(!modsOpen),
+              }, modsOpen ? '收起' : '展开'),
             ]))
             if (modsOpen) {
               const list = []
@@ -2981,23 +2993,17 @@ return {
                   React.createElement('span', { className: 'mcart-id' }, mod.count + ' 张贴图'),
                 ))
               }
-              scopeRows.push(React.createElement('div', { className: 'mcart-mods', key: 'modlist' }, list))
+              nsRows.push(React.createElement('div', { className: 'mcart-mods', key: 'modlist' }, list))
             }
+            rows.push(section('nsgroup', '命名空间', nsRows))
           }
-          rows.push(group('scopegroup', scopeRows))
 
-          // 组 3：通知与设置文件
+          // ── 组 4：通知 ─────────────────────────────────────────────────────
           const notifyRows = []
-          notifyRows.push(prop('autoreport', '自动报告',
-            React.createElement('label', { className: 'mcart-switch' },
-              React.createElement('input', { type: 'checkbox', checked: autoReportOn === true,
-                onChange: (event) => { setAutoReport(event.target.checked); setAutoTick(autoTick + 1) } }),
-              React.createElement('span', null, '出错时自动把报告放进输入框'))))
+          notifyRows.push(switchRow('autoreport', '自动报告', autoReportOn === true,
+            (event) => { setAutoReport(event.target.checked); setAutoTick(autoTick + 1) },
+            '出错时自动把报告放进输入框'))
           notifyRows.push(hint('autoreporthint', '只是草稿：不会自动发送，输入框里已经有你写的字时也不动它。'))
-          notifyRows.push(prop('foot', '设置文件', [
-            React.createElement('span', { className: 'mcart-path mcart-grow' }, settings.file || ''),
-            React.createElement('span', { className: 'mcart-bad' }, saveState === null ? '' : saveState),
-          ]))
           // Nothing pushes a message into the conversation, so the panel offers
           // the sentence and one click puts it (plus the settings file, which the
           // skill reads) in the composer.  This is the answer to "我改了设置会通知
@@ -3017,14 +3023,22 @@ return {
                 onClick: () => setSavedSettings(null) }, '不用了'),
             ]))
           }
-          rows.push(group('notifygroup', notifyRows))
+          rows.push(section('notifygroup', '通知', notifyRows))
+
+          // ── 组 5：文件 ─────────────────────────────────────────────────────
+          const fileRows = []
+          fileRows.push(prop('foot', '设置文件', [
+            pathValue('foot-v', settings.file || ''),
+            React.createElement('span', { className: 'mcart-bad' }, saveState === null ? '' : saveState),
+          ]))
+          rows.push(section('filegroup', '文件', fileRows))
         }
         // 提示与报错**必须在这张卡里也出现**：这张设置卡原来不渲染 notice，
         // 于是"选择目录…"失败（对话框弹不出来、没有 shell 服务…）时，
         // 界面上一个字都不变 —— 用户看到的就是"点了没反应，也没有报错"。
         if (notice !== null) rows.push(React.createElement('div', { className: 'mcart-bad', key: 'notice' }, String(notice)))
         if (failure !== null) rows.push(React.createElement('div', { key: 'failure' }, failureView(failure)))
-        return React.createElement('div', { className: 'mcart-card', key: 'settings' }, rows)
+        return React.createElement('div', { className: 'mcart-card mcart-settings', key: 'settings' }, rows)
       }
 
       if (root === '') {
@@ -3503,6 +3517,23 @@ return {
         setPreviewItem(null); setHudPage(1); setScene(null); setSettings(null); setEdit(null)
         setVoxel(null); setHover(null); setGhost(null)
       }
+      // 设置是**独立视图**：不和资产列表/3D 视口抢高度（两个视图互不挤压）。
+      // 从资产列表的齿轮进入，点右上角「返回资产列表」回到列表。
+      if (settings !== null) {
+        const settingsTitle = settings.title || settings.project || '项目'
+        return React.createElement('div', { className: 'mcart-root' },
+          React.createElement('div', { className: 'mcart-head' },
+            React.createElement('span', { className: 'mcart-settings-prefix' }, '设置'),
+            React.createElement('span', { className: 'mcart-settings-title', title: settingsTitle }, settingsTitle),
+            React.createElement('span', { className: 'mcart-headgrow' }),
+            React.createElement('button', {
+              className: 'mcart-icon', type: 'button', title: '返回资产列表',
+              'aria-label': '返回资产列表', onClick: () => setSettings(null),
+            }, '←'),
+          ),
+          React.createElement('div', { className: 'mcart-body' }, settingsCard()),
+        )
+      }
       return React.createElement('div', { className: 'mcart-root' },
         React.createElement('div', { className: 'mcart-head' },
           // 顶部那行**只有路径**（"方块"这类视图名在区块标题里已经写过了）。
@@ -3535,7 +3566,6 @@ return {
           },
           onScroll: (event) => { lastBodyScroll = event.currentTarget.scrollTop },
         },
-        settings === null ? null : settingsCard(),
         emptyRoot === null ? null : guideCard(),
         failure === null ? null : failureView(failure),
         diagnosticCard(),

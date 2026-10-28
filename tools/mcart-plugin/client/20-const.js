@@ -49,10 +49,21 @@ const CSS = [
     + 'padding-left:calc(var(--mc-label) + var(--mc-s3))}',
   '.mcart-path,.mcart-id,.mcart-report,.mcart-reportnote{font-family:var(--mc-mono);'
     + 'font-size:var(--mc-fs2);font-variant-numeric:tabular-nums}',
-  '.mcart-path{color:var(--mc-text-2);word-break:break-all;min-width:0}',
+  // 路径行：不换行、超长省略号（全路径在 title 里；这是所有路径值的统一形状）
+  '.mcart-path{color:var(--mc-text-2);min-width:0;white-space:nowrap;overflow:hidden;'
+    + 'text-overflow:ellipsis}',
+  // 数字：mono + tabular-nums（2242 这种要能一眼读）
+  '.mcart-num{font-family:var(--mc-mono);font-size:var(--mc-fs2);'
+    + 'font-variant-numeric:tabular-nums}',
   '.mcart-id{color:var(--mc-text-2);margin-left:var(--mc-s2)}',
   '.mcart-grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  '.mcart-group{display:flex;flex-direction:column}',
+  '.mcart-group{display:flex;flex-direction:column;gap:var(--mc-s1)}',
+  // 设置卡里每个组都有自己的标题 + 底部发丝线：组与组之间不再叠一条顶线。
+  '.mcart-settings .mcart-group+.mcart-group{border-top:0;margin-top:var(--mc-s2);padding-top:0}',
+  '.mcart-group-title{display:flex;align-items:center;height:var(--mc-section);'
+    + 'min-height:var(--mc-section);padding:0;border-bottom:1px solid var(--mc-line-1);'
+    + 'font-size:var(--mc-fs2);font-weight:600;color:var(--mc-text-2);'
+    + 'margin-bottom:var(--mc-s1)}',
   '.mcart-group+.mcart-group{border-top:1px solid var(--mc-line-1);'
     + 'margin-top:var(--mc-s2);padding-top:var(--mc-s2)}',
   // ---- 工具栏 / 区块标题 ---------------------------------------------------
@@ -67,6 +78,10 @@ const CSS = [
     + 'font-variant-numeric:tabular-nums;min-width:0;overflow:hidden;text-overflow:ellipsis;'
     + 'white-space:nowrap}',
   '.mcart-headgrow{flex:1;min-width:var(--mc-s2)}',
+  // 设置独立视图的标题：`设置` 是次要前缀，工程名是 12px/600 主标题
+  '.mcart-settings-prefix{font-size:var(--mc-fs2);color:var(--mc-text-2);white-space:nowrap}',
+  '.mcart-settings-title{font-size:var(--mc-fs);font-weight:600;color:var(--mc-text-1);'
+    + 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   // 工具栏按钮：透明底、组间 1px 竖线（只在 header 内）
   '.mcart-head .mcart-btn,.mcart-head .mcart-icon{background:transparent;border-color:transparent;'
     + 'height:var(--mc-control);flex:none}',
@@ -100,7 +115,7 @@ const CSS = [
   // ---- 属性行：label 88px 右对齐 + 值占满；组内不画线，组间才画 -------------
   '.mcart-prop{display:grid;grid-template-columns:var(--mc-label) 1fr;align-items:center;'
     + 'min-height:var(--mc-row);column-gap:var(--mc-s3);padding:1px 0}',
-  '.mcart-prop-label{font-size:var(--mc-fs2);color:var(--mc-text-2);text-align:right;'
+  '.mcart-prop-label{font-size:var(--mc-fs);color:var(--mc-text-1);text-align:right;'
     + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
   '.mcart-prop-value{display:flex;align-items:center;gap:var(--mc-s2);min-width:0;'
     + 'font-size:var(--mc-fs2);color:var(--mc-text-1)}',
@@ -141,13 +156,18 @@ const CSS = [
   // 开关：12×20 轨道（2px 圆角），不是 iOS 大开关
   '.mcart-switch{display:flex;align-items:center;gap:var(--mc-s2);min-height:var(--mc-row);'
     + 'font-size:var(--mc-fs2);cursor:pointer}',
+  // 复选框 12×12：勾是 CSS 画的（不用图片）；选中 = 品牌色底 + 品牌色勾痕。
   '.mcart-switch input[type="checkbox"]{appearance:none;-webkit-appearance:none;'
-    + 'width:20px;height:12px;margin:0;flex:none;position:relative;border-radius:var(--mc-radius);'
-    + 'border:1px solid var(--mc-line-2);background:var(--mc-bg-2);cursor:pointer}',
-  '.mcart-switch input[type="checkbox"]::after{content:"";position:absolute;top:1px;left:1px;'
-    + 'width:8px;height:8px;border-radius:var(--mc-radius);background:var(--mc-text-2)}',
+    + 'width:12px;height:12px;margin:0;flex:none;position:relative;'
+    + 'border-radius:var(--mc-radius);border:1px solid var(--mc-line-2);'
+    + 'background:var(--mc-bg-2);cursor:pointer}',
+  '.mcart-switch input[type="checkbox"]::after{content:"";position:absolute;left:3px;top:2px;'
+    + 'width:4px;height:6px;border-right:1px solid var(--mc-bg-0);'
+    + 'border-bottom:1px solid var(--mc-bg-0);transform:rotate(45deg) scale(0)}',
   '.mcart-switch input[type="checkbox"]:checked{background:var(--mc-brand);border-color:var(--mc-brand)}',
-  '.mcart-switch input[type="checkbox"]:checked::after{left:9px;background:var(--mc-bg-0)}',
+  '.mcart-switch input[type="checkbox"]:checked::after{transform:rotate(45deg) scale(1)}',
+  '.mcart-switch input[type="checkbox"]:focus-visible{outline:1px solid var(--mc-brand);'
+    + 'outline-offset:-1px}',
   // ---- 三态（空 / 加载 / 错误）一致 ---------------------------------------
   '.mcart-empty{font-size:var(--mc-fs2);color:var(--mc-text-2);padding:var(--mc-s2) 0}',
   '.mcart-loading{font-size:var(--mc-fs2);color:var(--mc-text-2)}',

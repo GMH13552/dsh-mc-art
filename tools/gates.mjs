@@ -39,7 +39,7 @@ const pluginTests = [
   'project-animation', 'parent-fallback', 'encoding', 'publish-vocab', 'refs', 'multipart',
   'orient', 'icon', 'icon-render', 'engine', 'project', 'roots', 'loader', 'zoom', 'hotbar',
   'anim', 'derive', 'helpers',
-  'lang-json-broken', 'ref-icons-failed', 'texture-path-parity', 'ui-style',
+  'lang-json-broken', 'ref-icons-failed', 'texture-path-parity', 'ui-style', 'grid-occlusion',
 ]
 
 /**

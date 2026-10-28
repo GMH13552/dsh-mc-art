@@ -519,10 +519,14 @@ function iconCamera(quads, width, height, fill) {
  * 在地面（模型包围盒的底面）上画一层**极淡的网格**，把模型"放"在地上，
  * 而不是浮在虚空里。这是 3D 工具视口的常规参照物（Blender 的 grid floor）。
  *
- * 只画在 2D 画布上（`paint`），**不碰拾取缓冲**：网格不可点、不参与深度。
- * 对比度刻意压到极低（1px、白 6% / 中线 10%），只负责"有个地面"。
+ * **必须画进像素/深度缓冲，不能画在画布上。** 之前是在 `putImageData` 之后用
+ * canvas 2D 描线，那等于把网格**盖在方块上**——用户看到的就是"网格线透过方块"，
+ * 像方块半透明。网格要参与深度判定：只在"那里还是背景"（深度无穷）或网格确实
+ * 更近时才落笔。拾取缓冲仍然不碰（网格不可点），只是现在它会正确地被方块挡住。
+ *
+ * 只画 1px、白 6% / 中线 10%，对比度刻意压到极低，只负责"有个地面"。
  */
-function drawGroundGrid(paint, camera, width, height, box) {
+function drawGroundGridInto(colour, depth, width, height, camera, box) {
   const ground = box.min[1]
   const spanX = Math.max(box.max[0] - box.min[0], 1)
   const spanZ = Math.max(box.max[2] - box.min[2], 1)
@@ -531,22 +535,34 @@ function drawGroundGrid(paint, camera, width, height, box) {
   const cx = (box.min[0] + box.max[0]) / 2
   const cz = (box.min[2] + box.max[2]) / 2
   const half = extent / 2
-  const line = (from, to, style) => {
+  const segment = (from, to, alpha) => {
     const a = camera.project(from)
     const b = camera.project(to)
     if (a === null || b === null) return
-    paint.strokeStyle = style
-    paint.beginPath()
-    paint.moveTo(a[0], a[1])
-    paint.lineTo(b[0], b[1])
-    paint.stroke()
+    const dx = b[0] - a[0]
+    const dy = b[1] - a[1]
+    const steps = Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)))
+    if (!(steps > 0)) return
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps
+      const x = Math.round(a[0] + dx * t)
+      const y = Math.round(a[1] + dy * t)
+      if (x < 0 || y < 0 || x >= width || y >= height) continue
+      const index = y * width + x
+      // 深度缓冲里小者为近；方块已经写过的像素，网格必须更近才画。
+      const z = a[2] + (b[2] - a[2]) * t
+      if (!(z <= depth[index])) continue
+      const target = index * 4
+      colour[target] = alpha + colour[target] * (1 - alpha)
+      colour[target + 1] = alpha + colour[target + 1] * (1 - alpha)
+      colour[target + 2] = alpha + colour[target + 2] * (1 - alpha)
+    }
   }
-  paint.lineWidth = 1
   for (let i = -4; i <= 4; i++) {
     const at = i * step
-    const strong = i === 0 ? 'rgba(255,255,255,.10)' : 'rgba(255,255,255,.06)'
-    line([cx + at, ground, cz - half], [cx + at, ground, cz + half], strong)
-    line([cx - half, ground, cz + at], [cx + half, ground, cz + at], strong)
+    const alpha = i === 0 ? 0.10 : 0.06
+    segment([cx + at, ground, cz - half], [cx + at, ground, cz + half], alpha)
+    segment([cx - half, ground, cz + at], [cx + half, ground, cz + at], alpha)
   }
   return { extent: extent, step: step }
 }

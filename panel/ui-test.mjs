@@ -39,6 +39,7 @@ const FAULT_COPY = process.argv.includes('--fault-copy')           // 复制报�
 const FAULT_SCENE = process.argv.includes('--fault-scene')         // 畸形场景不归一化 → 白屏
 const FAULT_SIDEBAR = process.argv.includes('--fault-sidebar')     // 右侧栏没服务时两处都没有
 const FAULT_PLACEMENT = process.argv.includes('--fault-placement') // 落点重试被删 → 迁移断言必须红
+const FAULT_SETTINGS_BACK = process.argv.includes('--fault-settings-back') // 删除返回按钮的 onClick → 回列表断言必须红
 const FAULT_PNG = process.argv.includes('--fault-png')             // 非 PNG 也发给宿主
 const FAULT_SAVEPATH = process.argv.includes('--fault-savepath')   // 不挡绝对路径句柄
 const FAULT_FACES = process.argv.includes('--fault-faces')         // 按面编辑退化
@@ -667,6 +668,10 @@ async function main() {
     // 落点竞态自证：把"右侧栏晚挂载就重试"那一行删掉 —— 晚出现的右栏永远不会被迁移。
     { flag: FAULT_PLACEMENT, name: '--fault-placement', hint: '找不到 retryRight() 的调用',
       apply: (src) => src.replace('      retryRight()\n', '') },
+    // 设置视图自证：把"返回资产列表"的 onClick 删掉 → 点返回回不到列表。
+    { flag: FAULT_SETTINGS_BACK, name: '--fault-settings-back', hint: '找不到返回资产列表的 onClick',
+      apply: (src) => src.replace("              'aria-label': '返回资产列表', onClick: () => setSettings(null),\n",
+        "              'aria-label': '返回资产列表',\n") },
     { flag: FAULT_PNG, name: '--fault-png', hint: '找不到 saveEdit 里取 PNG 的那一句',
       apply: (src) => src.replace("editScratch.toDataURL('image/png')", "editScratch.toDataURL('image/jpeg')") },
     // 不挡绝对路径 / `..` 的贴图句柄 → 可能写到项目包外面去。
@@ -752,6 +757,24 @@ async function main() {
   await ui.click('用本会话目录')
   await ui.click('⚙')
 
+
+  // 设置是**独立视图**：点齿轮进设置（带返回），列表/3D 让位；点返回回列表。
+  check('点齿轮进入设置视图，并且有「返回资产列表」按钮',
+    ui.buttonTitled('返回资产列表') !== undefined, '按钮：' + ui.buttons().join(' / '))
+  check('设置视图不与资产列表/3D 同屏（两个视图互不挤压）',
+    ui.buttons().filter((label) => label.indexOf('示例方块') >= 0).length === 0
+    && ui.nodes().filter((node) => String((node.props || {}).className || '').indexOf('mcart-canvas') >= 0).length === 0,
+    '按钮：' + ui.buttons().join(' / '))
+  const settingsBack = await ui.clickTitle('返回资产列表').then(() => true).catch(() => false)
+  check('点「返回资产列表」回到资产列表（列表项重新出现）',
+    settingsBack === true && ui.buttons().filter((label) => label.indexOf('示例方块') >= 0).length > 0,
+    '按钮：' + ui.buttons().join(' / '))
+  await ui.click('⚙')
+  /** 复用的假 React 会保留上一处打开的设置视图：进资产列表前先返回。 */
+  async function ensureAssetList(panel) {
+    if (panel.buttonTitled('返回资产列表') !== undefined) await panel.clickTitle('返回资产列表')
+    await panel.settle()
+  }
   const inputs = ui.inputs()
   // 判据是"有个能手输参考目录的输入框"，不是"占位文案长这样"：
   // 文案会跟着 UX 改（这次就改了 —— 旧的示例里带着一条像 Windows 用户目录的路径，
@@ -831,6 +854,7 @@ async function main() {
   // 换一个新实例等于状态分家（第一次换实例时表现是"这次挂载一个 host 调用都没有"）。
   const itemUi = await mount(component, { sessionId: 'ui-test' }, host, react)
   if (itemUi.buttonProps('用本会话目录') !== undefined) await itemUi.click('用本会话目录')
+  await ensureAssetList(itemUi)
   if (process.env.UI_DEBUG === '1') {
     console.log('  [debug] 物品用例屏上：' + itemUi.text().slice(0, 200) + ' || 按钮：' + itemUi.buttons().join(' / '))
     console.log('  [debug] 这次挂载的 host 调用：' + calls.map((call) => call.name).join(', '))
@@ -923,6 +947,7 @@ async function main() {
   // 而且不会自己回来。`--fault-epoch`（清缓存但不踢纪元）下这两条必须红。
   const refreshUi = await mount(component, { sessionId: 'ui-test' }, host, react)
   if (refreshUi.buttonProps('用本会话目录') !== undefined) await refreshUi.click('用本会话目录')
+  await ensureAssetList(refreshUi)
   const countOf = (name) => calls.filter((call) => call.name === name).length
   // 前提：物品卡确实开着（`item` 非空）。`ensureItemPage` 在 `item === null` 时直接
   // 返回，那样"刷新之后有没有再取一次"就成了空断言 —— 所以先把前提钉住。

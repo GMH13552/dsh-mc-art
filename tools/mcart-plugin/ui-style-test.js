@@ -161,7 +161,24 @@ function main() {
     /--mc-mono:ui-monospace,Consolas,monospace/.test(css) && /tabular-nums/.test(css)
     && /\.mcart-path[^{]*\{[^}]*font-family:var\(--mc-mono\)/.test(css))
   check('数值输入右对齐 + 等宽', /\.mcart-input\[type="number"\]\{[^}]*text-align:right/.test(css))
-  check('开关是 12×20 轨道，不是 iOS 大开关', /\.mcart-switch input\[type="checkbox"\]\{[^}]*width:20px;height:12px/.test(css))
+  check('复选框 12×12、2px 圆角、未选 1px 边框、选中用品牌色 + CSS 勾',
+    /\.mcart-switch input\[type="checkbox"\]\{[^}]*width:12px;height:12px/.test(css)
+    && /\.mcart-switch input\[type="checkbox"\]\{[^}]*border:1px solid var\(--mc-line-2\)/.test(css)
+    && /\.mcart-switch input\[type="checkbox"\]:checked\{[^}]*background:var\(--mc-brand\)/.test(css)
+    && /\.mcart-switch input\[type="checkbox"\]::after\{[^}]*border-right:1px solid/.test(css)
+    && /\.mcart-switch input\[type="checkbox"\]:focus-visible\{[^}]*outline:1px solid var\(--mc-brand\)/.test(css))
+  check('设置是两列属性网格：标签 12px 主色、右对齐；值占满；提示行在值列下方',
+    /\.mcart-prop\{[^}]*grid-template-columns:var\(--mc-label\) 1fr/.test(css)
+    && /\.mcart-prop-label\{[^}]*font-size:var\(--mc-fs\);color:var\(--mc-text-1\);text-align:right/.test(css))
+  check('设置分组标题：11px/600 次要色、22px 高、底部 1px 发丝线',
+    /\.mcart-group-title\{[^}]*height:var\(--mc-section\)/.test(css)
+    && /\.mcart-group-title\{[^}]*font-size:var\(--mc-fs2\);font-weight:600/.test(css)
+    && /\.mcart-group-title\{[^}]*border-bottom:1px solid var\(--mc-line-1\)/.test(css))
+  check('长路径一律省略号（title 里是全路径）',
+    /\.mcart-path\{[^}]*white-space:nowrap/.test(css)
+    && /\.mcart-path\{[^}]*text-overflow:ellipsis/.test(css))
+  check('数字用 mono + tabular-nums', /\.mcart-num\{[^}]*font-family:var\(--mc-mono\)/.test(css)
+    && /\.mcart-num\{[^}]*tabular-nums/.test(css))
   check('空状态只是一行次要色文字（无插图/大标题）', /\.mcart-empty\{[^}]*font-size:var\(--mc-fs2\)/.test(css))
 
   console.log('--- 检查器式排版（第二轮规范：单行头 / 两列列表 / 视口 / 工具栏）')

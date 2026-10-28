@@ -11,6 +11,49 @@ panel/report contract is stable, and whose shipped skills are general (no loader
 version, machine or project is baked in). Earlier 0.1.x releases were development
 snapshots and are not itemised here.
 
+## 0.3.3
+
+Round one of the UI review targeted the **settings view**, because that is where "AI-made" showed
+most: a flat pile of rows with inconsistent label columns, no grouping, and a typo.
+
+### Changed — settings, reviewed from a screenshot
+
+- **It is a real property grid now**: a fixed 88px label column with labels **right-aligned**, values
+  starting on one axis, hints under the value column. The `路径` row no longer carries its own
+  indent (~39px off from every other label).
+- **Grouped**: `参考目录` / `生成` / `命名空间` / `通知` / `文件` — each an 11px/600 muted header with
+  a 1px hairline, instead of one undifferentiated list.
+- **A view, not an insert**: settings opens as its own page with a `返回资产列表` control; previously
+  it was stacked above the asset list and squeezed both the list and the 3D viewport.
+- **Wording bug fixed**: the detection line said `2242 张截图` ("2242 screenshots") where it meant
+  textures — now `2242 张贴图`, with the number in monospace and tabular figures.
+- Long paths (`设置文件 …`) were clipped by the panel edge without an ellipsis; they truncate
+  properly now and carry the full path in `title`.
+- Buttons share one 22px height; checkboxes are 12×12 with a 1px border and a brand-coloured check
+  when on, plus `:focus-visible`.
+
+### Fixed — the ground grid no longer shows through the block
+
+The 3D viewport drew its ground grid **after** `putImageData`, with canvas 2D strokes. That paints
+over every pixel already rendered, so grid lines crossed the block's faces — which reads exactly like
+the block being semi-transparent. It never was: the rasteriser rejects faces below alpha 0.5 and
+writes depth without blending, so the faces are opaque.
+
+The grid is now rasterised **into the colour/depth buffer** with a depth test, so the block occludes
+it and lines only appear on background pixels. The pick buffer is still untouched (the grid is not
+clickable). A new gate, `grid-occlusion-test.js`, executes the emitted function against two synthetic
+buffers and asserts that **not one pixel** inside a nearer occluder region gets stained — and
+`--fault` deletes the depth test to prove that assertion can fail.
+
+### Gates
+
+- `ui-test` gained behaviour assertions for this view: the gear opens it, it is **not** rendered on
+  the same screen as the list/viewport, and `返回资产列表` brings the list back — plus
+  `--fault-settings-back`, which deletes that button's handler and turns the assertions red.
+- `ui-style-test` gained assertions for the property grid, the group headers and the checkbox.
+- **51 conditions**, two passes (default console encoding and `--encoding gbk`): **50 green / 1 SKIP /
+  0 red**.
+
 ## 0.3.2
 
 The UI pass this project needed was never "make it nicer": it was **look at it**. This release starts
