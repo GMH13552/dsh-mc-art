@@ -21,6 +21,12 @@
           lines.push('if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write("' + PICK_BEGIN + '" + $d.SelectedPath + "' + PICK_END + '") }')
           // 优先 argv 起（不需要 shell 服务）。桌面端实测：会话里的 pwsh 工具好用，
           // 但宿主层拿不到 shell 服务 —— 那种情况下这条路是唯一能弹对话框的。
+          // 门禁与预览只想知道"会怎么弹"，**不许真弹**：之前 report-test 驱动每个 handler，
+          // 一跑就在用户桌面上开一个文件夹选择框（实测反复弹出，用户只能点 ×）。
+          if (request.dryRun === true) {
+            return { supported: true, dryRun: true, via: 'windows', exe: powerShell,
+              start: winStart !== null ? winStart : start, scriptLines: lines.length }
+          }
           const encoded = utf16leBase64(lines.join('\n'))
           const dialog = await withDeadline(async () => {
             let text = ''

@@ -1,77 +1,91 @@
-# UI 风格规范（专业工具风格）
+# UI 风格规范（v2：向「自媒体工作台」靠近）
 
-这份规范是**判据**，不是灵感。做样式时逐条对照；冲突时以"更少装饰、更高密度、更明确的层级"为先。
+这份规范是**判据**，不是灵感。做样式时逐条对照。
 
-参考语言：**专业 3D 工具与 IDE 的检查器面板**（Blender 属性面板 / VS Code 侧栏 / 材质编辑器的参数区）。
-它们共同的特征：**平、密、窄、静** —— 没有卡片化容器、没有大圆角、没有彩色装饰、数字等宽对齐、强调色只用于"选中/焦点/主操作"。
+v1 走的是"专业检查器"路线（平、密、窄、静）。用户看过本机的 **自媒体工作台**（`dsh-media-desk`）之后
+明确要求：**我们的前端向它靠近**。所以 v2 换语言：**卡片化、圆角、软阴影、衬线标题、点阵背景、胶囊控件**，
+只在"必须快速扫读数据"的地方保留工具式密度。
 
-## 1. 反面清单（"AI 味"的具体来源，逐条禁止）
+参考实现就在本机：`%USERPROFILE%\.dsh\profiles\desktop\node_modules\dsh-media-desk\dist\client.js`
+（CSS 是一大段普通文本，设计变量以 `--ink/--card/--r-md/--ease` 命名，可直接对照）。
 
-- ❌ 卡片套卡片、每块内容都包一张带圆角和阴影的卡
-- ❌ 大圆角（≥8px）的按钮/输入框；胶囊按钮（例外：状态徽标）
-- ❌ 彩色标签/彩色图标/渐变/发光/彩色阴影
-- ❌ 动画、过渡动效、hover 放大、脉冲
-- ❌ 表情符号当图标；把 `@`、`#` 之类的字符做成装饰
-- ❌ 大块留白（padding ≥ 16px）、行高 ≥ 32px 的表单行
-- ❌ 居中排版的表单标签；标签与值上下堆叠
-- ❌ 居中大标题 + 副标题的"落地页"式空状态
+## 1. 反面清单（v1 残留的"太硬、太像仪表盘"）
 
-## 2. 尺寸与密度（写死，不许自由发挥）
+- ❌ 纯平无容器的灰底面板（v1 的"去卡片化"）：现在**允许**卡片，但一屏最多两级（页面 → 卡片），不套娃
+- ❌ 圆角只有 2/3px 的小方块控件；控件不再是"工具按钮"，而是**胶囊/圆角按钮**
+- ❌ 12px 满屏、靠 1px 发丝线分割一切：改用**留白 + 卡片边界**
+- ❌ 居中大标题只写"暂无数据"：空状态要有**衬线大字 + 计数 + 一句人话**
+- ❌ 装饰性渐变/光斑滥用：渐变只允许出现在**封面/缩略图**这类内容物上，界面骨架不用
+- ❌ 无语义的彩色：颜色一律来自 token；内容色（贴图、封面）不受限
 
-| 元素 | 值 |
+## 2. Token 层（照抄参考实现的命名，全部映射 `--dsw-alias-*`）
+
+```css
+--ink: label-primary      --ink2: label-secondary   --ink3: label-tertiary
+--ink4: label-caption     --on-primary: label-primary-inverted
+--bg: bg-base             --card: bg-layer-2        --canvas: color-mix(in srgb, var(--ink) 3.5%, var(--bg))
+--line: border-l2         --line-strong: border-l4
+--hover: interactive-bg-hover   --active: interactive-bg-active
+--primary: button-primary-fill  --primary-hover: button-primary-hover
+--accent: link            --glass: color-mix(in srgb, var(--card) 72%, transparent)
+--serif: "Songti SC","STSong","Noto Serif SC","Source Han Serif SC",Georgia,serif
+--ease: cubic-bezier(.2,.8,.2,1)
+--r-xs 4  --r-sm 8  --r-md 12  --r-lg 16  --r-xl 20  --r-panel 28
+```
+
+阴影只有两档：`--dsw-elevation-soft`（卡片默认）与 `--dsw-elevation-prominent`（浮层/弹窗）。
+
+## 3. 字体与密度
+
+| 用途 | 值 |
 |---|---|
-| 正文字号 | 12px |
-| 次要文字（标签/说明/单位） | 11px |
-| 区块标题 | 11px，字重 600，次要色 |
-| 数字/路径/ID | 11px，`ui-monospace, Consolas, monospace`，`font-variant-numeric: tabular-nums` |
-| 行高（普通行） | 22px；两行说明可用 2×14px 行高 |
-| 表单行（label + control） | 26px |
-| 工具栏 | 28px，内部控件 22×22 |
-| 区块标题行 | 22px |
-| 间距刻度 | 2 / 4 / 6 / 8（禁止 10/12/14/16 等非刻度值） |
-| 面板内边距 | 8px |
-| 圆角 | 控件 2px，面板/弹层 3px |
-| 描边 | 一律 1px；缩进层级用 1px 线或 4px 留白，不用背景色块 |
-| 阴影 | 只有弹层允许 `0 2px 6px rgba(0,0,0,.35)`；其它一律无 |
+| 基准 | **14px / 22px**，`font-family: var(--dsw-font-family)` |
+| 正文/表单 | 13–14px |
+| 次要说明/单位 | 12px，`--ink3` |
+| 卡片标题 | 15–16px，字重 600；**重要标题用 `--serif`** |
+| 空状态大标题 | **26–28px 衬线**，允许"小字 + 大数字 + 小字"混排（如「还有 44 个方块 等你检查」） |
+| ID / 路径 / 数字 | 12px `ui-monospace` + `tabular-nums` |
+| 列表行高 | 26–28px（比 v1 的 22px 松，但不做 32+ 的"网页列表"） |
+| 间距刻度 | 4 / 6 / 8 / 10 / 12 / 16 / 20 |
+| 圆角 | 控件 `--r-sm`(8)，卡片 `--r-md`(12)，大容器 `--r-lg`(16)，面板/弹层 `--r-panel`(28)，胶囊 999 |
+| 描边 | 1px `--line`；卡片可选 `inset 0 0 0 .5px var(--line-strong)` |
+| 动效 | hover 150ms、展开 200ms、视图切换 300ms，`var(--ease)`；**禁止无限循环动画** |
 
-## 3. 排版结构
+## 4. 骨架与组件
 
-- **属性行**：`label`（固定 88px，右对齐，次要色 11px）+ 值（左对齐，占满剩余）。同一分组内行之间**无分隔线**，分**组**之间用 1px 分隔线 + 4px 上下留白。
-- **区块标题**：占满宽、背景为基准面、底部 1px 线；右侧可带计数/状态（次要色 11px）。滚动时 sticky。
-- **工具栏**：只放图标按钮（14px 单色），按钮之间用 1px 竖分隔线分组；主操作才允许文字按钮，且靠右。
-- **列表**：行高 22px，选中行 = 强调色 8% 叠底 + 左侧 2px 强调色条（不是整行填充色块）；hover = 中性 4% 叠底。
-- **空状态**：一行次要色文字 + 一个文字操作，不放大插图、不居中大标题。
-- **表单控件**：输入框/下拉与按钮同高（22px），左内边距 6px；数值输入右对齐等宽字体。
-- **开关**：12×20 的轨道（2px 圆角），不用大号 iOS 风格开关。
+- **背景**：`--canvas` + **点阵**（`radial-gradient` 小点，24px 步距，`--ink` 6% 透明度），让卡片"浮"起来。
+- **顶栏**：左侧标题（衬线 16px）+ 右侧圆形图标按钮（26–28px，`--hover` 底）。
+- **胶囊页签**：容器 `--r-sm` 圆角 + `--hover` 底；选中项 `--card` 底 + `--ink` 文字 + `--elevation-soft`。
+- **卡片**：`--card` 底、1px `--line`、`--r-md` 圆角、`--elevation-soft`、内边距 12–14px。
+  卡片标题行（衬线 15–16px + 右侧 12px 计数），内容区距标题 8–10px。
+- **资产行**：行高 28px、圆角 8px；hover `--hover`、选中 `--active` + 左侧 2px `--accent` 条；
+  左=名称 13px，右=id 12px mono `--ink3`（沿用 v1 的两列对齐，这条是对的，保留）。
+- **3D 视口卡片**：`--canvas` 底、`--r-md`、内描边；控制按钮**圆形 26px**、`--glass` 底、浮在右下。
+  地面网格与轴指示器保留（它们是功能，不是装饰）。
+- **底部输入条（@ 提意见）**：胶囊 36px 高、`--card` 底 + 1px `--line`、左侧 14px 图标、
+  占位文案 13px `--ink3`、右侧**圆形 26px 主色按钮**（插入后按钮短暂变为"已插入"）。
+- **缩略图条**：24px 方块、8px 圆角、2px 间距，右上角 10px 计数徽标——用于物品栏/最近资产。
+- **空状态**：居中的衬线大字 + 计数（真实数字，不许编）+ 一行 12px 说明 + 一个主操作胶囊按钮。
+- **焦点**：`box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent)`，不用发光。
 
-## 4. 颜色（全部来自宿主 token，带中性兜底）
+## 5. 与 v1 的取舍
 
-| 用途 | token |
+| 保留 v1 | 换成 v2 |
 |---|---|
-| 基准面 / 内容面 / 浮层 | `--dsw-alias-bg-base` / `-bg-layer-1` / `-bg-layer-2` |
-| 分隔线与描边 | `--dsw-alias-border-l1`（常规）/ `-l2`（强调 hover） |
-| 主文字 / 次文字 | `--dsw-alias-label-primary` / `-label-secondary` |
-| 强调（选中/焦点/主操作） | `--dsw-alias-brand-primary` |
-| 状态 | `--dsw-alias-state-error` / `-warn-primary` / `-success` / `-idle-primary` |
+| 两列资产行（名称 + 右侧 mono id） | 行高 22 → 28，行变圆角可 hover |
+| mono + tabular-nums 显示数字/路径 | 字号 11 → 12 |
+| 分组标题 sticky + 计数 | 从"发丝线标题"变成"卡片标题行" |
+| 状态三态（空/加载/错误）都要有字 | 空态升级为衬线大字 + 真实计数 |
+| 每轮门禁必须能红 | 不变 |
 
-**强调色的使用面**：选中、键盘焦点、主按钮、进度。别处一律中性。
-**状态色**：只在错误/警告/成功/空闲的图标与 1px 左边线出现，不做整块背景。
+## 6. 判据（`ui-style-test.js` 要跟着改，不许放宽"能红"）
 
-## 5. 交互状态（四态必须一致）
-
-| 状态 | 表现 |
-|---|---|
-| hover | 中性 4% 叠底；可点元素加 `cursor: pointer` |
-| active | 中性 8% 叠底，无位移 |
-| focus-visible | 1px 强调色 outline，`outline-offset: -1px`；**不要**外发光 |
-| disabled | 40% 不透明度 + `cursor: default`，不改变背景色 |
-
-## 6. 内容区例外
-
-3D 视口、像素画布、HUD 是**内容**，不是界面：固定中性深底，不随浅色主题变白；HUD 槽位 22px、2px 圆角、选中用 1px 强调色内描边（无发光）。
-
-## 7. 验收方式
-
-1. `node panel/build.mjs` → `node panel/verify-build.mjs` → `node panel/ui-test.mjs` 全 0；
-2. CSS 里**搜不到**：`rgba(127,127,127`、`linear-gradient`、`box-shadow`（弹层除外）、`animation`、`transition`、`border-radius: [89]` 及以上、`font-size: 1[4-9]px`；
-3. 在真浏览器里看过：截图与"是否像专业工具"的逐条对照（§1 反面清单全部不出现）。
+- 卡片：`border-radius: var(--r-md)` + `box-shadow: var(--dsw-elevation-soft)` + 1px `--line` 三者同时存在；
+- 背景点阵：`radial-gradient` 且步距 24px；
+- 空状态：`--serif` 且字号 ≥26px，且文本里含真实计数（不是"暂无"）；
+- 输入条：高度 36px、圆角 999、右侧圆形按钮；
+- 顶栏/页签：胶囊页签选中态用 `--card` 底；
+- 动效：`transition` 时长 ∈ {120,150,200,300}ms 且使用 `--ease`；**没有** `animation` 无限循环；
+- 圆角尺度：只允许 `--r-xs/sm/md/lg/panel` 与 999/50%；**禁止** 2/3px；
+- 字号：只允许 11/12/12.5/13/14/15/16/26/28（±1 取整）；
+- 行高：列表 28、正文 22、说明 18。

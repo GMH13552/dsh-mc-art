@@ -4,5 +4,6 @@
   "client/20-const.js",
   "client/30-state.js",
   "client/32-normalize.js",
+  "client/35-launch.js",
   "client/99-entry.js"
 ]

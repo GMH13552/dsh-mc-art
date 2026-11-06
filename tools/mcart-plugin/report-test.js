@@ -190,7 +190,9 @@ function spySessions(writes) {
 }
 
 const HANDLER_ARGS = {
-  'atlas.pickDirectory': { root: WORK, project: 'withref' },
+  // `dryRun` 不是可选项：这个 handler 会起 PowerShell 的 FolderBrowserDialog。门禁驱动它
+  // 必须只说"会怎么弹"，否则每跑一次门禁，用户桌面上就多一个要手点 × 的选择框。
+  'atlas.pickDirectory': { root: WORK, project: 'withref', dryRun: true },
   'atlas.settings': { root: WORK, project: 'withref' },
   'atlas.gameRoots': { root: WORK, project: 'withref' },
   'atlas.saveSettings': { root: WORK, project: 'withref', directory: '' },
@@ -211,6 +213,12 @@ const HANDLER_ARGS = {
   'atlas.refBlocks': { root: WORK, project: 'withref', namespace: 'minecraft' },
   'atlas.refIcons': { root: WORK, project: 'withref', namespace: 'minecraft' },
   'atlas.releaseRefs': { keep: [] },
+  // 内置启动器（host/62-launch-handlers.js）。`atlas.launch` 只给 dryRun：间谍这一轮
+  // 只证明"handler 都在清单里、跑完不抛、零会话写入"，不要真起游戏进程。
+  'atlas.launchTargets': { root: WORK, project: 'withref' },
+  'atlas.launch': { root: WORK, project: 'withref', gameRoot: '', versionId: '', javaPath: '', dryRun: true },
+  'atlas.launchStatus': {},
+  'atlas.launchStop': {},
 }
 
 // 故障注入：把 0.1.26 那条注入原样塞回"画不出来"的分支；再把"空 quads 也走诊断"关掉
@@ -384,6 +392,10 @@ async function main() {
     const missing = names.filter((name) => HANDLER_ARGS[name] === undefined)
     check('spy: 每个注册的 handler 都在被驱动清单里（不偷偷漏掉）',
       missing.length === 0, missing.join(',') + '（共 ' + names.length + ' 个）')
+    // 能红的护栏：把 dryRun 删掉 → 这条变红（同时门禁会在桌面上弹选择框）。
+    const pickerArgs = HANDLER_ARGS['atlas.pickDirectory']
+    check('spy: 目录选择器必须带 dryRun（否则一跑门禁就弹系统文件夹选择框）',
+      pickerArgs !== undefined && pickerArgs.dryRun === true)
     let threw = 0
     for (const name of names) {
       try { await handlers[name](HANDLER_ARGS[name] === undefined ? {} : HANDLER_ARGS[name]) }

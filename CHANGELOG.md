@@ -11,6 +11,58 @@ panel/report contract is stable, and whose shipped skills are general (no loader
 version, machine or project is baked in). Earlier 0.1.x releases were development
 snapshots and are not itemised here.
 
+## 0.3.6
+
+### Changed — the panel now looks like 自媒体工作台, not like a dashboard
+
+The previous direction was "professional inspector": flat, 22px rows, 2px radii. After using this
+machine's `dsh-media-desk` plugin, the verdict was to move closer to that. `docs/UI-STYLE.md` was
+rewritten as spec v2 and the client was rebuilt against it:
+
+- **Cards** (`--card`, 1px `--line`, `--r-md` 12px, `--dsw-elevation-soft`) instead of one flat grey
+  sheet; one level only, never cards inside cards.
+- **Dotted canvas background** (24px pitch) so surfaces read as floating.
+- **Serif display type** for the title and for empty states, which now say something true —
+  「还有 44 个方块 等你检查」 with a real count — instead of "暂无数据".
+- **Pill tabs** (资产 / 物品 / 设置) and **circular 26px icon buttons**; back-to-root and refresh stay
+  actions, not tabs.
+- **Bottom pill composer** for `@ 提意见`: 36px, circular primary button, briefly says 已插入.
+- Base type 14px/22, radii 8/12/16/28, motion 150/200/300ms on `cubic-bezier(.2,.8,.2,1)`, focus ring
+  `0 0 0 2px accent/50%`, no infinite animation.
+- Kept from v1 because they were right: two-column asset rows (name + right-aligned mono id),
+  tabular numbers, sticky group headers, and three states that each say something.
+
+`ui-style-test` was rewritten to the v2 rules (cards / dots / serif empty state with a real count /
+composer geometry / pill tabs / motion / radius and type whitelists); all three fault injections still
+exit 1.
+
+### Added — a small Minecraft launcher, for the loop that actually hurts
+
+Editing a mod means: drop it in `mods` → start the game → read the log → quit → repeat. Doing that in
+an external launcher means leaving the panel every round. So the panel carries a launcher now:
+
+- `atlas.launchTargets` scans game roots, versions and **JDKs** — every candidate JDK is actually run
+  with `-version` and its major parsed (PATH here is Java 21 while 1.18.2 Forge needs 17; the 17 lives
+  in the game's own `runtime/`).
+- `atlas.launch` merges `inheritsFrom`, filters libraries by `rules`, extracts natives, substitutes
+  every `${…}` placeholder, supports `dryRun`, and starts a real process; the log goes to
+  `mc-art.launch.log` (tail 200 lines kept).
+- `atlas.launchStatus` returns running/exitCode/tail; `atlas.launchStop` kills the process tree.
+- UI card: version / JDK / memory / gameDir, start & stop, exit-code badge, monospaced log tail.
+- Gate `plugin-launch` builds a fake version tree (parent + child, osx-only libs, a real natives zip,
+  a library without `downloads`) and a fake `java.cmd`, asserting placeholders, classpath, natives
+  extraction, dryRun, exit code and stop; three fault modes go red.
+
+Real smoke on this machine: `1.18.2-Forge_40.3.12` with the game's own Java 17 reached `Setting user`,
+then `launchStop` left no java process behind. The gate now **requires** that strong marker — an
+earlier, weaker "ModLauncher appeared" criterion let a run pass that then crashed in Log4j, which is
+how the weakness was found.
+
+### Note
+
+0.3.6 adds host-side methods, so a full restart of DSH is needed (a page refresh only loads the new
+client half).
+
 ## 0.3.5
 
 ### Changed — the npm page now reads like a person wrote it

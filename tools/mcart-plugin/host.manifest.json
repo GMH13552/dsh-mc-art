@@ -23,6 +23,8 @@
   "host/54-diagnostics.js",
   "host/56-payload.js",
   "host/58-shell-write.js",
+  "host/60-launch.js",
+  "host/62-launch-handlers.js",
   "host/90-handlers.js",
   "host/99-entry.js"
 ]

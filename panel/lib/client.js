@@ -579,270 +579,294 @@ function variantSummary(axes, props) {
 
 const CSS = [
   '.mcart-root{'
-    + '--mc-bg-0:var(--dsw-alias-bg-base,Canvas);'
-    + '--mc-bg-1:var(--dsw-alias-bg-layer-1,rgba(255,255,255,.04));'
-    + '--mc-bg-2:var(--dsw-alias-bg-layer-2,rgba(255,255,255,.07));'
-    + '--mc-overlay:var(--dsw-alias-bg-overlay,rgba(24,24,28,.98));'
-    + '--mc-line-1:var(--dsw-alias-border-l1,rgba(255,255,255,.13));'
-    + '--mc-line-2:var(--dsw-alias-border-l2,rgba(255,255,255,.24));'
-    + '--mc-text-1:var(--dsw-alias-label-primary,rgba(236,236,241,.94));'
-    + '--mc-text-2:var(--dsw-alias-label-secondary,rgba(236,236,241,.58));'
-    + '--mc-brand:var(--dsw-alias-brand-primary,#4f9cf9);'
-    + '--mc-brand-bar:color-mix(in srgb,var(--dsw-alias-brand-primary,#4f9cf9) 75%,'
-    + 'var(--dsw-alias-label-primary,#ececf1));'
-    + '--mc-error:var(--dsw-alias-state-error-primary,#e06c6c);'
-    + '--mc-warn:var(--dsw-alias-state-warn-primary,#e0a06c);'
-    + '--mc-ok:var(--dsw-alias-state-success-primary,#7fc98a);'
-    + '--mc-idle:var(--dsw-alias-state-idle-primary,rgba(236,236,241,.6));'
-    + '--mc-hover:color-mix(in srgb,var(--mc-text-1) 4%,transparent);'
-    + '--mc-active:color-mix(in srgb,var(--mc-text-1) 8%,transparent);'
-    + '--mc-select:color-mix(in srgb,var(--mc-brand) 8%,transparent);'
-    + '--mc-s1:2px;--mc-s2:4px;--mc-s3:6px;--mc-s4:8px;'
-    + '--mc-fs:12px;--mc-fs2:11px;--mc-lh:22px;--mc-row:26px;--mc-toolbar:28px;'
-    + '--mc-control:22px;--mc-section:22px;--mc-label:88px;--mc-icon:14px;'
-    + '--mc-radius:2px;--mc-radius-panel:3px;'
-    + '--mc-mono:ui-monospace,Consolas,monospace;'
-    + '--mc-canvas-bg:#141317;--mc-hud-bg:rgba(20,20,24,.8);'
-    + 'display:flex;flex-direction:column;gap:var(--mc-s4);padding:var(--mc-s4);'
-    + 'height:100%;box-sizing:border-box;overflow:hidden;container-type:inline-size;'
-    + 'color:var(--mc-text-1);background:var(--mc-bg-0);'
-    + 'font:var(--mc-fs)/var(--mc-lh) system-ui,-apple-system,"Segoe UI",sans-serif}',
-  '.mcart-title{font-size:var(--mc-fs2);font-weight:600;color:var(--mc-text-2)}',
-  '.mcart-sub{font-size:var(--mc-fs2);color:var(--mc-text-2)}',
-  '.mcart-note{font-size:var(--mc-fs2);color:var(--mc-text-2)}',
-  '.mcart-hint{font-size:var(--mc-fs2);line-height:14px;color:var(--mc-text-2);'
-    + 'padding-left:calc(var(--mc-label) + var(--mc-s3))}',
-  '.mcart-path,.mcart-id,.mcart-report,.mcart-reportnote{font-family:var(--mc-mono);'
-    + 'font-size:var(--mc-fs2);font-variant-numeric:tabular-nums}',
-  '.mcart-path{color:var(--mc-text-2);min-width:0;white-space:nowrap;overflow:hidden;'
-    + 'text-overflow:ellipsis}',
-  '.mcart-num{font-family:var(--mc-mono);font-size:var(--mc-fs2);'
-    + 'font-variant-numeric:tabular-nums}',
-  '.mcart-id{color:var(--mc-text-2);margin-left:var(--mc-s2)}',
-  '.mcart-grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  '.mcart-group{display:flex;flex-direction:column;gap:var(--mc-s1)}',
-  '.mcart-settings .mcart-group+.mcart-group{border-top:0;margin-top:var(--mc-s2);padding-top:0}',
-  '.mcart-group-title{display:flex;align-items:center;height:var(--mc-section);'
-    + 'min-height:var(--mc-section);padding:0;border-bottom:1px solid var(--mc-line-1);'
-    + 'font-size:var(--mc-fs2);font-weight:600;color:var(--mc-text-2);'
-    + 'margin-bottom:var(--mc-s1)}',
-  '.mcart-group+.mcart-group{border-top:1px solid var(--mc-line-1);'
-    + 'margin-top:var(--mc-s2);padding-top:var(--mc-s2)}',
-  '.mcart-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;'
-    + 'height:var(--mc-toolbar);min-height:var(--mc-toolbar);gap:var(--mc-s2);'
-    + 'padding:0 var(--mc-s4);margin:calc(-1 * var(--mc-s4)) calc(-1 * var(--mc-s4)) 0;'
-    + 'background:var(--mc-bg-0);border-bottom:1px solid var(--mc-line-1)}',
-  '.mcart-head>.mcart-title{color:var(--mc-text-1)}',
-  '.mcart-headpath{font-family:var(--mc-mono);font-size:var(--mc-fs2);color:var(--mc-text-2);'
-    + 'font-variant-numeric:tabular-nums;min-width:0;overflow:hidden;text-overflow:ellipsis;'
+    + '--ink:var(--dsw-alias-label-primary,#ececf1);'
+    + '--ink2:var(--dsw-alias-label-secondary,#b9b9c2);'
+    + '--ink3:var(--dsw-alias-label-tertiary,#8f8f99);'
+    + '--ink4:var(--dsw-alias-label-caption,#7a7a84);'
+    + '--on-primary:var(--dsw-alias-label-primary-inverted,#ffffff);'
+    + '--primary:var(--dsw-alias-button-primary-fill,#4f9cf9);'
+    + '--primary-hover:var(--dsw-alias-button-primary-hover,#6fb0ff);'
+    + '--bg:var(--dsw-alias-bg-base,#1b1b1f);'
+    + '--card:var(--dsw-alias-bg-layer-2,#26262c);'
+    + '--canvas:color-mix(in srgb,var(--ink) 3.5%,var(--bg));'
+    + '--line:var(--dsw-alias-border-l2,rgba(255,255,255,.16));'
+    + '--line-strong:var(--dsw-alias-border-l4,rgba(255,255,255,.28));'
+    + '--hover:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));'
+    + '--active:var(--dsw-alias-interactive-bg-active,rgba(255,255,255,.10));'
+    + '--accent:var(--dsw-alias-link,#6fb0ff);'
+    + '--glass:color-mix(in srgb,var(--card) 72%,transparent);'
+    + '--dot:color-mix(in srgb,var(--ink) 6%,transparent);'
+    + '--serif:"Songti SC","STSong","Noto Serif SC","Source Han Serif SC",Georgia,serif;'
+    + '--ease:cubic-bezier(.2,.8,.2,1);'
+    + '--r-xs:var(--dsw-radius-xs,4px);'
+    + '--r-sm:var(--dsw-radius-sm,8px);'
+    + '--r-md:var(--dsw-radius-md,12px);'
+    + '--r-lg:var(--dsw-radius-lg,16px);'
+    + '--r-xl:var(--dsw-radius-xl,20px);'
+    + '--r-panel:var(--dsw-radius-panel,28px);'
+    + 'display:flex;flex-direction:column;gap:10px;padding:12px;height:100%;'
+    + 'box-sizing:border-box;overflow:hidden;container-type:inline-size;'
+    + 'color:var(--ink);background-color:var(--canvas);'
+    + 'background-image:radial-gradient(var(--dot) 1px,transparent 1px);'
+    + 'background-size:24px 24px;'
+    + 'font:14px/22px var(--dsw-font-family,system-ui,-apple-system,"Segoe UI",sans-serif);'
+    + '-webkit-font-smoothing:antialiased}',
+  '.mcart-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:10px;'
+    + 'padding:4px 0;background:transparent}',
+  '.mcart-title{font-family:var(--serif);font-size:16px;line-height:22px;font-weight:600;'
+    + 'color:var(--ink);white-space:nowrap}',
+  '.mcart-sub{font-size:12px;line-height:18px;color:var(--ink3)}',
+  '.mcart-settings-prefix{font-size:12px;line-height:18px;color:var(--ink3)}',
+  '.mcart-settings-title{font-family:var(--serif);font-size:15px;line-height:22px;'
+    + 'font-weight:600;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;'
     + 'white-space:nowrap}',
-  '.mcart-headgrow{flex:1;min-width:var(--mc-s2)}',
-  '.mcart-settings-prefix{font-size:var(--mc-fs2);color:var(--mc-text-2);white-space:nowrap}',
-  '.mcart-settings-title{font-size:var(--mc-fs);font-weight:600;color:var(--mc-text-1);'
-    + 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  '.mcart-head .mcart-btn,.mcart-head .mcart-icon{background:transparent;border-color:transparent;'
-    + 'height:var(--mc-control);flex:none}',
-  '.mcart-head .mcart-btn:hover,.mcart-head .mcart-icon:hover{background:var(--mc-hover)}',
-  '.mcart-head .mcart-btn+.mcart-btn,.mcart-head .mcart-btn+.mcart-icon,'
-    + ' .mcart-head .mcart-icon+.mcart-btn,.mcart-head .mcart-icon+.mcart-icon{'
-    + 'border-left:1px solid var(--mc-line-1);border-radius:0;padding-left:var(--mc-s1)}',
-  '.mcart-toolbar{display:flex;align-items:center;gap:var(--mc-s2);height:var(--mc-toolbar);'
-    + 'min-height:var(--mc-toolbar)}',
-  '.mcart-toolbar-facts{font-family:var(--mc-mono);font-size:var(--mc-fs2);'
-    + 'font-variant-numeric:tabular-nums;color:var(--mc-text-2);white-space:nowrap}',
-  '.mcart-toolbar-grow{flex:1;min-width:var(--mc-s2)}',
-  '.mcart-primary{color:var(--mc-brand);border-color:var(--mc-brand);background:transparent}',
-  '.mcart-primary:hover{background:var(--mc-select);border-color:var(--mc-brand)}',
-  '.mcart-bar{display:flex;align-items:center;gap:var(--mc-s2);flex-wrap:wrap}',
-  '.mcart-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;'
-    + 'flex-direction:column;gap:var(--mc-s4);scrollbar-width:thin;'
-    + 'scrollbar-color:var(--dsw-scrollbar-thumb,var(--mc-line-2)) transparent;'
-    + 'overscroll-behavior:contain}',
-  '.mcart-stage{flex:1;min-height:0;display:flex;flex-direction:column;gap:var(--mc-s2)}',
-  '.mcart-card{border:0;border-top:1px solid var(--mc-line-1);border-radius:0;'
-    + 'padding:var(--mc-s2) 0;display:flex;flex-direction:column;gap:var(--mc-s2);'
-    + 'background:transparent}',
-  '.mcart-card>.mcart-bar:first-child{min-height:var(--mc-section);height:var(--mc-section);'
-    + 'padding:0;border-bottom:1px solid var(--mc-line-1)}',
-  '.mcart-prop{display:grid;grid-template-columns:var(--mc-label) 1fr;align-items:center;'
-    + 'min-height:var(--mc-row);column-gap:var(--mc-s3);padding:1px 0}',
-  '.mcart-prop-label{font-size:var(--mc-fs);color:var(--mc-text-1);text-align:right;'
-    + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-  '.mcart-prop-value{display:flex;align-items:center;gap:var(--mc-s2);min-width:0;'
-    + 'font-size:var(--mc-fs2);color:var(--mc-text-1)}',
-  '.mcart-src{display:flex;align-items:center;gap:var(--mc-s2)}',
-  '.mcart-tabs,.mcart-tools{display:flex;gap:var(--mc-s2);flex-wrap:wrap;align-items:center}',
-  '.mcart-btn{height:var(--mc-control);padding:0 var(--mc-s3);box-sizing:border-box;'
-    + 'border:1px solid var(--mc-line-1);border-radius:var(--mc-radius);'
-    + 'background:var(--mc-bg-1);color:var(--mc-text-1);font:inherit;font-size:var(--mc-fs2);'
-    + 'line-height:20px;white-space:nowrap;cursor:pointer;flex:none}',
-  '.mcart-btn:hover{background:var(--mc-active);border-color:var(--mc-line-2)}',
-  '.mcart-btn:active{background:var(--mc-active)}',
-  '.mcart-btn[disabled]{opacity:.4;cursor:default;background:var(--mc-bg-1)}',
-  '.mcart-tool[data-on="1"]{background:var(--mc-select);border-color:var(--mc-brand)}',
-  '.mcart-icon{width:var(--mc-control);height:var(--mc-control);display:inline-flex;'
-    + 'align-items:center;justify-content:center;padding:0;border:0;border-radius:var(--mc-radius);'
-    + 'background:none;color:var(--mc-text-2);font:inherit;font-size:var(--mc-icon);'
-    + 'line-height:1;cursor:pointer}',
-  '.mcart-icon:hover{background:var(--mc-hover);color:var(--mc-text-1)}',
-  '.mcart-icon[data-on="1"]{background:var(--mc-select);color:var(--mc-text-1)}',
-  '.mcart-input,.mcart-select{height:var(--mc-control);box-sizing:border-box;min-width:0;'
-    + 'padding:0 var(--mc-s3);border:1px solid var(--mc-line-1);border-radius:var(--mc-radius);'
-    + 'background:var(--mc-bg-2);color:var(--mc-text-1);font:inherit;font-size:var(--mc-fs2)}',
-  '.mcart-input{flex:1}',
-  '.mcart-select{flex:1;padding:0 var(--mc-s1)}',
-  '.mcart-input:hover,.mcart-select:hover{border-color:var(--mc-line-2)}',
-  '.mcart-input:disabled,.mcart-select:disabled{opacity:.4;cursor:default}',
-  '.mcart-input[type="number"]{text-align:right;font-family:var(--mc-mono);'
-    + 'font-variant-numeric:tabular-nums}',
-  '.mcart-input[type="range"],.mcart-alpha{accent-color:var(--mc-brand)}',
-  '.mcart-slot[disabled],.mcart-swatch[disabled]{opacity:.4;cursor:default}',
-  '.mcart-btn:focus-visible,.mcart-icon:focus-visible,.mcart-input:focus-visible,'
-    + '.mcart-select:focus-visible,.mcart-item:focus-visible,.mcart-slot:focus-visible,'
-    + '.mcart-hudslot:focus-visible,.mcart-swatch:focus-visible,.mcart-picker:focus-visible,'
-    + '.mcart-hudpage:focus-visible,.mcart-switch:focus-within{'
-    + 'outline:1px solid var(--mc-brand);outline-offset:-1px}',
-  '.mcart-switch{display:flex;align-items:center;gap:var(--mc-s2);min-height:var(--mc-row);'
-    + 'font-size:var(--mc-fs2);cursor:pointer}',
-  '.mcart-switch input[type="checkbox"]{appearance:none;-webkit-appearance:none;'
-    + 'width:12px;height:12px;margin:0;flex:none;position:relative;'
-    + 'border-radius:var(--mc-radius);border:1px solid var(--mc-line-2);'
-    + 'background:var(--mc-bg-2);cursor:pointer}',
-  '.mcart-switch input[type="checkbox"]::after{content:"";position:absolute;left:3px;top:2px;'
-    + 'width:4px;height:6px;border-right:1px solid var(--mc-bg-0);'
-    + 'border-bottom:1px solid var(--mc-bg-0);transform:rotate(45deg) scale(0)}',
-  '.mcart-switch input[type="checkbox"]:checked{background:var(--mc-brand);border-color:var(--mc-brand)}',
-  '.mcart-switch input[type="checkbox"]:checked::after{transform:rotate(45deg) scale(1)}',
-  '.mcart-switch input[type="checkbox"]:focus-visible{outline:1px solid var(--mc-brand);'
-    + 'outline-offset:-1px}',
-  '.mcart-empty{font-size:var(--mc-fs2);color:var(--mc-text-2);padding:var(--mc-s2) 0}',
-  '.mcart-loading{font-size:var(--mc-fs2);color:var(--mc-text-2)}',
-  '.mcart-bad,.mcart-err{font-size:var(--mc-fs2);line-height:14px;word-break:break-all;'
-    + 'border-left:2px solid;padding-left:var(--mc-s3)}',
-  '.mcart-bad{color:var(--mc-warn);border-left-color:var(--mc-warn)}',
-  '.mcart-err{color:var(--mc-error);border-left-color:var(--mc-error)}',
-  '.mcart-details{font-size:var(--mc-fs2);line-height:14px;color:var(--mc-text-2);'
-    + 'margin-top:var(--mc-s1)}',
-  '.mcart-details>summary{cursor:pointer;width:max-content}',
-  '.mcart-details>.mcart-report{margin:var(--mc-s1) 0 0}',
-  '.mcart-list{flex:1;min-height:0;overflow:auto;'
-    + 'border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);'
-    + 'padding:var(--mc-s1)}',
-  '.mcart-row{display:flex;align-items:center;gap:var(--mc-s2);height:var(--mc-lh);'
-    + 'padding:0 var(--mc-s2);border-left:2px solid transparent}',
-  '.mcart-row:hover{background:var(--mc-hover)}',
-  '.mcart-item{display:flex;align-items:center;gap:var(--mc-s2);width:100%;'
-    + 'height:var(--mc-lh);padding:0 var(--mc-s2);text-align:left;'
-    + 'border:0;border-left:2px solid transparent;border-radius:0;background:none;'
-    + 'color:var(--mc-text-1);font:inherit;font-size:var(--mc-fs);cursor:pointer}',
+  '.mcart-headpath{font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:18px;'
+    + 'font-variant-numeric:tabular-nums;color:var(--ink3);min-width:0;overflow:hidden;'
+    + 'text-overflow:ellipsis;white-space:nowrap}',
+  '.mcart-headgrow{flex:1;min-width:8px}',
+  '.mcart-tabs{display:flex;gap:2px;padding:4px;border-radius:var(--r-sm);'
+    + 'background:var(--hover);flex:none}',
+  '.mcart-tab{height:26px;padding:0 10px;border:0;border-radius:var(--r-sm);background:transparent;'
+    + 'color:var(--ink3);font:inherit;font-size:13px;line-height:26px;cursor:pointer;'
+    + 'transition:background-color 150ms var(--ease),color 150ms var(--ease)}',
+  '.mcart-tab:hover{background:var(--hover);color:var(--ink2)}',
+  '.mcart-tab[data-on="1"]{background:var(--card);color:var(--ink);'
+    + 'box-shadow:var(--dsw-elevation-soft)}',
+  '.mcart-icon{width:26px;height:26px;padding:0;flex:none;display:inline-flex;'
+    + 'align-items:center;justify-content:center;border:0;border-radius:999px;'
+    + 'background:var(--hover);color:var(--ink2);font:inherit;font-size:14px;line-height:1;'
+    + 'cursor:pointer;transition:background-color 150ms var(--ease),transform 120ms var(--ease)}',
+  '.mcart-icon:hover{background:var(--active);color:var(--ink)}',
+  '.mcart-icon:active{transform:scale(.98)}',
+  '.mcart-icon[data-on="1"]{background:var(--card);color:var(--ink);'
+    + 'box-shadow:var(--dsw-elevation-soft)}',
+  '.mcart-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-md);'
+    + 'box-shadow:var(--dsw-elevation-soft);padding:12px;'
+    + 'transition:box-shadow 200ms var(--ease)}',
+  '.mcart-head .mcart-btn,.mcart-head .mcart-icon{flex:none}',
+  '.mcart-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+  '.mcart-grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.mcart-menu-card{display:flex;flex-direction:column;gap:2px;padding:10px 12px}',
+  '.mcart-group{display:flex;flex-direction:column;gap:2px}',
+  '.mcart-group-head{display:flex;align-items:baseline;gap:8px;padding:2px 4px 8px;'
+    + 'border-bottom:1px solid var(--line);position:sticky;top:0;z-index:1;'
+    + 'background:var(--card)}',
+  '.mcart-group-title{font-family:var(--serif);font-size:15px;line-height:22px;font-weight:600;'
+    + 'color:var(--ink)}',
+  '.mcart-group-count{font-family:ui-monospace,Consolas,monospace;font-size:12px;'
+    + 'font-variant-numeric:tabular-nums;color:var(--ink3)}',
+  '.mcart-item{display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 8px;'
+    + 'border:0;border-left:2px solid transparent;border-radius:var(--r-sm);background:none;'
+    + 'color:var(--ink);font:inherit;font-size:13px;line-height:28px;text-align:left;cursor:pointer;'
+    + 'transition:background-color 150ms var(--ease)}',
+  '.mcart-item:hover{background:var(--hover)}',
+  '.mcart-item:active{background:var(--active)}',
+  '.mcart-item[data-on="1"]{background:var(--active);border-left-color:var(--accent)}',
   '.mcart-item-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  '.mcart-item-id{flex:none;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
-    + 'font-family:var(--mc-mono);font-size:var(--mc-fs2);font-variant-numeric:tabular-nums;'
-    + 'color:var(--mc-text-2);text-align:right}',
-  '.mcart-group-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;'
-    + 'height:var(--mc-section);min-height:var(--mc-section);padding:0 var(--mc-s2);'
-    + 'background:var(--mc-bg-0);border-bottom:1px solid var(--mc-line-1);'
-    + 'font-size:var(--mc-fs2);font-weight:600;color:var(--mc-text-2)}',
-  '.mcart-item:hover{background:var(--mc-hover)}',
-  '.mcart-item:active{background:var(--mc-active)}',
-  '.mcart-item[data-on="1"]{background:var(--mc-select);border-left-color:var(--mc-brand-bar)}',
-  '.mcart-projects{max-height:240px;overflow:auto;display:flex;flex-direction:column;'
-    + 'border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);padding:var(--mc-s1)}',
-  '.mcart-mods{border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);'
-    + 'padding:var(--mc-s1) var(--mc-s2);display:flex;flex-direction:column;max-height:200px;'
-    + 'overflow:auto}',
-  '.mcart-chip{font-size:var(--mc-fs2);padding:0 var(--mc-s3);height:var(--mc-control);'
-    + 'box-sizing:border-box;border-radius:var(--mc-radius);background:var(--mc-bg-1);'
-    + 'color:var(--mc-text-2)}',
-  '.mcart-list,.mcart-hotbar,.mcart-swatches,.mcart-projects,.mcart-mods{'
-    + 'scrollbar-width:thin;scrollbar-color:var(--dsw-scrollbar-thumb,var(--mc-line-2)) transparent;'
-    + 'overscroll-behavior:contain}',
+  '.mcart-item-id{flex:none;max-width:50%;overflow:hidden;text-overflow:ellipsis;'
+    + 'white-space:nowrap;font-family:ui-monospace,Consolas,monospace;font-size:12px;'
+    + 'font-variant-numeric:tabular-nums;color:var(--ink3);text-align:right}',
+  '.mcart-list{display:flex;flex-direction:column;gap:10px;min-height:0;overflow-y:auto}',
+  '.mcart-row{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;'
+    + 'border-left:2px solid transparent;border-radius:var(--r-sm)}',
+  '.mcart-row:hover{background:var(--hover)}',
+  '.mcart-btn{height:28px;padding:0 12px;flex:none;box-sizing:border-box;border:1px solid var(--line);'
+    + 'border-radius:var(--r-sm);background:var(--card);color:var(--ink);font:inherit;'
+    + 'font-size:13px;line-height:26px;white-space:nowrap;cursor:pointer;'
+    + 'transition:background-color 150ms var(--ease),border-color 150ms var(--ease),'
+    + 'transform 120ms var(--ease)}',
+  '.mcart-btn:hover{background:var(--hover);border-color:var(--line-strong)}',
+  '.mcart-btn:active{transform:scale(.98)}',
+  '.mcart-btn[disabled]{opacity:.4;cursor:default;background:var(--card)}',
+  '.mcart-pill{border-radius:999px;height:34px;padding:0 16px;font-size:13px;line-height:32px}',
+  '.mcart-primary{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}',
+  '.mcart-primary:hover{background:var(--primary-hover);border-color:var(--primary-hover)}',
+  '.mcart-input,.mcart-select{height:28px;box-sizing:border-box;min-width:0;padding:0 10px;'
+    + 'border:1px solid var(--line);border-radius:var(--r-sm);background:var(--bg);'
+    + 'color:var(--ink);font:inherit;font-size:13px;line-height:26px}',
+  '.mcart-input{flex:1}',
+  '.mcart-select{flex:1;padding:0 6px;cursor:pointer}',
+  '.mcart-input:hover,.mcart-select:hover{border-color:var(--line-strong)}',
+  '.mcart-input:disabled,.mcart-select:disabled{opacity:.4;cursor:default}',
+  '.mcart-input[type="number"]{text-align:right;font-family:ui-monospace,Consolas,monospace;'
+    + 'font-variant-numeric:tabular-nums}',
+  '.mcart-input[type="range"],.mcart-alpha{accent-color:var(--primary)}',
+  '.mcart-src{display:flex;align-items:center;gap:8px}',
+  '.mcart-tabs,.mcart-tools{flex-wrap:nowrap}',
+  '.mcart-stack{display:flex;flex-direction:column;align-items:stretch;gap:8px}',
+  '.mcart-stack>.mcart-btn{align-self:flex-start}',
+  '.mcart-btn:focus-visible,.mcart-icon:focus-visible,.mcart-tab:focus-visible,'
+    + '.mcart-input:focus-visible,.mcart-select:focus-visible,.mcart-item:focus-visible,'
+    + '.mcart-slot:focus-visible,.mcart-hudslot:focus-visible,.mcart-swatch:focus-visible,'
+    + '.mcart-picker:focus-visible,.mcart-hudpage:focus-visible,.mcart-complain:focus-within,'
+    + '.mcart-switch:focus-within{outline:none;'
+    + 'box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 50%,transparent)}',
+  '.mcart-switch{display:flex;align-items:center;gap:8px;min-height:28px;font-size:13px;'
+    + 'line-height:22px;cursor:pointer}',
+  '.mcart-switch input[type="checkbox"]{appearance:none;-webkit-appearance:none;'
+    + 'width:16px;height:16px;margin:0;flex:none;position:relative;border-radius:var(--r-xs);'
+    + 'border:1px solid var(--line-strong);background:var(--bg);cursor:pointer;'
+    + 'transition:background-color 150ms var(--ease)}',
+  '.mcart-switch input[type="checkbox"]::after{content:"";position:absolute;left:5px;top:2px;'
+    + 'width:4px;height:8px;border-right:2px solid var(--on-primary);'
+    + 'border-bottom:2px solid var(--on-primary);transform:rotate(45deg) scale(0)}',
+  '.mcart-switch input[type="checkbox"]:checked{background:var(--primary);'
+    + 'border-color:var(--primary)}',
+  '.mcart-switch input[type="checkbox"]:checked::after{transform:rotate(45deg) scale(1)}',
+  '.mcart-prop{display:grid;grid-template-columns:88px 1fr;align-items:center;'
+    + 'min-height:26px;column-gap:10px;padding:2px 0}',
+  '.mcart-prop-label{font-size:12px;line-height:18px;color:var(--ink3);text-align:right;'
+    + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+  '.mcart-prop-value{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap;'
+    + 'font-size:13px;line-height:22px;color:var(--ink)}',
+  '.mcart-prop-value>.mcart-input{flex:1 1 96px}',
+  '.mcart-prop-value>.mcart-btn{flex:none}',
+  '.mcart-settings{background:transparent;border:0;box-shadow:none;padding:0;'
+    + 'display:flex;flex-direction:column;gap:10px}',
+  '.mcart-settings .mcart-group{background:var(--card);border:1px solid var(--line);'
+    + 'border-radius:var(--r-md);box-shadow:var(--dsw-elevation-soft);padding:12px;gap:2px}',
+  '.mcart-settings .mcart-group-title{font-size:15px}',
+  '.mcart-settings .mcart-group-head{border-bottom:1px solid var(--line);padding-bottom:8px}',
+  '.mcart-group-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+  '.mcart-num{font-family:ui-monospace,Consolas,monospace;font-size:12px;'
+    + 'font-variant-numeric:tabular-nums}',
+  '.mcart-path{color:var(--ink3);min-width:0;white-space:nowrap;overflow:hidden;'
+    + 'text-overflow:ellipsis}',
+  '.mcart-id{color:var(--ink3);font-family:ui-monospace,Consolas,monospace;font-size:12px;'
+    + 'font-variant-numeric:tabular-nums;margin-left:6px}',
+  '.mcart-note{font-size:12px;line-height:18px;color:var(--ink3)}',
+  '.mcart-hint{font-size:12px;line-height:18px;color:var(--ink3);padding-left:calc(88px + 10px)}',
+  '.mcart-sub{font-size:12px;line-height:18px;color:var(--ink3)}',
+  '.mcart-empty{display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px;'
+    + 'text-align:center}',
+  '.mcart-empty-title{font-family:var(--serif);font-size:26px;line-height:34px;font-weight:600;'
+    + 'color:var(--ink)}',
+  '.mcart-empty-num{font-family:var(--serif);font-size:28px;line-height:34px;font-weight:600;'
+    + 'color:var(--ink);font-variant-numeric:tabular-nums}',
+  '.mcart-empty-note{font-size:12px;line-height:18px;color:var(--ink3)}',
+  '.mcart-loading{font-size:12px;line-height:18px;color:var(--ink3)}',
+  '.mcart-bad,.mcart-err{font-size:12px;line-height:18px;word-break:break-all;'
+    + 'border-left:2px solid;padding-left:8px;border-radius:var(--r-xs)}',
+  '.mcart-bad{color:var(--dsw-alias-state-warn-primary,#e0a06c);'
+    + 'border-left-color:var(--dsw-alias-state-warn-primary,#e0a06c)}',
+  '.mcart-err{color:var(--dsw-alias-state-error-primary,#e06c6c);'
+    + 'border-left-color:var(--dsw-alias-state-error-primary,#e06c6c)}',
+  '.mcart-details{font-size:12px;line-height:18px;color:var(--ink3);margin-top:6px}',
+  '.mcart-details>summary{cursor:pointer;width:max-content}',
+  '.mcart-details>.mcart-report{margin:6px 0 0}',
+  '.mcart-report,.mcart-reportnote{font-family:ui-monospace,Consolas,monospace;font-size:12px;'
+    + 'font-variant-numeric:tabular-nums}',
+  '.mcart-report{white-space:pre-wrap;word-break:break-word;background:var(--bg);'
+    + 'border:1px solid var(--line);border-radius:var(--r-sm);padding:10px;'
+    + 'line-height:18px;max-height:240px;overflow:auto;user-select:text}',
+  '.mcart-reportnote{color:var(--ink3);word-break:break-all}',
+  '.mcart-stage{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px;'
+    + 'background:var(--card);border:1px solid var(--line);border-radius:var(--r-md);'
+    + 'box-shadow:var(--dsw-elevation-soft);padding:12px}',
+  '.mcart-toolbar{display:flex;align-items:center;gap:8px;flex:none}',
+  '.mcart-toolbar-facts{font-family:ui-monospace,Consolas,monospace;font-size:12px;'
+    + 'line-height:18px;font-variant-numeric:tabular-nums;color:var(--ink3);white-space:nowrap}',
+  '.mcart-toolbar-grow{flex:1;min-width:8px}',
+  '.mcart-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;'
+    + 'transition:opacity 300ms var(--ease);'
+    + 'flex-direction:column;gap:10px;scrollbar-width:thin;'
+    + 'scrollbar-color:var(--line-strong) transparent;overscroll-behavior:contain}',
+  '.mcart-viewport{position:relative;flex:1;min-height:0;border-radius:var(--r-md);'
+    + 'background:var(--canvas);box-shadow:inset 0 0 0 1px var(--line-strong);'
+    + 'overflow:hidden}',
+  '.mcart-zoom{position:absolute;right:10px;bottom:10px;display:flex;gap:6px;z-index:2}',
   '.mcart-canvas{width:100%;height:100%;min-height:180px;display:block;'
-    + 'border-radius:var(--mc-radius-panel);background:var(--mc-canvas-bg);'
-    + 'border:1px solid var(--mc-line-1);cursor:grab;touch-action:none}',
+    + 'border-radius:var(--r-md);background:var(--canvas);cursor:grab;touch-action:none}',
   '.mcart-canvas:active{cursor:grabbing}',
-  '.mcart-viewport{position:relative;flex:1;min-height:0}',
-  '.mcart-zoom{position:absolute;right:var(--mc-s2);top:var(--mc-s2);display:flex;'
-    + 'gap:var(--mc-s1);opacity:.9}',
-  '.mcart-zoom:hover{opacity:1}',
-  '.mcart-zoombtn{width:var(--mc-control);height:var(--mc-control);padding:0;display:inline-flex;'
-    + 'align-items:center;justify-content:center;font-size:var(--mc-fs);line-height:1;'
-    + 'background:var(--mc-hud-bg);border-color:var(--mc-line-2);color:var(--mc-text-1)}',
-  '.mcart-axis{position:absolute;left:var(--mc-s2);bottom:var(--mc-s2);pointer-events:none;'
-    + 'opacity:.75}',
-  '.mcart-axis line{stroke:var(--mc-text-2);stroke-width:1;stroke-linecap:butt}',
+  '.mcart-zoombtn{width:26px;height:26px;padding:0;display:inline-flex;align-items:center;'
+    + 'justify-content:center;border:1px solid var(--line);border-radius:999px;'
+    + 'background:var(--glass);color:var(--ink);font-size:14px;line-height:1;cursor:pointer;'
+    + 'transition:background-color 150ms var(--ease)}',
+  '.mcart-zoombtn:hover{background:var(--active)}',
+  '.mcart-axis{position:absolute;left:10px;bottom:10px;pointer-events:none;opacity:.75}',
+  '.mcart-axis line{stroke:var(--ink3);stroke-width:1;stroke-linecap:butt}',
   '.mcart-axis-x{opacity:.9}',
   '.mcart-axis-y{opacity:.65}',
   '.mcart-axis-z{opacity:.45}',
   '.mcart-poster{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);'
     + 'image-rendering:pixelated;pointer-events:none}',
-  '.mcart-grip{display:flex;align-items:center;justify-content:center;height:5px;'
-    + 'cursor:ns-resize;touch-action:none}',
-  '.mcart-gripbar{width:32px;height:1px;background:var(--mc-line-2)}',
-  '.mcart-grip:hover .mcart-gripbar{background:var(--mc-brand)}',
+  '.mcart-grip{display:flex;align-items:center;justify-content:center;height:8px;'
+    + 'cursor:ns-resize;touch-action:none;flex:none}',
+  '.mcart-gripbar{width:36px;height:2px;border-radius:999px;background:var(--line-strong)}',
+  '.mcart-grip:hover .mcart-gripbar{background:var(--accent)}',
   '.mcart-hud{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;'
-    + 'align-items:center;gap:var(--mc-s1);padding:0 var(--mc-s2) var(--mc-s2);pointer-events:none}',
-  '.mcart-hudname{position:absolute;right:var(--mc-s2);'
-    + 'bottom:calc(var(--mc-control) + var(--mc-s4));font-family:var(--mc-mono);'
-    + 'font-size:var(--mc-fs2);font-variant-numeric:tabular-nums;color:var(--mc-text-2);'
-    + 'background:none;border:0;padding:0;pointer-events:none;white-space:nowrap}',
-  '.mcart-hudbar{display:flex;align-items:center;gap:var(--mc-s1);padding:var(--mc-s1);'
-    + 'border-radius:var(--mc-radius-panel);background:var(--mc-hud-bg);'
-    + 'border:1px solid var(--mc-line-2);pointer-events:auto}',
-  '.mcart-hudslot{width:var(--mc-control);height:var(--mc-control);padding:0;flex:none;'
-    + 'display:flex;align-items:center;justify-content:center;box-sizing:border-box;'
-    + 'border-radius:var(--mc-radius);border:1px solid var(--mc-line-2);'
-    + 'background:var(--mc-bg-1);cursor:pointer}',
-  '.mcart-hudslot:hover{border-color:var(--mc-brand)}',
-  '.mcart-hudslot[data-on="1"]{border-color:var(--mc-brand);outline:1px solid var(--mc-brand);'
-    + 'outline-offset:-2px}',
-  '.mcart-hudicon{width:18px;height:18px;display:block;image-rendering:pixelated}',
-  '.mcart-hudempty{background:transparent;border-color:var(--mc-line-1);cursor:default}',
-  '.mcart-hudpage{width:12px;height:var(--mc-control);padding:0;flex:none;font:inherit;'
-    + 'font-size:var(--mc-fs);line-height:1;color:var(--mc-text-2);background:none;border:0;'
-    + 'cursor:pointer}',
-  '.mcart-hudpage:hover{color:var(--mc-text-1)}',
+    + 'align-items:center;gap:4px;padding:0 8px 8px;pointer-events:none}',
+  '.mcart-hudname{position:absolute;right:10px;bottom:calc(26px + 16px);'
+    + 'font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:18px;'
+    + 'font-variant-numeric:tabular-nums;color:var(--ink3);background:none;border:0;padding:0;'
+    + 'pointer-events:none;white-space:nowrap}',
+  '.mcart-hudbar{display:flex;align-items:center;gap:2px;padding:4px;border-radius:var(--r-md);'
+    + 'background:var(--glass);border:1px solid var(--line);pointer-events:auto}',
+  '.mcart-hudslot{width:24px;height:24px;padding:0;flex:none;display:flex;align-items:center;'
+    + 'justify-content:center;box-sizing:border-box;border-radius:var(--r-sm);'
+    + 'border:1px solid var(--line);background:var(--bg);cursor:pointer;'
+    + 'transition:border-color 150ms var(--ease)}',
+  '.mcart-hudslot:hover{border-color:var(--line-strong)}',
+  '.mcart-hudslot[data-on="1"]{border-color:var(--accent);'
+    + 'box-shadow:inset 0 0 0 1px var(--accent)}',
+  '.mcart-hudicon{width:20px;height:20px;display:block;image-rendering:pixelated}',
+  '.mcart-hudempty{background:transparent;border-color:var(--line);cursor:default}',
+  '.mcart-hudpage{width:16px;height:24px;padding:0;flex:none;font:inherit;font-size:12px;'
+    + 'line-height:24px;color:var(--ink3);background:none;border:0;cursor:pointer}',
+  '.mcart-hudpage:hover{color:var(--ink)}',
   '.mcart-hudpage[disabled]{opacity:.4;cursor:default}',
-  '.mcart-hotbar{display:flex;gap:var(--mc-s1);flex-wrap:wrap;max-height:124px;overflow:auto}',
-  '.mcart-slot{width:var(--mc-control);height:var(--mc-control);box-sizing:border-box;'
-    + 'border:1px solid var(--mc-line-1);border-radius:var(--mc-radius);background:none;'
-    + 'background-size:cover;image-rendering:pixelated;padding:0;flex:none;cursor:pointer}',
-  '.mcart-slot:hover{border-color:var(--mc-line-2);background-color:var(--mc-hover)}',
-  '.mcart-slot[data-on="1"]{border-color:var(--mc-brand);outline:1px solid var(--mc-brand);'
-    + 'outline-offset:-2px}',
-  '.mcart-slotq{font-size:var(--mc-fs);line-height:1;color:var(--mc-text-2)}',
-  '.mcart-slotmissing{font-size:var(--mc-fs2);font-weight:600;color:var(--mc-warn)}',
-  '.mcart-slot[data-missing="1"],.mcart-hudslot[data-missing="1"]{border-color:var(--mc-warn)}',
-  '.mcart-edit{display:flex;flex-direction:column;gap:var(--mc-s2)}',
+  '.mcart-hotbar{display:flex;gap:2px;flex-wrap:wrap;max-height:124px;overflow:auto}',
+  '.mcart-slot{width:24px;height:24px;box-sizing:border-box;padding:0;flex:none;'
+    + 'border:1px solid var(--line);border-radius:var(--r-sm);background:none;'
+    + 'background-size:cover;image-rendering:pixelated;cursor:pointer;'
+    + 'transition:border-color 150ms var(--ease)}',
+  '.mcart-slot:hover{border-color:var(--line-strong);background-color:var(--hover)}',
+  '.mcart-slot[data-on="1"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}',
+  '.mcart-slotq{font-size:12px;line-height:1;color:var(--ink3)}',
+  '.mcart-slotmissing{font-size:11px;line-height:1;font-weight:600;'
+    + 'color:var(--dsw-alias-state-warn-primary,#e0a06c)}',
+  '.mcart-slot[data-missing="1"],.mcart-hudslot[data-missing="1"]{'
+    + 'border-color:var(--dsw-alias-state-warn-primary,#e0a06c)}',
+  '.mcart-chip{font-size:12px;line-height:22px;height:22px;padding:0 8px;'
+    + 'border-radius:999px;background:var(--hover);color:var(--ink3)}',
+  '.mcart-projects{max-height:240px;overflow:auto;display:flex;flex-direction:column;gap:2px}',
+  '.mcart-mods{border:1px solid var(--line);border-radius:var(--r-sm);padding:8px;'
+    + 'display:flex;flex-direction:column;gap:2px;max-height:200px;overflow:auto}',
   '.mcart-edit-canvas{display:block;width:100%;height:auto;max-height:52vh;object-fit:contain;'
-    + 'image-rendering:pixelated;border-radius:var(--mc-radius);background:var(--mc-canvas-bg);'
-    + 'margin:var(--mc-s2) 0;cursor:crosshair;touch-action:none}',
-  '.mcart-swatches{display:flex;gap:var(--mc-s1);flex-wrap:wrap;max-height:56px;overflow:auto}',
-  '.mcart-swatch{width:16px;height:16px;box-sizing:border-box;border-radius:var(--mc-radius);'
-    + 'border:1px solid var(--mc-line-2);cursor:pointer;padding:0;flex:none}',
-  '.mcart-swatch:hover{border-color:var(--mc-text-2)}',
-  '.mcart-color{width:var(--mc-control);height:var(--mc-control);box-sizing:border-box;'
-    + 'border-radius:var(--mc-radius);border:1px solid var(--mc-line-1);flex:none}',
-  '.mcart-picker{width:32px;height:var(--mc-control);padding:0;border:1px solid var(--mc-line-1);'
-    + 'border-radius:var(--mc-radius);background:none;flex:none;cursor:pointer}',
-  '.mcart-ref{display:flex;align-items:center;gap:var(--mc-s2);flex-wrap:wrap;'
-    + 'padding:var(--mc-s2) var(--mc-s4);border:1px solid var(--mc-line-1);'
-    + 'border-radius:var(--mc-radius-panel);background:var(--mc-bg-1);font-size:var(--mc-fs2)}',
-  '.mcart-ref-path{font-family:var(--mc-mono);color:var(--mc-text-2);word-break:break-all}',
-  '.mcart-report{white-space:pre-wrap;word-break:break-word;background:var(--mc-bg-2);'
-    + 'border:1px solid var(--mc-line-1);border-radius:var(--mc-radius-panel);'
-    + 'padding:var(--mc-s3);margin:var(--mc-s1) 0;line-height:14px;max-height:240px;'
-    + 'overflow:auto;user-select:text}',
-  '.mcart-reportnote{color:var(--mc-text-2);word-break:break-all}',
-  '.mcart-stack{display:flex;flex-direction:column;align-items:stretch;gap:var(--mc-s2)}',
-  '.mcart-stack>.mcart-btn{align-self:flex-start}',
-  '.mcart-prop-value{flex-wrap:wrap}',
-  '.mcart-prop-value>.mcart-input{flex:1 1 96px}',
-  '.mcart-prop-value>.mcart-btn{flex:none}',
-  '@container (max-width:260px){'
-    + '.mcart-prop{grid-template-columns:64px 1fr}'
-    + '.mcart-hint{padding-left:0}'
-    + '.mcart-item-id{max-width:46%}}',
+    + 'image-rendering:pixelated;border-radius:var(--r-sm);background:var(--canvas);'
+    + 'margin:6px 0;cursor:crosshair;touch-action:none}',
+  '.mcart-swatches{display:flex;gap:2px;flex-wrap:wrap;max-height:56px;overflow:auto}',
+  '.mcart-swatch{width:18px;height:18px;box-sizing:border-box;border-radius:var(--r-sm);'
+    + 'border:1px solid var(--line);cursor:pointer;padding:0;flex:none;'
+    + 'transition:border-color 150ms var(--ease)}',
+  '.mcart-swatch:hover{border-color:var(--line-strong)}',
+  '.mcart-color{width:28px;height:28px;box-sizing:border-box;border-radius:var(--r-sm);'
+    + 'border:1px solid var(--line);flex:none}',
+  '.mcart-picker{width:32px;height:28px;padding:0;border:1px solid var(--line);'
+    + 'border-radius:var(--r-sm);background:none;flex:none;cursor:pointer}',
+  '.mcart-complain{display:flex;align-items:center;gap:8px;height:36px;flex:none;'
+    + 'padding:0 4px 0 12px;border:1px solid var(--line);border-radius:999px;'
+    + 'background:var(--card);box-shadow:var(--dsw-elevation-soft);'
+    + 'transition:border-color 150ms var(--ease),box-shadow 150ms var(--ease)}',
+  '.mcart-complain:hover{border-color:var(--line-strong)}',
+  '.mcart-complain-icon{font-size:14px;line-height:1;color:var(--ink3);flex:none}',
+  '.mcart-complain-hint{flex:1;min-width:0;font-size:13px;line-height:18px;color:var(--ink3);'
+    + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.mcart-complain-send{width:26px;height:26px;padding:0;flex:none;border:0;border-radius:999px;'
+    + 'background:var(--primary);color:var(--on-primary);font:inherit;font-size:13px;'
+    + 'line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;'
+    + 'transition:background-color 150ms var(--ease),width 200ms var(--ease),'
+    + 'transform 120ms var(--ease)}',
+  '.mcart-complain-send:hover{background:var(--primary-hover)}',
+  '.mcart-complain-send:active{transform:scale(.98)}',
+  '.mcart-complain-send[data-inserted="1"]{width:auto;padding:0 10px;border-radius:999px}',
+  '.mcart-ref{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;'
+    + 'border:1px solid var(--line);border-radius:var(--r-md);background:var(--card);'
+    + 'box-shadow:var(--dsw-elevation-soft);font-size:13px}',
+  '.mcart-ref-path{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--ink3);'
+    + 'word-break:break-all}',
+  '@container (max-width:320px){.mcart-prop{grid-template-columns:64px 1fr}'
+    + '.mcart-hint{padding-left:0}}',
 ].join('')
 
 const CATEGORIES = [
@@ -943,6 +967,478 @@ function failureOf(reply) {
 }
 
 
+const LAUNCH_MEMORY_CHOICES = [1, 2, 3, 4, 6, 8]
+const LAUNCH_TAIL_MAX = 80
+const LAUNCH_POLL_MS = 700
+
+const LAUNCH_CSS = [
+  '.mcart-launchlog{max-height:220px;overflow-y:auto;margin:0;padding:8px 10px;'
+    + 'border:1px solid var(--line);border-radius:var(--r-sm);background:var(--canvas);'
+    + 'color:var(--ink2);font-family:ui-monospace,Consolas,monospace;font-size:12px;'
+    + 'line-height:16px;white-space:pre-wrap;word-break:break-all}',
+  '.mcart-launchok{color:var(--dsw-alias-state-success-primary,#7fc98a)}',
+  '.mcart-launchmeta{font-size:12px;color:var(--ink3)}',
+  '.mcart-launchmeta .mcart-id{font-size:12px}',
+].join('')
+
+let launchCssInstalled = false
+
+function launchEnsureCss(styles) {
+  if (launchCssInstalled === true) return
+  if (styles === undefined || styles === null || typeof styles.insert !== 'function') return
+  launchCssInstalled = true
+  try { styles.insert(LAUNCH_CSS) } catch (error) { /* 样式失败不该把面板弄没 */ }
+}
+
+function launchText(value) {
+  return value === undefined || value === null ? '' : String(value)
+}
+
+function launchArr(value) {
+  return Array.isArray(value) ? value : []
+}
+
+
+function launchForgeFirst(versions) {
+  const list = launchArr(versions).slice()
+  list.sort((left, right) => {
+    const leftForge = /forge/i.test(launchText(left.id)) ? 0 : 1
+    const rightForge = /forge/i.test(launchText(right.id)) ? 0 : 1
+    if (leftForge !== rightForge) return leftForge - rightForge
+    return 0
+  })
+  return list
+}
+
+function launchJavaLabel(java) {
+  const major = Number(java === null || java === undefined ? 0 : java.major)
+  const version = launchText(java === null || java === undefined ? '' : java.version)
+  const source = launchText(java === null || java === undefined ? '' : java.source)
+  const head = Number.isFinite(major) && major > 0 ? 'Java ' + String(major) : 'Java'
+  const body = version === '' ? head : head + ' · ' + version
+  return source === '' ? body : body + '（' + source + '）'
+}
+
+function launchVersionLabel(version) {
+  const id = launchText(version === null || version === undefined ? '' : version.id)
+  const missingJar = version !== null && version !== undefined && version.hasJar === false
+  return missingJar ? id + '（目录里没有 jar）' : id
+}
+
+function launchStatusText(status) {
+  if (status === null || status === undefined) return '未运行'
+  if (status.running === true) {
+    return '运行中 · pid ' + launchText(status.pid === null || status.pid === undefined ? '?' : status.pid)
+  }
+  const code = status.exitCode
+  if (code === null || code === undefined) return '已停止'
+  return '已退出 · 退出码 ' + String(code)
+}
+
+
+function launchHumanError(raw) {
+  const text = launchText(raw)
+  if (text === '') return '启动失败（宿主没有说明原因）。先看下面的日志尾巴。'
+  if (/没有选 JDK|这个 JDK 跑不起来|JAVA_HOME/.test(text)) {
+    return '没找到能用的 JDK。1.18.2 要 Java 17 —— 用下面的「JDK」下拉换一个（带 Java 17 的那项是游戏自带的），或者把 JAVA_HOME 指到 17 再点「重新探测」。'
+  }
+  if (/没有 subprocess/.test(text)) {
+    return '这个宿主起不了子进程（没有 subprocess 服务），所以启动不了游戏 —— 换桌面版宿主再试。'
+  }
+  if (/游戏文件不全/.test(text)) {
+    return text + ' 先用启动器把 1.18.2 完整跑一次（缺的库会补上），再回来启动。'
+  }
+  if (/找不到版本 JSON/.test(text)) return text
+  if (/natives/.test(text)) {
+    return text + ' 解压工具（tar / Expand-Archive）可能不可用；关掉杀毒软件再试，或手动解开 natives。'
+  }
+  if (/已经有一个游戏在跑/.test(text)) return text
+  return '启动失败：' + text
+}
+
+
+function launchDefaultForm(previous, gameRoots, versions, javas) {
+  const previousRoot = previous === null || previous === undefined ? '' : launchText(previous.gameRoot)
+  const previousDir = previous === null || previous === undefined ? '' : launchText(previous.gameDir)
+  const form = previous === null || previous === undefined
+    ? { gameRoot: '', versionId: '', javaPath: '', memoryMb: 4, gameDir: '' }
+    : Object.assign({}, previous)
+  if (form.gameRoot === '' || launchArr(gameRoots).indexOf(form.gameRoot) < 0) {
+    form.gameRoot = launchArr(gameRoots).length > 0 ? gameRoots[0] : form.gameRoot
+  }
+  const rootVersions = launchForgeFirst(launchArr(versions).filter((item) =>
+    item === null || item === undefined || item.root === undefined || item.root === form.gameRoot))
+  const usable = rootVersions.filter((item) => item !== null && item !== undefined && item.hasJar !== false)
+  const list = usable.length > 0 ? usable : rootVersions
+  const hasCurrent = list.some((item) => launchText(item.id) === form.versionId)
+  if (form.versionId === '' || hasCurrent !== true) {
+    form.versionId = list.length > 0 ? launchText(list[0].id) : ''
+  }
+  const version = list.filter((item) => launchText(item.id) === form.versionId)[0]
+  const wanted = version !== undefined && version !== null && Number(version.javaMajor) > 0
+    ? Number(version.javaMajor) : 17
+  const hasJava = launchArr(javas).some((item) => launchText(item.path) === form.javaPath)
+  if (form.javaPath === '' || hasJava !== true) {
+    const exact = launchArr(javas).filter((item) => Number(item.major) === wanted)[0]
+    const seventeen = launchArr(javas).filter((item) => Number(item.major) === 17)[0]
+    const chosen = exact !== undefined ? exact : (seventeen !== undefined ? seventeen : launchArr(javas)[0])
+    form.javaPath = chosen === undefined || chosen === null ? '' : launchText(chosen.path)
+  }
+  if (previousDir === '' || previousDir === previousRoot) form.gameDir = form.gameRoot
+  if (!Array.isArray(form.gameRoot)) form.gameRoot = launchText(form.gameRoot)
+  return form
+}
+
+function launchProjectRunDir(root, projectId) {
+  const base = launchText(root)
+  const id = launchText(projectId)
+  if (base === '') return ''
+  return id === '' ? base + '/run' : base + '/' + id + '/run'
+}
+
+
+function LaunchCard(props) {
+  const host = props.host
+  const timer = props.timer
+  const styles = props.styles
+  const root = launchText(props.root)
+  const projectId = props.projectId === undefined || props.projectId === null ? '' : launchText(props.projectId)
+
+  const targetsPair = React.useState(null)
+  const targets = targetsPair[0], setTargets = targetsPair[1]
+  const formPair = React.useState(null)
+  const form = formPair[0], setForm = formPair[1]
+  const statusPair = React.useState(null)
+  const status = statusPair[0], setStatus = statusPair[1]
+  const busyPair = React.useState(false)
+  const busy = busyPair[0], setBusy = busyPair[1]
+  const noticePair = React.useState(null)
+  const notice = noticePair[0], setNotice = noticePair[1]
+  const reloadPair = React.useState(0)
+  const reloadTick = reloadPair[0], setReloadTick = reloadPair[1]
+  const logRef = React.useRef(null)
+
+  const call = (name, args) => {
+    if (host === null || host === undefined || typeof host.call !== 'function') {
+      return Promise.reject(new Error('面板没有连上宿主（host.call 不可用）'))
+    }
+    return host.call(name, args === undefined ? {} : args)
+  }
+
+  React.useEffect(() => { launchEnsureCss(styles) }, [])
+
+  React.useEffect(() => {
+    let alive = true
+    setTargets({ loading: true, error: null, gameRoots: [], versions: [], javas: [], javaRejected: [] })
+    call('atlas.launchTargets', { root: root, project: projectId }).then((result) => {
+      if (alive !== true) return
+      if (result === null || result === undefined) {
+        setTargets({ loading: false, error: '宿主没有返回启动目标（插件版本比面板旧？）', gameRoots: [], versions: [], javas: [], javaRejected: [] })
+        return
+      }
+      if (result.error !== undefined && result.error !== null) {
+        setTargets({ loading: false, error: launchText(result.error), gameRoots: [], versions: [], javas: [], javaRejected: [] })
+        return
+      }
+      const gameRoots = launchArr(result.gameRoots)
+      const versions = launchArr(result.versions)
+      const javas = launchArr(result.javas)
+      setTargets({ loading: false, error: null, gameRoots: gameRoots, versions: versions, javas: javas,
+        javaRejected: launchArr(result.javaRejected), settingsDirectory: launchText(result.settingsDirectory) })
+      setForm((previous) => launchDefaultForm(previous, gameRoots, versions, javas))
+    }).catch((error) => {
+      if (alive !== true) return
+      const text = launchText(error === undefined || error === null ? '' : error.message)
+      setTargets({ loading: false,
+        error: /没有这个方法/.test(text) ? '这个宿主还没有启动器（插件和面板版本对不上）。重载插件/重启应用再试。' : '探测启动目标失败：' + text,
+        gameRoots: [], versions: [], javas: [], javaRejected: [] })
+    })
+    return () => { alive = false }
+  }, [root, projectId, reloadTick])
+
+  const running = status !== null && status !== undefined && status.running === true
+  React.useEffect(() => {
+    if (running !== true) return undefined
+    if (timer === null || timer === undefined || typeof timer.interval !== 'function') return undefined
+    let dispose = null
+    try {
+      dispose = timer.interval(() => {
+        call('atlas.launchStatus', {}).then((result) => {
+          if (result === null || result === undefined) return
+          setStatus(result)
+        }).catch(() => { /* 一帧读失败不刷屏：下一帧再试 */ })
+      }, LAUNCH_POLL_MS)
+    } catch (error) { dispose = null }
+    return () => { try { if (typeof dispose === 'function') dispose() } catch (error) { /* 已释放 */ } }
+  }, [running])
+
+  const tailLines = status === null || status === undefined ? [] : launchArr(status.tail).slice(-LAUNCH_TAIL_MAX)
+  const tailKey = tailLines.length === 0 ? '' : String(tailLines.length) + '|' + launchText(tailLines[tailLines.length - 1])
+  React.useEffect(() => {
+    const node = logRef.current
+    if (node === null || node === undefined) return
+    try { node.scrollTop = node.scrollHeight } catch (error) { /* 不是真 DOM */ }
+  }, [tailKey])
+
+  const pickVersion = (version) => {
+    if (form === null) return
+    const wanted = version !== null && version !== undefined && Number(version.javaMajor) > 0
+      ? Number(version.javaMajor) : 17
+    const javas = targets === null ? [] : launchArr(targets.javas)
+    const exact = javas.filter((item) => Number(item.major) === wanted)[0]
+    const seventeen = javas.filter((item) => Number(item.major) === 17)[0]
+    const chosen = exact !== undefined ? exact : (seventeen !== undefined ? seventeen : javas[0])
+    setForm(Object.assign({}, form, {
+      versionId: launchText(version === null || version === undefined ? '' : version.id),
+      javaPath: chosen === undefined || chosen === null ? form.javaPath : launchText(chosen.path),
+    }))
+  }
+
+  const update = (patch) => {
+    if (form === null) return
+    setForm(Object.assign({}, form, patch))
+  }
+
+  const startGame = () => {
+    if (form === null || busy === true) return
+    if (launchText(form.gameRoot) === '') { setNotice('还没有游戏目录（.minecraft）——先在上面的「游戏目录」里填一个。'); return }
+    if (launchText(form.versionId) === '') { setNotice('还没有选版本 —— 下拉里没有版本的话，游戏目录可能指错了。'); return }
+    if (launchText(form.javaPath) === '') { setNotice('没找到 JDK 17：用「JDK」下拉换一个，或把 JAVA_HOME 指到 17 再点「重新探测」。'); return }
+    setBusy(true)
+    setNotice(null)
+    call('atlas.launch', {
+      root: root, project: projectId,
+      gameRoot: form.gameRoot, versionId: form.versionId, javaPath: form.javaPath,
+      gameDir: form.gameDir,
+      memoryMb: (Number(form.memoryMb) || 4) * 1024,
+    }).then((result) => {
+      setBusy(false)
+      if (result === null || result === undefined) { setNotice('启动失败：宿主没有返回结果。'); return }
+      if (result.error !== undefined && result.error !== null) { setNotice(launchHumanError(result.error)); return }
+      setStatus({ running: true, pid: result.pid, startedAt: result.startedAt, exitCode: null, tail: [] })
+      if (result.warning !== undefined && result.warning !== null && launchText(result.warning) !== '') {
+        setNotice('已经启动，但注意：' + launchText(result.warning))
+      } else {
+        setNotice('已经启动（pid ' + launchText(result.pid) + '）。日志在下面实时跟。')
+      }
+    }).catch((error) => {
+      setBusy(false)
+      setNotice(launchHumanError(error === undefined || error === null ? '' : error.message))
+    })
+  }
+
+  const stopGame = () => {
+    if (busy === true) return
+    setBusy(true)
+    setNotice(null)
+    call('atlas.launchStop', {}).then((result) => {
+      setBusy(false)
+      if (result !== null && result !== undefined && result.stopped === true) {
+        setNotice('已停止' + (result.exitCode === null || result.exitCode === undefined ? '' : '（退出码 ' + String(result.exitCode) + '）') + '。')
+      } else if (result !== null && result !== undefined && result.detail !== undefined && launchText(result.detail) !== '') {
+        setNotice(launchText(result.detail))
+      } else {
+        setNotice('没有在跑的游戏。')
+      }
+      return call('atlas.launchStatus', {})
+    }).then((result) => {
+      if (result !== null && result !== undefined) setStatus(result)
+    }).catch((error) => {
+      setBusy(false)
+      setNotice('停止失败：' + launchText(error === undefined || error === null ? '' : error.message))
+    })
+  }
+
+  if (form === null || targets === null) {
+    return React.createElement('div', { className: 'mcart-card' },
+      React.createElement('div', { className: 'mcart-bar' },
+        React.createElement('span', { className: 'mcart-title' }, '启动游戏'),
+        React.createElement('span', { className: 'mcart-sub' }, '读取中…')))
+  }
+
+  const gameRoots = launchArr(targets.gameRoots)
+  const versions = launchForgeFirst(launchArr(targets.versions).filter((item) =>
+    item === null || item === undefined || item.root === undefined || item.root === form.gameRoot))
+  const javas = launchArr(targets.javas)
+  const selectedVersion = versions.filter((item) => launchText(item.id) === launchText(form.versionId))[0]
+  const selectedJava = javas.filter((item) => launchText(item.path) === launchText(form.javaPath))[0]
+  const javaMajor = selectedJava === undefined || selectedJava === null ? 0 : Number(selectedJava.major)
+  const wantedMajor = selectedVersion === undefined || selectedVersion === null || !(Number(selectedVersion.javaMajor) > 0)
+    ? 0 : Number(selectedVersion.javaMajor)
+  const mismatch = wantedMajor > 0 && javaMajor > 0 && wantedMajor !== javaMajor
+
+  const prop = (key, label, value) => React.createElement('div', { className: 'mcart-prop', key: key },
+    React.createElement('span', { className: 'mcart-prop-label' }, label),
+    React.createElement('span', { className: 'mcart-prop-value' }, value))
+  const hint = (key, text) => prop(key, '', React.createElement('span', { className: 'mcart-note' }, text))
+  const row = (key, children) => React.createElement('div', { className: 'mcart-bar', key: key }, children)
+
+  const rows = []
+  rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },
+    React.createElement('span', { className: 'mcart-title' }, '启动游戏'),
+    React.createElement('span', { className: running ? 'mcart-sub mcart-launchok' : 'mcart-sub' }, launchStatusText(status)),
+    React.createElement('span', { className: 'mcart-headgrow' }),
+    React.createElement('button', {
+      className: 'mcart-btn', type: 'button',
+      title: '重新探测游戏目录 / 版本 / JDK',
+      onClick: () => { setReloadTick(reloadTick + 1); setNotice(null) },
+    }, '重新探测')))
+
+  if (targets.loading === true) {
+    rows.push(React.createElement('div', { className: 'mcart-note', key: 'loading' }, '正在找游戏目录、版本和 JDK…（JDK 会真的跑一次 -version）'))
+  } else if (targets.error !== null && targets.error !== undefined) {
+    rows.push(React.createElement('div', { className: 'mcart-err', key: 'err' }, launchText(targets.error)))
+  }
+
+  if (gameRoots.length === 0) {
+    rows.push(prop('gameroot-input', '游戏目录', [
+      React.createElement('input', {
+        key: 'in', className: 'mcart-input', type: 'text',
+        placeholder: '%APPDATA%\\.minecraft 或某个整合包的 .minecraft',
+        value: launchText(form.gameRoot),
+        onChange: (event) => {
+          const next = launchText(event.target.value)
+          update({ gameRoot: next })
+        },
+      }),
+      React.createElement('button', {
+        key: 'probe', className: 'mcart-btn', type: 'button',
+        onClick: () => { setReloadTick(reloadTick + 1); setNotice(null) },
+      }, '用这个目录'),
+    ]))
+    rows.push(React.createElement('div', { className: 'mcart-note', key: 'nogame' },
+      '没自动找到游戏目录。把 .minecraft 的完整路径贴进上面那栏再点「用这个目录」；'
+      + '也可以先在上面填好，点「重新探测」会读它的 versions/。'))
+  } else {
+    rows.push(prop('gameroot', '游戏目录', React.createElement('select', {
+      className: 'mcart-select', value: launchText(form.gameRoot),
+      onChange: (event) => {
+        const next = launchText(event.target.value)
+        const old = launchText(form.gameRoot)
+        const nextDir = launchText(form.gameDir) === '' || launchText(form.gameDir) === old ? next : form.gameDir
+        setForm(Object.assign({}, form, { gameRoot: next, gameDir: nextDir }))
+      },
+    }, gameRoots.map((item) => React.createElement('option', { key: item, value: item }, item)))))
+  }
+
+  if (versions.length === 0) {
+    rows.push(prop('version', '版本', React.createElement('span', { className: 'mcart-note' },
+      launchText(form.gameRoot) === '' ? '先给游戏目录' : '这个游戏目录里没有可启动的版本（versions/ 是空的）')))
+  } else {
+    rows.push(prop('version', '版本', React.createElement('select', {
+      className: 'mcart-select', value: launchText(form.versionId),
+      onChange: (event) => {
+        const id = launchText(event.target.value)
+        pickVersion(versions.filter((item) => launchText(item.id) === id)[0])
+      },
+    }, versions.map((item) => React.createElement('option', {
+      key: launchText(item.id) + '|' + launchText(item.root), value: launchText(item.id),
+    }, launchVersionLabel(item))))))
+    if (selectedVersion !== undefined && selectedVersion !== null) {
+      const chain = launchArr(selectedVersion.chain)
+      const bits = []
+      if (selectedVersion.mainClass !== undefined && launchText(selectedVersion.mainClass) !== '') bits.push(launchText(selectedVersion.mainClass))
+      if (wantedMajor > 0) bits.push('要 Java ' + String(wantedMajor))
+      if (selectedVersion.hasJar === false) bits.push('目录里没有客户端 jar（启动会失败）')
+      rows.push(hint('versionhint', bits.join(' · ')))
+    }
+  }
+
+  if (javas.length === 0) {
+    rows.push(prop('java', 'JDK', React.createElement('span', { className: 'mcart-err' },
+      '没找到 JDK。1.18.2 要 Java 17 —— 装一个，或把 JAVA_HOME 指到 17，再点右上「重新探测」。')))
+    const rejected = launchArr(targets.javaRejected)
+    if (rejected.length > 0) {
+      rows.push(hint('javahint', '试过但用不了：' + rejected.slice(0, 3).map((item) =>
+        launchText(item.path) + '（' + launchText(item.why) + '）').join('；')))
+    }
+  } else {
+    rows.push(prop('java', 'JDK', [
+      React.createElement('select', {
+        key: 'sel', className: 'mcart-select', value: launchText(form.javaPath),
+        onChange: (event) => update({ javaPath: launchText(event.target.value) }),
+      }, javas.map((item) => React.createElement('option', {
+        key: launchText(item.path), value: launchText(item.path), title: launchText(item.path),
+      }, launchJavaLabel(item)))),
+      javaMajor === 17
+        ? React.createElement('span', { key: 'ok', className: 'mcart-launchok', title: '1.18.2 这一代要 Java 17' }, '17')
+        : null,
+    ]))
+    if (selectedJava !== undefined && selectedJava !== null) {
+      rows.push(hint('javahint', launchText(selectedJava.path)))
+    }
+    if (mismatch) {
+      rows.push(React.createElement('div', { className: 'mcart-bad', key: 'mismatch' },
+        '版本要 Java ' + String(wantedMajor) + '，现在选的是 Java ' + String(javaMajor)
+        + (javas.some((item) => Number(item.major) === wantedMajor) ? ' —— 用下拉换成 Java ' + String(wantedMajor) + ' 那项' : '（本机没探测到这个版本要的 JDK）')))
+    }
+  }
+
+  rows.push(prop('memory', '内存', React.createElement('select', {
+    className: 'mcart-select', value: String(Number(form.memoryMb) || 4),
+    onChange: (event) => update({ memoryMb: Number(event.target.value) || 4 }),
+  }, LAUNCH_MEMORY_CHOICES.map((gb) => React.createElement('option', { key: String(gb), value: String(gb) },
+    String(gb) + ' GB')))))
+
+  rows.push(prop('gamedir', '游戏目录', [
+    React.createElement('input', {
+      key: 'in', className: 'mcart-input', type: 'text',
+      placeholder: '存档/配置的目录（默认 = 游戏根）',
+      value: launchText(form.gameDir),
+      onChange: (event) => update({ gameDir: launchText(event.target.value) }),
+    }),
+    React.createElement('button', {
+      key: 'run', className: 'mcart-btn', type: 'button',
+      title: '填成项目里的 run/（模组开发常用）',
+      onClick: () => update({ gameDir: launchProjectRunDir(root, projectId) }),
+    }, '用项目 run/'),
+  ]))
+
+  rows.push(row('actions', [
+    React.createElement('button', {
+      key: 'start', className: 'mcart-btn mcart-primary', type: 'button',
+      disabled: busy === true || running === true || form === null,
+      onClick: startGame,
+    }, busy === true ? '…' : '启动'),
+    React.createElement('button', {
+      key: 'stop', className: 'mcart-btn', type: 'button',
+      disabled: busy === true || running !== true,
+      onClick: stopGame,
+    }, '停止'),
+    status !== null && status !== undefined && status.exitCode !== null && status.exitCode !== undefined
+      ? React.createElement('span', {
+        key: 'code',
+        className: status.exitCode === 0 ? 'mcart-num mcart-launchok' : 'mcart-num mcart-bad',
+      }, '退出码 ' + String(status.exitCode))
+      : null,
+  ]))
+
+  if (notice !== null && notice !== undefined) {
+    const isError = /失败|没找到|用不了|起不来|注意/.test(launchText(notice))
+    rows.push(React.createElement('div', { key: 'notice', className: isError ? 'mcart-bad' : 'mcart-note' }, launchText(notice)))
+  }
+  const statusNote = status === null || status === undefined ? '' : launchText(status.note)
+  if (statusNote !== '') {
+    rows.push(React.createElement('div', { key: 'statusnote', className: 'mcart-bad' }, statusNote))
+  }
+
+  const logRows = []
+  logRows.push(React.createElement('pre', {
+    key: 'tail', className: 'mcart-launchlog', ref: logRef,
+    'aria-label': '启动日志尾巴',
+  }, tailLines.length === 0
+    ? (running === true ? '（还没有输出 —— JVM 启动中，通常几秒内会出第一行）' : '（还没有日志 —— 点「启动」之后这里会实时跟）')
+    : tailLines.join('\n')))
+  const logFile = status === null || status === undefined ? '' : launchText(status.logFile)
+  logRows.push(React.createElement('div', { key: 'where', className: 'mcart-launchmeta' },
+    '最多 ' + String(LAUNCH_TAIL_MAX) + ' 行 · 自动贴底'
+    + (logFile === '' ? '' : ' · 完整日志：') ,
+    logFile === '' ? null : React.createElement('span', { className: 'mcart-id', title: logFile }, logFile)))
+  rows.push(prop('log', '日志', React.createElement('div', { className: 'mcart-stack' }, logRows)))
+
+  return React.createElement('div', { className: 'mcart-card mcart-launch' }, rows)
+}
+
 const DIAG_REASON = {
   'project-model-missing': '项目包里缺这个模型文件（要补的是项目自己的文件，不是原版的）',
   'vanilla-parent-missing': '原版母模型没取到（参考目录没设对，或那个 jar 里确实没有）',
@@ -998,7 +1494,7 @@ function diagLines(diag, error) {
       + (entry.fixPath === '' ? '' : ' —— 要动这个文件：' + entry.fixPath))
   }
   lines.push(diag.referenceDirectory === ''
-    ? '参考目录：没设。点右上角 ⚙ 把 .minecraft / 版本目录 / mods 目录的路径贴进去'
+    ? '参考目录：没设。点右上角的「设置」把 .minecraft / 版本目录 / mods 目录的路径贴进去'
     : '参考目录：' + diag.referenceDirectory)
   if (diag.tried.length > 0) {
     lines.push('已经试过：')
@@ -1381,6 +1877,8 @@ return {
       const modsOpenPair = React.useState(false)
       const rootPair = React.useState(roots[sessionId] === undefined ? '' : roots[sessionId])
       const index = indexPair[0], setIndex = indexPair[1]
+      const complainInsertedPair = React.useState(false)
+      const complainInserted = complainInsertedPair[0], setComplainInserted = complainInsertedPair[1]
       const failure = failurePair[0], setFailure = failurePair[1]
       const emptyRoot = emptyPair[0], setEmptyRoot = emptyPair[1]
       const newId = newIdPair[0], setNewId = newIdPair[1]
@@ -3315,23 +3813,24 @@ return {
           const refPath = scene.ref === undefined || scene.ref === null ? '' : String(scene.ref)
           if (refPath === '') {
             setItemMsg('这个资产没有可以引用的文件路径（报告里的 @ 引用不可用）')
-            return
+            return false
           }
-          if (insertReference(refPath)) { setPending(null); return }
+          if (insertReference(refPath)) { setPending(null); return true }
           setPending({ path: refPath, title: scene.title || '' })
-          return
+          return false
         }
         const asset = itemAsset()
-        if (asset === null) return
+        if (asset === null) return false
         const path = asset.recipe === null || asset.recipe.modelPath === undefined
           ? '' : String(asset.recipe.modelPath)
         if (path === '') {
           setItemMsg(asset.title + ' 在参考的 jar 里，没有可以引用的文件')
-          return
+          return false
         }
         setItemMsg(null)
-        if (insertReference(path)) { setPending(null); return }
+        if (insertReference(path)) { setPending(null); return true }
         setPending({ path: path, title: asset.title })
+        return false
       }
 
 
@@ -3509,7 +4008,14 @@ return {
 
       if (root === '') {
         const card = []
-        card.push(React.createElement('div', { className: 'mcart-note', key: 'hint' }, '未指定资产路径'))
+        const nearbyCount = nearby === null || nearby.projects === undefined
+          ? 0 : nearby.projects.length
+        card.push(React.createElement('div', { className: 'mcart-empty', key: 'hero' },
+          React.createElement('div', { className: 'mcart-empty-title' }, '还没有打开项目'),
+          React.createElement('div', { className: 'mcart-empty-note' },
+            '本会话目录里找到 ', React.createElement('span', { className: 'mcart-empty-num' }, String(nearbyCount)), ' 个项目'),
+          React.createElement('div', { className: 'mcart-empty-note' },
+            '选一个项目目录，或者从下面的候选里打开。')))
         card.push(React.createElement('div', { className: 'mcart-stack', key: 'input' },
           React.createElement('input', {
             className: 'mcart-input', placeholder: '/path/to/project',
@@ -3544,9 +4050,9 @@ return {
         }
 
         card.push(React.createElement('div', { className: 'mcart-bar', key: 'buttons' },
-          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: picking,
+          React.createElement('button', { className: 'mcart-btn mcart-pill mcart-primary', type: 'button', disabled: picking,
             onClick: pickDirectory }, picking ? '对话框已打开…' : '选择目录…'),
-          nearby !== null && nearby.cwd !== '' ? React.createElement('button', { className: 'mcart-btn', type: 'button',
+          nearby !== null && nearby.cwd !== '' ? React.createElement('button', { className: 'mcart-btn mcart-pill', type: 'button',
             onClick: () => commitRoot(nearby.cwd) }, '用本会话目录') : null,
         ))
 
@@ -3566,6 +4072,10 @@ return {
         const valid = /^[a-z0-9_]{2,32}$/.test(id)
         const reference = settings === null ? null : settings.directory
         const rows = []
+        rows.push(React.createElement('div', { className: 'mcart-empty', key: 'empty' },
+          React.createElement('div', { className: 'mcart-empty-title' }, '这里还是空的'),
+          React.createElement('div', { className: 'mcart-empty-note' },
+            React.createElement('span', { className: 'mcart-empty-num' }, '0'), ' 个项目 · 建一个就能开始')))
         rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },
           React.createElement('span', { className: 'mcart-title' }, '开始一个新模组'),
           React.createElement('span', { className: 'mcart-sub' }, '三步：目录 → 建项目 → 参考目录')))
@@ -3591,7 +4101,7 @@ return {
         rows.push(React.createElement('div', { className: 'mcart-hint', key: 'where' }, '建在：' + here))
         rows.push(React.createElement('div', { className: reference === null || reference === '' ? 'mcart-hint' : 'mcart-note', key: 'ref' },
           reference === null || reference === ''
-            ? '建完下一步：点右上角 ⚙ 指定参考目录（面板会列出自动探测到的游戏目录）。不指定也能用，只是看不到原版/模组的参照。'
+            ? '建完下一步：点右上角的「设置」指定参考目录（面板会列出自动探测到的游戏目录）。不指定也能用，只是看不到原版/模组的参照。'
             : '参考目录已经设好了：' + reference))
         if (failure !== null) rows.push(React.createElement('div', { key: 'err' }, failureView(failure)))
         return React.createElement('div', { className: 'mcart-card', key: 'guide' }, rows)
@@ -3634,18 +4144,20 @@ return {
       }
 
       const projects = index === null ? [] : (index.projects || [])
-      const menu = []
+      const menuCards = []
       for (const project of projects) {
         const prefix = projects.length > 1 ? project.title + ' · ' : ''
         for (const category of CATEGORIES) {
           const items = (project.items && project.items[category.key]) || []
           if (items.length === 0) continue
-          menu.push(React.createElement('div', {
-            className: 'mcart-group-head', key: 'p' + project.id + category.key,
-          }, prefix + category.label + ' · ' + items.length))
+          const rows = [
+            React.createElement('div', { className: 'mcart-group-head', key: 'head' },
+              React.createElement('span', { className: 'mcart-group-title' }, prefix + category.label),
+              React.createElement('span', { className: 'mcart-group-count' }, String(items.length))),
+          ]
           for (const item of items) {
             const on = choice !== null && choice.project === project.id && choice.kind === category.key && choice.id === item.id
-            menu.push(React.createElement('button', {
+            rows.push(React.createElement('button', {
               key: project.id + '/' + category.key + '/' + item.id, type: 'button',
               className: 'mcart-item', 'data-on': on ? '1' : '0',
               title: item.id,
@@ -3655,6 +4167,9 @@ return {
             item.title === item.id ? null
               : React.createElement('span', { className: 'mcart-item-id' }, item.id)))
           }
+          menuCards.push(React.createElement('div', {
+            className: 'mcart-card mcart-menu-card', key: 'card' + project.id + category.key,
+          }, rows))
         }
       }
 
@@ -3676,9 +4191,6 @@ return {
             className: 'mcart-icon', type: 'button', title: '手动修改（按面编辑这张贴图）',
             'aria-label': '手动修改', onClick: openEditor,
           }, '✎'),
-          React.createElement('button', {
-            className: 'mcart-btn mcart-primary', type: 'button', onClick: complain,
-          }, '@ 提意见'),
         ))
         if (bad > 0) stage.push(React.createElement('div', { className: 'mcart-bad', key: 'bad' }, bad + ' 张贴图解码失败'))
         if (scene.errors && scene.errors.length > 0) {
@@ -3734,9 +4246,6 @@ return {
               className: 'mcart-icon', type: 'button', title: '手动修改（按面编辑这张贴图）',
               'aria-label': '手动修改', onClick: openEditor,
             }, '✎'),
-            React.createElement('button', {
-              className: 'mcart-btn mcart-primary', type: 'button', onClick: complain,
-            }, '@ 提意见'),
           ))
         }
       }
@@ -3883,8 +4392,8 @@ return {
         const settingsTitle = settings.title || settings.project || '项目'
         return React.createElement('div', { className: 'mcart-root' },
           React.createElement('div', { className: 'mcart-head' },
-            React.createElement('span', { className: 'mcart-settings-prefix' }, '设置'),
-            React.createElement('span', { className: 'mcart-settings-title', title: settingsTitle }, settingsTitle),
+            React.createElement('span', { className: 'mcart-title' }, '设置'),
+            React.createElement('span', { className: 'mcart-headpath', title: settingsTitle }, settingsTitle),
             React.createElement('span', { className: 'mcart-headgrow' }),
             React.createElement('button', {
               className: 'mcart-icon', type: 'button', title: '返回资产列表',
@@ -3896,18 +4405,25 @@ return {
       }
       return React.createElement('div', { className: 'mcart-root' },
         React.createElement('div', { className: 'mcart-head' },
+          React.createElement('span', { className: 'mcart-title' }, 'MC 资产'),
           React.createElement('span', { className: 'mcart-headpath', title: root },
             root === '' ? '未选择项目' : root),
           React.createElement('span', { className: 'mcart-headgrow' }),
-          React.createElement('button', {
-            className: 'mcart-icon', type: 'button', title: '物品列表（浏览器）',
-            'aria-label': '物品列表', 'data-on': itemOpen ? '1' : '0',
-            onClick: openItems,
-          }, '▤'),
-          React.createElement('button', {
-            className: 'mcart-icon', type: 'button', title: '设置', 'aria-label': '设置',
-            onClick: openSettings,
-          }, settings === null ? '⚙' : '⚙▾'),
+          React.createElement('div', { className: 'mcart-tabs' },
+            React.createElement('button', {
+              className: 'mcart-tab', type: 'button', title: '资产列表',
+              'data-on': itemOpen ? '0' : '1',
+              onClick: () => { if (itemOpen) setItemOpen(false) },
+            }, '资产'),
+            React.createElement('button', {
+              className: 'mcart-tab', type: 'button', title: '物品列表', 'aria-label': '物品列表',
+              'data-on': itemOpen ? '1' : '0', onClick: openItems,
+            }, '物品'),
+            React.createElement('button', {
+              className: 'mcart-tab', type: 'button', title: '设置', 'aria-label': '设置',
+              'data-on': '0', onClick: openSettings,
+            }, '设置'),
+          ),
           React.createElement('button', {
             className: 'mcart-icon', type: 'button', title: '回到项目根（换一个项目）',
             'aria-label': '返回项目根', onClick: forgetProject,
@@ -3927,10 +4443,30 @@ return {
         emptyRoot === null ? null : guideCard(),
         failure === null ? null : failureView(failure),
         diagnosticCard(),
-        React.createElement('div', { className: 'mcart-list' }, menu),
+        menuCards,
+        React.createElement(LaunchCard, {
+          host: host, timer: timer, styles: styles, root: root, projectId: activeProjectId(),
+        }),
         editorCard(),
         voxelCard(),
         itemOpen ? itemCard() : null,
+        ),
+        React.createElement('div', { className: 'mcart-complain' },
+          React.createElement('span', { className: 'mcart-complain-icon' }, '✎'),
+          React.createElement('span', { className: 'mcart-complain-hint' },
+            '提意见：把 @ 路径和一句话插进输入框'),
+          React.createElement('button', {
+            className: 'mcart-btn mcart-complain-send mcart-primary', type: 'button',
+            title: '提意见', 'aria-label': '提意见',
+            'data-inserted': complainInserted ? '1' : '0',
+            onClick: () => {
+              const inserted = complain()
+              if (inserted !== false) {
+                setComplainInserted(true)
+                try { timer.timeout(() => setComplainInserted(false), 1200) } catch (error) { /* 没有定时器就保持 */ }
+              }
+            },
+          }, complainInserted ? '已插入' : '→'),
         ),
         React.createElement('div', { className: 'mcart-stage' }, stage),
         React.createElement('div', { style: { display: 'none' } },
@@ -4080,7 +4616,7 @@ return {
 }
 
     // <<< mcart:embedded-source
-    })(React, host, styles, console, "0.3.5")
+    })(React, host, styles, console, "0.3.6")
     if (plugin === null || typeof plugin !== 'object' || typeof plugin.apply !== 'function') {
       throw new Error('mcart 客户端源码没有返回一个带 apply 的插件')
     }

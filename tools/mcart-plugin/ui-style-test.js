@@ -1,24 +1,24 @@
-// 专业工具风格的**样式门禁**（判据：`docs/UI-STYLE.md`）。
+// 样式门禁（判据：`docs/UI-STYLE.md` **v2：向「自媒体工作台」靠近**）。
 //
-// 为什么要有这条：风格是"一整批 CSS 的性质"，靠人眼每次审很容易漂回去 —— 一个
-// `linear-gradient`、一个 8px 圆角、一个 16px 大留白就能把"专业工具"变回"AI 味"。
-// 所以这里读 `client/20-const.js` 里**真正会进包的那段 CSS 字符串**，逐条对判据：
+// 为什么要有这条：风格是一整批 CSS 的性质，靠人眼每次审很容易漂回去 —— 一个
+// `linear-gradient` 渐变、一个 2px 小圆角、一个 9px 的野间距就能把它打回 v1/AI 味。
+// 所以这里读 `client/20-const.js` 里**真正会进包的那段 CSS 字符串**（外加
+// `client/99-entry.js` 的**空状态文案**，因为"真实计数"是 DOM 里的事实），逐条对判据：
 //
-//   禁止：渐变 / 阴影（弹层例外，需 `/* mcart:allow-shadow */` 标记）/ 动画 / 过渡 /
-//         ≥8px 圆角 / 数字字号 / 硬编码灰 `rgba(127,127,127` / 非 2·4·6·8 的间距刻度；
-//   必须：圆角 token 只有 2/3、间距 token 只有 2/4/6/8、正文 12 / 次要 11 / 行高 22 /
-//         表单行 26 / 工具栏 28 / 标签列 88 / 数字等宽 + tabular-nums、四态齐全、
-//         属性行两列、选中行左侧 2px 强调条、sticky 顶栏。
+//   §6 的 9 条：卡片三件套 / 点阵背景 24px / 空状态衬线 ≥26px + 真实计数 /
+//   输入条 36px+999+圆形按钮 / 胶囊页签选中 --card / 动效时长与 --ease 且无无限动画 /
+//   圆角只允许 --r-* 与 999/50% / 字号白名单 / 行高 28·22·18。
 //
 //   node tools/mcart-plugin/ui-style-test.js
-//   node tools/mcart-plugin/ui-style-test.js --fault          # 注入 linear-gradient，必须红
-//   node tools/mcart-plugin/ui-style-test.js --fault-radius   # 注入 8px 圆角，必须红
-//   node tools/mcart-plugin/ui-style-test.js --fault-spacing  # 注入 16px 内边距，必须红
+//   node tools/mcart-plugin/ui-style-test.js --fault          # 注入 linear-gradient → 必须红
+//   node tools/mcart-plugin/ui-style-test.js --fault-radius   # 注入 2px 小圆角 → 必须红
+//   node tools/mcart-plugin/ui-style-test.js --fault-spacing  # 注入 9px 野间距 → 必须红
 const nodeFs = require('fs')
 const nodePath = require('path')
 
 const REPO = nodePath.resolve(__dirname, '..', '..')
 const SOURCE = nodePath.join(REPO, 'tools', 'mcart-plugin', 'client', '20-const.js')
+const CLIENT = nodePath.join(REPO, 'tools', 'mcart-plugin', 'client', '99-entry.js')
 const FAULT = process.argv.includes('--fault')
 const FAULT_RADIUS = process.argv.includes('--fault-radius')
 const FAULT_SPACING = process.argv.includes('--fault-spacing')
@@ -29,15 +29,12 @@ function check(name, ok, detail) {
   console.log('  ' + (ok ? 'OK  ' : 'FAIL') + ' ' + name + (ok || detail === undefined ? '' : '  ← ' + detail))
 }
 
-/**
- * 把 `const CSS = [ ... ].join('')` 里的字符串字面量取出来拼成真实 CSS。
- * 只读字符串字面量 —— JS 注释不是样式，不该被当成判据。
- */
+/** 把 `const CSS = [ ... ].join('')` 里的字符串字面量取出来拼成真实 CSS。 */
 function cssOf(source) {
   const at = source.indexOf('const CSS = [')
   if (at < 0) throw new Error('20-const.js 里找不到 `const CSS = [`')
   const end = source.indexOf("].join('')", at)
-  if (end < 0) throw new Error('CSS 数组没有 `].join(\'\')` 收尾')
+  if (end < 0) throw new Error("CSS 数组没有 `].join('')` 收尾")
   const block = source.slice(at, end)
   const literals = []
   const pattern = /'((?:[^'\\]|\\.)*)'/g
@@ -51,7 +48,6 @@ function cssOf(source) {
   return css
 }
 
-/** 逐条声明解析（`prop:value`），用来按属性做数值断言。 */
 function declarations(css) {
   const out = []
   const pattern = /(?:^|[;{])[^;{}]*?([a-z-]+)\s*:\s*([^;}]+)/g
@@ -62,13 +58,19 @@ function declarations(css) {
   }
   return out
 }
-
 function valuesOf(css, property) {
   return declarations(css).filter((item) => item.property === property).map((item) => item.value)
+}
+function ruleOf(css, selector) {
+  const at = css.indexOf(selector + '{')
+  if (at < 0) return ''
+  const end = css.indexOf('}', at)
+  return end < 0 ? '' : css.slice(at, end + 1)
 }
 
 function main() {
   const source = nodeFs.readFileSync(SOURCE, 'utf8')
+  const client = nodeFs.readFileSync(CLIENT, 'utf8')
   let css
   try {
     css = cssOf(source)
@@ -78,166 +80,155 @@ function main() {
   }
 
   if (FAULT) css += '.mcart-fault{background:linear-gradient(#fff,#000)}'
-  if (FAULT_RADIUS) css += '.mcart-fault{border-radius:8px}'
-  if (FAULT_SPACING) css += '.mcart-fault{padding:16px}'
+  if (FAULT_RADIUS) css += '.mcart-fault{border-radius:2px}'
+  if (FAULT_SPACING) css += '.mcart-fault{padding:9px}'
   if (FAULT || FAULT_RADIUS || FAULT_SPACING) {
     console.log('（故障注入生效：' + [FAULT ? 'gradient' : '', FAULT_RADIUS ? 'radius' : '',
       FAULT_SPACING ? 'spacing' : ''].filter(Boolean).join(' + ') + '）')
   }
 
-  console.log('--- 禁止项（docs/UI-STYLE.md §1）')
-  check('没有渐变（linear-gradient / radial-gradient / conic-gradient）',
-    !/linear-gradient|radial-gradient|conic-gradient/.test(css))
-  // 阴影只有弹层允许；例外必须显式写 `/* mcart:allow-shadow */` 标记。
-  const shadowMarks = (css.match(/\/\* mcart:allow-shadow \*\//g) || []).length
-  const shadows = (css.match(/box-shadow/g) || []).length
-  check('没有阴影（弹层例外须带 `mcart:allow-shadow` 标记）',
-    shadows <= shadowMarks, 'box-shadow ' + shadows + ' 处 / 标记 ' + shadowMarks + ' 处')
-  check('没有动画 / 过渡',
-    !/@keyframes|\banimation[-:]|\btransition[-:]/.test(css))
-  check('没有硬编码灰 rgba(127,127,127（颜色必须走 token）', css.indexOf('rgba(127,127,127') < 0)
-  check('没有表情符号 / 装饰性字符当图标', !/[\u{1F300}-\u{1FAFF}]/u.test(css))
+  console.log('--- 禁止项（§1）')
+  check('界面骨架没有线性渐变（只允许内容物渐变）', css.indexOf('linear-gradient') < 0)
+  check('没有硬编码灰 rgba(127,127,127（颜色全走 token）', css.indexOf('rgba(127,127,127') < 0)
+  check('没有无限循环动画（没有 animation 声明）', !/(?:^|[;{])animation\s*:/.test(css))
+  check('没有表情符号当图标', !/[\u{1F300}-\u{1FAFF}]/u.test(css))
 
-  console.log('--- 几何与尺寸（§2）')
-  // 圆角：规则里只许用 token（2px / 3px 两档），不许出现字面量 ≥8px 的圆角。
-  const radii = valuesOf(css, 'border-radius')
-    .concat(valuesOf(css, 'border-top-left-radius'), valuesOf(css, 'border-bottom-left-radius'))
-  const badRadius = radii.filter((value) => !/^(0|inherit|var\(--mc-radius\)|var\(--mc-radius-panel\))$/.test(value))
-  check('圆角只有两档（控件 2px / 面板 3px），规则里不许写字面量',
-    badRadius.length === 0, badRadius.join(' ｜ '))
-  check('圆角 token 只有 2px / 3px',
-    /--mc-radius:2px;/.test(css) && /--mc-radius-panel:3px;/.test(css)
-    && (css.match(/--mc-radius(-panel)?:/g) || []).length === 2,
-    'radius token 个数 ' + (css.match(/--mc-radius(-panel)?:/g) || []).length)
-  check('没有胶囊圆角（>=8px 或 999px）', !/border-radius:\s*(?:[89]|[1-9][0-9]+)px|border-radius:\s*999px/.test(css))
+  console.log('--- §6.1 卡片三件套')
+  const card = ruleOf(css, '.mcart-card')
+  check('卡片同时有 r-md 圆角 + --elevation-soft 软阴影 + 1px --line',
+    /border-radius:var\(--r-md\)/.test(card)
+    && /box-shadow:var\(--dsw-elevation-soft\)/.test(card)
+    && /border:1px solid var\(--line\)/.test(card),
+    card.slice(0, 160))
 
-  // 字号：只许 token（正文 12 / 次要 11 / 图标 14 走 --mc-icon），规则里不许写数字字号。
-  const fontSizes = valuesOf(css, 'font-size')
-  const badFont = fontSizes.filter((value) => !/^(var\(--mc-fs\)|var\(--mc-fs2\)|var\(--mc-icon\)|inherit)$/.test(value))
-  check('字号只走 token（12 / 11 / 图标 14），规则里不写死', badFont.length === 0, badFont.join(' ｜ '))
-  check('正文 12px、次要 11px 的 token 就在表里', /--mc-fs:12px;/.test(css) && /--mc-fs2:11px;/.test(css))
+  console.log('--- §6.2 背景点阵')
+  check('画布背景是 radial-gradient 点阵，步距 24px',
+    /background-image:radial-gradient\(/.test(css) && /background-size:24px 24px/.test(css))
 
-  // 间距刻度：padding / margin / gap 里的数字只许 0/1/2/3/4/6/8（禁止 10/12/14/16…）。
-  const spacingProps = ['padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
-    'margin', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
-    'gap', 'column-gap', 'row-gap']
-  const badSpacing = []
-  for (const item of declarations(css)) {
-    if (spacingProps.indexOf(item.property) < 0) continue
-    if (item.value.indexOf('calc(') >= 0) continue
-    for (const number of item.value.match(/(\d+(?:\.\d+)?)px/g) || []) {
-      const value = Number(number.slice(0, -2))
-      if ([0, 1, 2, 3, 4, 6, 8].indexOf(value) < 0) badSpacing.push(item.property + ':' + item.value)
+  console.log('--- §6.3 空状态：衬线大字 + 真实计数')
+  check('空状态大标题用 --serif 且字号 ≥26px',
+    /\.mcart-empty-title\{[^}]*font-family:var\(--serif\)/.test(css)
+    && /\.mcart-empty-title\{[^}]*font-size:26px/.test(css))
+  check('空状态写的是**真实计数**（不是"暂无数据"）',
+    /nearby\.projects\.length/.test(client) && client.indexOf('暂无数据') < 0)
+
+  console.log('--- §6.4 底部输入条（@ 提意见）')
+  const bar = ruleOf(css, '.mcart-complain')
+  const send = ruleOf(css, '.mcart-complain-send')
+  check('输入条 36px 高、999 胶囊、--card 底 + 1px --line',
+    /height:36px/.test(bar) && /border-radius:999px/.test(bar)
+    && /background:var\(--card\)/.test(bar) && /border:1px solid var\(--line\)/.test(bar))
+  check('右侧是圆形 26px 主色按钮（插入后再变「已插入」）',
+    /width:26px;height:26px/.test(send) && /border-radius:999px/.test(send)
+    && /background:var\(--primary\)/.test(send)
+    && /data-inserted="1"/.test(css) && client.indexOf('已插入') >= 0)
+
+  console.log('--- §6.5 顶栏 / 胶囊页签')
+  check('顶栏标题用衬线 16px',
+    /\.mcart-title\{[^}]*font-family:var\(--serif\)/.test(css)
+    && /\.mcart-title\{[^}]*font-size:16px/.test(css))
+  check('胶囊页签容器 --r-sm + --hover 底',
+    /\.mcart-tabs\{[^}]*border-radius:var\(--r-sm\)/.test(css)
+    && /\.mcart-tabs\{[^}]*background:var\(--hover\)/.test(css))
+  check('选中页签用 --card 底 + --elevation-soft',
+    /\.mcart-tab\[data-on="1"\]\{[^}]*background:var\(--card\)/.test(css)
+    && /\.mcart-tab\[data-on="1"\]\{[^}]*box-shadow:var\(--dsw-elevation-soft\)/.test(css))
+  check('顶栏圆形图标按钮 26px',
+    /\.mcart-icon\{[^}]*width:26px;height:26px/.test(css)
+    && /\.mcart-icon\{[^}]*border-radius:999px/.test(css))
+
+  console.log('--- §6.6 动效')
+  const durations = []
+  for (const value of valuesOf(css, 'transition')) {
+    for (const match of value.matchAll(/(\d+)ms/g)) durations.push(Number(match[1]))
+    if (value.indexOf('var(--ease)') < 0 && /\d+ms/.test(value)) {
+      check('transition 使用 --ease（' + value.slice(0, 60) + '）', false)
     }
   }
-  check('间距只用 2/4/6/8 刻度（0/1px 描边除外）',
-    badSpacing.length === 0, badSpacing.slice(0, 6).join(' ｜ '))
-  check('间距 token 正是 2 / 4 / 6 / 8',
-    /--mc-s1:2px;--mc-s2:4px;--mc-s3:6px;--mc-s4:8px;/.test(css)
-    && (css.match(/--mc-s\d:/g) || []).length === 4,
-    'spacing token 个数 ' + (css.match(/--mc-s\d:/g) || []).length)
-  check('密度 token：正文 12 / 次要 11 / 行高 22 / 表单行 26 / 工具栏 28 / 控件 22 / 标签列 88',
-    /--mc-lh:22px;/.test(css) && /--mc-row:26px;/.test(css) && /--mc-toolbar:28px;/.test(css)
-    && /--mc-control:22px;/.test(css) && /--mc-label:88px;/.test(css))
+  const badDuration = durations.filter((ms) => [120, 150, 200, 300].indexOf(ms) < 0)
+  check('transition 时长只用 120/150/200/300ms', badDuration.length === 0, badDuration.join(','))
+  check('按下是 scale(.98)（120ms，不是位移）',
+    /:active\{[^}]*transform:scale\(\.98\)/.test(css))
 
-  console.log('--- 结构（§3）')
-  check('属性行：两列，label 固定 88px 且右对齐',
-    /\.mcart-prop\{[^}]*grid-template-columns:var\(--mc-label\) 1fr/.test(css)
+  console.log('--- §6.7 圆角尺度')
+  const radii = valuesOf(css, 'border-radius')
+  const allowedRadius = /^(var\(--r-(?:xs|sm|md|lg|xl|panel)\)|999px|50%|0)$/
+  const badRadius = radii.filter((value) => !allowedRadius.test(value))
+  check('圆角只允许 --r-xs/sm/md/lg/xl/panel 与 999/50%（禁止 2/3px 小方块）',
+    badRadius.length === 0, badRadius.join(' ｜ '))
+  check('圆角 token 档位齐全（4/8/12/16/20/28）',
+    /--r-xs:/.test(css) && /--r-sm:/.test(css) && /--r-md:/.test(css)
+    && /--r-lg:/.test(css) && /--r-xl:/.test(css) && /--r-panel:/.test(css))
+
+  console.log('--- §6.8 字号白名单')
+  const allowedFont = [11, 12, 12.5, 13, 14, 15, 16, 26, 28]
+  const badFont = []
+  for (const value of valuesOf(css, 'font-size')) {
+    const match = /^(\d+(?:\.\d+)?)px$/.exec(value)
+    if (match === null) { badFont.push(value); continue }
+    const px = Number(match[1])
+    if (!allowedFont.some((size) => Math.abs(size - px) <= 1)) badFont.push(value)
+  }
+  check('字号只用 11/12/12.5/13/14/15/16/26/28（±1）',
+    badFont.length === 0, badFont.join(' ｜ '))
+
+  console.log('--- §6.9 行高')
+  check('行高有 28（列表）/ 22（正文）/ 18（说明）三档',
+    css.indexOf('line-height:28px') >= 0 && css.indexOf('line-height:22px') >= 0
+    && css.indexOf('line-height:18px') >= 0)
+
+  console.log('--- §3 间距刻度')
+  {
+    const spacingProps = ['padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+      'margin', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+      'gap', 'column-gap', 'row-gap']
+    const allowed = [0, 1, 2, 3, 4, 6, 8, 10, 12, 16, 20]
+    const bad = []
+    for (const item of declarations(css)) {
+      if (spacingProps.indexOf(item.property) < 0) continue
+      if (item.value.indexOf('calc(') >= 0) continue
+      for (const number of item.value.match(/(\d+(?:\.\d+)?)px/g) || []) {
+        const value = Number(number.slice(0, -2))
+        if (allowed.indexOf(value) < 0) bad.push(item.property + ':' + item.value)
+      }
+    }
+    check('间距只用 4/6/8/10/12/16/20（0/1px 描边除外）', bad.length === 0, bad.slice(0, 6).join(' ｜ '))
+  }
+  console.log('--- 组件级（§3/§4，沿用 v1 中仍然正确的部分）')
+  check('资产行：28px 行高、圆角 r-sm、两列（名称 + mono id）',
+    /\.mcart-item\{[^}]*height:28px/.test(css)
+    && /\.mcart-item\{[^}]*border-radius:var\(--r-sm\)/.test(css)
+    && /\.mcart-item-name\{/.test(css) && /\.mcart-item-id\{/.test(css))
+  check('选中行：--active 底 + 左侧 2px --accent 条',
+    /\.mcart-item\[data-on="1"\]\{[^}]*background:var\(--active\)/.test(css)
+    && /\.mcart-item\[data-on="1"\]\{[^}]*border-left-color:var\(--accent\)/.test(css))
+  check('列表卡片标题行：衬线 15px + 计数',
+    /\.mcart-group-title\{[^}]*font-family:var\(--serif\)/.test(css)
+    && /\.mcart-group-title\{[^}]*font-size:15px/.test(css)
+    && /\.mcart-group-count\{/.test(css))
+  check('3D 视口：--canvas 底 + r-md + 内描边 + 圆形 26px 玻璃控制键',
+    /\.mcart-viewport\{[^}]*background:var\(--canvas\)/.test(css)
+    && /\.mcart-viewport\{[^}]*border-radius:var\(--r-md\)/.test(css)
+    && /\.mcart-viewport\{[^}]*box-shadow:inset 0 0 0 1px var\(--line-strong\)/.test(css)
+    && /\.mcart-zoombtn\{[^}]*border-radius:999px/.test(css)
+    && /\.mcart-zoombtn\{[^}]*background:var\(--glass\)/.test(css))
+  check('设置是两列属性网格（88px 标签列，右对齐）',
+    /\.mcart-prop\{[^}]*grid-template-columns:88px 1fr/.test(css)
     && /\.mcart-prop-label\{[^}]*text-align:right/.test(css))
-  check('卡片不再是"卡片"：无圆角、无阴影、只有顶部分隔线',
-    /\.mcart-card\{[^}]*border-radius:0/.test(css) && /\.mcart-card\{[^}]*border-top:1px solid/.test(css))
-  check('区块标题 22px 高、底部 1px 线', /\.mcart-card>\.mcart-bar:first-child\{[^}]*min-height:var\(--mc-section\)/.test(css))
-  check('顶栏 sticky', /\.mcart-head\{[^}]*position:sticky/.test(css))
-  check('列表选中 = 强调色 8% 叠底 + 左侧 2px 强调条',
-    /\.mcart-item\[data-on="1"\]\{[^}]*background:var\(--mc-select\)/.test(css)
-    && /\.mcart-item\[data-on="1"\]\{[^}]*border-left-color:var\(--mc-brand-bar\)/.test(css)
-    && /--mc-select:color-mix\(in srgb,var\(--mc-brand\) 8%/.test(css))
-  check('选中条不是灰：品牌色按 75/25 与主文字色混合（暗色主题仍可辨识）',
-    /--mc-brand-bar:color-mix\(in srgb,var\(--dsw-alias-brand-primary/.test(css)
-    && /75%/.test(css))
-  check('列表区填满主体剩余高度（不留死空白）', /\.mcart-list\{[^}]*flex:1;min-height:0/.test(css))
-  check('列表 hover = 中性 4% 叠底', /--mc-hover:color-mix\(in srgb,var\(--mc-text-1\) 4%/.test(css))
-  check('数字 / 路径 / ID 用等宽字体 + tabular-nums',
-    /--mc-mono:ui-monospace,Consolas,monospace/.test(css) && /tabular-nums/.test(css)
-    && /\.mcart-path[^{]*\{[^}]*font-family:var\(--mc-mono\)/.test(css))
-  check('数值输入右对齐 + 等宽', /\.mcart-input\[type="number"\]\{[^}]*text-align:right/.test(css))
-  check('复选框 12×12、2px 圆角、未选 1px 边框、选中用品牌色 + CSS 勾',
-    /\.mcart-switch input\[type="checkbox"\]\{[^}]*width:12px;height:12px/.test(css)
-    && /\.mcart-switch input\[type="checkbox"\]\{[^}]*border:1px solid var\(--mc-line-2\)/.test(css)
-    && /\.mcart-switch input\[type="checkbox"\]:checked\{[^}]*background:var\(--mc-brand\)/.test(css)
-    && /\.mcart-switch input\[type="checkbox"\]::after\{[^}]*border-right:1px solid/.test(css)
-    && /\.mcart-switch input\[type="checkbox"\]:focus-visible\{[^}]*outline:1px solid var\(--mc-brand\)/.test(css))
-  check('设置是两列属性网格：标签 12px 主色、右对齐；值占满；提示行在值列下方',
-    /\.mcart-prop\{[^}]*grid-template-columns:var\(--mc-label\) 1fr/.test(css)
-    && /\.mcart-prop-label\{[^}]*font-size:var\(--mc-fs\);color:var\(--mc-text-1\);text-align:right/.test(css))
-  check('设置分组标题：11px/600 次要色、22px 高、底部 1px 发丝线',
-    /\.mcart-group-title\{[^}]*height:var\(--mc-section\)/.test(css)
-    && /\.mcart-group-title\{[^}]*font-size:var\(--mc-fs2\);font-weight:600/.test(css)
-    && /\.mcart-group-title\{[^}]*border-bottom:1px solid var\(--mc-line-1\)/.test(css))
-  check('长路径一律省略号（title 里是全路径）',
-    /\.mcart-path\{[^}]*white-space:nowrap/.test(css)
-    && /\.mcart-path\{[^}]*text-overflow:ellipsis/.test(css))
-  check('数字用 mono + tabular-nums', /\.mcart-num\{[^}]*font-family:var\(--mc-mono\)/.test(css)
-    && /\.mcart-num\{[^}]*tabular-nums/.test(css))
-  check('空状态只是一行次要色文字（无插图/大标题）', /\.mcart-empty\{[^}]*font-size:var\(--mc-fs2\)/.test(css))
-
-  console.log('--- 检查器式排版（第二轮规范：单行头 / 两列列表 / 视口 / 工具栏）')
-  check('单行头部：**只有路径**（mono、超长省略；视图名不再重复）',
-    /\.mcart-headpath\{[^}]*font-family:var\(--mc-mono\)/.test(css)
-    && /\.mcart-headpath\{[^}]*text-overflow:ellipsis/.test(css)
-    && css.indexOf('.mcart-viewname{') < 0)
-  check('头部右侧是图标按钮组（22×22，组间 1px 竖线）',
-    /\.mcart-head \.mcart-icon\{[^}]*height:var\(--mc-control\)/.test(css)
-    && /\.mcart-head \.mcart-icon\+\.mcart-icon\{[^}]*border-left:1px solid/.test(css))
-  check('列表是两列行：名称占满 + id 右对齐等宽次要色',
-    /\.mcart-item\{[^}]*display:flex/.test(css)
-    && /\.mcart-item-name\{[^}]*flex:1;min-width:0/.test(css)
-    && /\.mcart-item-id\{[^}]*font-family:var\(--mc-mono\)/.test(css)
-    && /\.mcart-item-id\{[^}]*text-align:right/.test(css))
-  check('分组头 11px/600 次要色、22px 高、底 1px 线、sticky',
-    /\.mcart-group-head\{[^}]*position:sticky/.test(css)
-    && /\.mcart-group-head\{[^}]*font-size:var\(--mc-fs2\)/.test(css)
-    && /\.mcart-group-head\{[^}]*font-weight:600/.test(css)
-    && /\.mcart-group-head\{[^}]*border-bottom:1px solid/.test(css))
-  check('主体独立滚动、视口填满剩余高度',
-    /\.mcart-body\{[^}]*flex:1;min-height:0;overflow-y:auto/.test(css)
-    && /\.mcart-stage\{[^}]*flex:1;min-height:0/.test(css)
-    && /\.mcart-viewport\{[^}]*flex:1;min-height:0/.test(css)
-    && /\.mcart-canvas\{[^}]*height:100%/.test(css))
-  check('舞台工具栏：事实 mono 次要色 + 主操作强调色',
-    /\.mcart-toolbar\{[^}]*height:var\(--mc-toolbar\)/.test(css)
-    && /\.mcart-toolbar-facts\{[^}]*font-family:var\(--mc-mono\)/.test(css)
-    && /\.mcart-primary\{[^}]*color:var\(--mc-brand\)/.test(css))
-  check('视口左下角有方向指示器（单色短线，不是彩色装饰）',
-    /\.mcart-axis\{[^}]*position:absolute;left:var\(--mc-s2\);bottom:var\(--mc-s2\)/.test(css)
-    && /\.mcart-axis line\{[^}]*stroke:var\(--mc-text-2\)/.test(css))
-  check('当前物品名是视口右下角的 mono 11 次要色标签（不是浮在热栏上的 chip）',
-    /\.mcart-hudname\{[^}]*font-family:var\(--mc-mono\)/.test(css)
-    && /\.mcart-hudname\{[^}]*color:var\(--mc-text-2\)/.test(css)
-    && /\.mcart-hudname\{[^}]*background:none/.test(css))
-  check('窄宽度能换行：堆叠表单 + 容器查询收窄标签列',
-    /\.mcart-stack\{[^}]*flex-direction:column/.test(css)
-    && /@container \(max-width:260px\)/.test(css))
-  check('宿主没加载的技术原话收进可展开“详情”（不占主文案）',
-    /\.mcart-details\{/.test(css) && /\.mcart-details>summary\{/.test(css))
-
-  console.log('--- 交互四态（§5）')
-  check('hover / active / focus-visible / disabled 四态都有',
-    /:hover\{/.test(css) && /:active\{/.test(css) && /:focus-visible/.test(css) && /\[disabled\]\{/.test(css))
-  check('focus-visible 是 1px 强调内描边（不是发光）',
-    /outline:1px solid var\(--mc-brand\);outline-offset:-1px/.test(css))
-
-  console.log('--- 颜色（§4）')
-  check('颜色全部来自主题 token', /--dsw-alias-bg-base/.test(css) && /--dsw-alias-border-l1/.test(css)
-    && /--dsw-alias-label-primary/.test(css) && /--dsw-alias-brand-primary/.test(css))
-  check('状态色只在字/左边线（不做整块底色）',
-    /\.mcart-err\{[^}]*color:var\(--mc-error\)/.test(css)
-    && /\.mcart-bad\{[^}]*color:var\(--mc-warn\)/.test(css))
+  check('数字/路径/ID 等宽 + tabular-nums',
+    /font-variant-numeric:tabular-nums/.test(css) && /ui-monospace/.test(css)
+    && /\.mcart-num\{/.test(css))
+  check('焦点：2px accent 半透明外圈（不用发光）',
+    /box-shadow:0 0 0 2px color-mix\(in srgb,var\(--accent\) 50%,transparent\)/.test(css))
+  check('颜色全部来自 DSH alias token',
+    /--ink:var\(--dsw-alias-label-primary/.test(css)
+    && /--card:var\(--dsw-alias-bg-layer-2/.test(css)
+    && /--accent:var\(--dsw-alias-link/.test(css)
+    && /--primary:var\(--dsw-alias-button-primary-fill/.test(css))
 
   if (FAULT || FAULT_RADIUS || FAULT_SPACING) {
-    // 反向夹具：注入的违规必须被上面的断言抓到。**退出码 1 = 红**（与 ui-test 的
-    // `--fault*` 同一体例：注入故障后门禁就该红，红不了说明门禁是装饰）。
-    const expected = FAULT ? '没有渐变' : FAULT_RADIUS ? '圆角只有两档' : '间距只用'
+    // 反向夹具：注入的违规必须被上面的断言抓到。退出码 1 = 红（与 ui-test 同体例）。
+    const expected = FAULT ? '线性渐变' : FAULT_RADIUS ? '2px 小圆角' : '野间距'
     const caught = failures > 0
     console.log('\n--- 反向夹具 ---')
     check('注入违规后断言变红（命中：' + expected + '）', caught,

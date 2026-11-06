@@ -71,7 +71,7 @@ function diagLines(diag, error) {
       + (entry.fixPath === '' ? '' : ' —— 要动这个文件：' + entry.fixPath))
   }
   lines.push(diag.referenceDirectory === ''
-    ? '参考目录：没设。点右上角 ⚙ 把 .minecraft / 版本目录 / mods 目录的路径贴进去'
+    ? '参考目录：没设。点右上角的「设置」把 .minecraft / 版本目录 / mods 目录的路径贴进去'
     : '参考目录：' + diag.referenceDirectory)
   if (diag.tried.length > 0) {
     lines.push('已经试过：')
@@ -557,6 +557,9 @@ return {
       const modsOpenPair = React.useState(false)
       const rootPair = React.useState(roots[sessionId] === undefined ? '' : roots[sessionId])
       const index = indexPair[0], setIndex = indexPair[1]
+      // 底部输入条：插入成功后按钮短暂变「已插入」（1.2s）。
+      const complainInsertedPair = React.useState(false)
+      const complainInserted = complainInsertedPair[0], setComplainInserted = complainInsertedPair[1]
       const failure = failurePair[0], setFailure = failurePair[1]
       const emptyRoot = emptyPair[0], setEmptyRoot = emptyPair[1]
       const newId = newIdPair[0], setNewId = newIdPair[1]
@@ -1373,7 +1376,7 @@ return {
         }
         if (absent.length > 0) parts.push('模型链缺 ' + absent.join('、'))
         // Saying so matters: a built-in base is not the game's own file, and the
-        // fix (set a reference directory) is one click away in ⚙.
+        // fix (set a reference directory) is one click away in 设置.
         if (builtin.length > 0) {
           parts.push('原版母模型用了内置的 ' + builtin.join('、') + '（设了参考目录就从游戏里读）')
         }
@@ -2818,25 +2821,26 @@ return {
           if (refPath === '') {
             // 一句话都没有等于"点了没反应"；这类病我们在别处修过太多次。
             setItemMsg('这个资产没有可以引用的文件路径（报告里的 @ 引用不可用）')
-            return
+            return false
           }
-          if (insertReference(refPath)) { setPending(null); return }
+          if (insertReference(refPath)) { setPending(null); return true }
           setPending({ path: refPath, title: scene.title || '' })
-          return
+          return false
         }
         const asset = itemAsset()
-        if (asset === null) return
+        if (asset === null) return false
         const path = asset.recipe === null || asset.recipe.modelPath === undefined
           ? '' : String(asset.recipe.modelPath)
         if (path === '') {
           // A reference item lives inside a jar: there is no file to point at, and
           // a button that silently does nothing is worse than one that says so.
           setItemMsg(asset.title + ' 在参考的 jar 里，没有可以引用的文件')
-          return
+          return false
         }
         setItemMsg(null)
-        if (insertReference(path)) { setPending(null); return }
+        if (insertReference(path)) { setPending(null); return true }
         setPending({ path: path, title: asset.title })
+        return false
       }
 
       /**
@@ -3043,7 +3047,14 @@ return {
 
       if (root === '') {
         const card = []
-        card.push(React.createElement('div', { className: 'mcart-note', key: 'hint' }, '未指定资产路径'))
+        const nearbyCount = nearby === null || nearby.projects === undefined
+          ? 0 : nearby.projects.length
+        card.push(React.createElement('div', { className: 'mcart-empty', key: 'hero' },
+          React.createElement('div', { className: 'mcart-empty-title' }, '还没有打开项目'),
+          React.createElement('div', { className: 'mcart-empty-note' },
+            '本会话目录里找到 ', React.createElement('span', { className: 'mcart-empty-num' }, String(nearbyCount)), ' 个项目'),
+          React.createElement('div', { className: 'mcart-empty-note' },
+            '选一个项目目录，或者从下面的候选里打开。')))
         // 窄宽度（右侧栏）不许把按钮裁掉：输入框一行、按钮下一行（`.mcart-stack`）。
         card.push(React.createElement('div', { className: 'mcart-stack', key: 'input' },
           React.createElement('input', {
@@ -3079,9 +3090,9 @@ return {
         }
 
         card.push(React.createElement('div', { className: 'mcart-bar', key: 'buttons' },
-          React.createElement('button', { className: 'mcart-btn', type: 'button', disabled: picking,
+          React.createElement('button', { className: 'mcart-btn mcart-pill mcart-primary', type: 'button', disabled: picking,
             onClick: pickDirectory }, picking ? '对话框已打开…' : '选择目录…'),
-          nearby !== null && nearby.cwd !== '' ? React.createElement('button', { className: 'mcart-btn', type: 'button',
+          nearby !== null && nearby.cwd !== '' ? React.createElement('button', { className: 'mcart-btn mcart-pill', type: 'button',
             onClick: () => commitRoot(nearby.cwd) }, '用本会话目录') : null,
         ))
 
@@ -3104,6 +3115,11 @@ return {
         const valid = /^[a-z0-9_]{2,32}$/.test(id)
         const reference = settings === null ? null : settings.directory
         const rows = []
+        // 空目录的空状态：衬线大字 + 真实计数（扫描结果就是 0 个项目）。
+        rows.push(React.createElement('div', { className: 'mcart-empty', key: 'empty' },
+          React.createElement('div', { className: 'mcart-empty-title' }, '这里还是空的'),
+          React.createElement('div', { className: 'mcart-empty-note' },
+            React.createElement('span', { className: 'mcart-empty-num' }, '0'), ' 个项目 · 建一个就能开始')))
         rows.push(React.createElement('div', { className: 'mcart-bar', key: 'head' },
           React.createElement('span', { className: 'mcart-title' }, '开始一个新模组'),
           React.createElement('span', { className: 'mcart-sub' }, '三步：目录 → 建项目 → 参考目录')))
@@ -3129,7 +3145,7 @@ return {
         rows.push(React.createElement('div', { className: 'mcart-hint', key: 'where' }, '建在：' + here))
         rows.push(React.createElement('div', { className: reference === null || reference === '' ? 'mcart-hint' : 'mcart-note', key: 'ref' },
           reference === null || reference === ''
-            ? '建完下一步：点右上角 ⚙ 指定参考目录（面板会列出自动探测到的游戏目录）。不指定也能用，只是看不到原版/模组的参照。'
+            ? '建完下一步：点右上角的「设置」指定参考目录（面板会列出自动探测到的游戏目录）。不指定也能用，只是看不到原版/模组的参照。'
             : '参考目录已经设好了：' + reference))
         if (failure !== null) rows.push(React.createElement('div', { key: 'err' }, failureView(failure)))
         return React.createElement('div', { className: 'mcart-card', key: 'guide' }, rows)
@@ -3177,19 +3193,23 @@ return {
       }
 
       const projects = index === null ? [] : (index.projects || [])
-      const menu = []
+      // 资产列表：**每一类一张卡片**（页面 → 卡片，最多两级，不套娃）。
+      // 卡片标题行 = 衬线 15px 类别名 + 右侧 mono 计数；行是两列（名称 / 右侧 mono id）。
+      const menuCards = []
       for (const project of projects) {
-        // 多项目时才在分组头上带项目名（单项目时路径已经在头部，不再重复一行）。
+        // 多项目时才在卡片标题里带项目名（单项目时路径已经在顶栏）。
         const prefix = projects.length > 1 ? project.title + ' · ' : ''
         for (const category of CATEGORIES) {
           const items = (project.items && project.items[category.key]) || []
           if (items.length === 0) continue
-          menu.push(React.createElement('div', {
-            className: 'mcart-group-head', key: 'p' + project.id + category.key,
-          }, prefix + category.label + ' · ' + items.length))
+          const rows = [
+            React.createElement('div', { className: 'mcart-group-head', key: 'head' },
+              React.createElement('span', { className: 'mcart-group-title' }, prefix + category.label),
+              React.createElement('span', { className: 'mcart-group-count' }, String(items.length))),
+          ]
           for (const item of items) {
             const on = choice !== null && choice.project === project.id && choice.kind === category.key && choice.id === item.id
-            menu.push(React.createElement('button', {
+            rows.push(React.createElement('button', {
               key: project.id + '/' + category.key + '/' + item.id, type: 'button',
               className: 'mcart-item', 'data-on': on ? '1' : '0',
               title: item.id,
@@ -3200,6 +3220,9 @@ return {
             item.title === item.id ? null
               : React.createElement('span', { className: 'mcart-item-id' }, item.id)))
           }
+          menuCards.push(React.createElement('div', {
+            className: 'mcart-card mcart-menu-card', key: 'card' + project.id + category.key,
+          }, rows))
         }
       }
 
@@ -3224,9 +3247,6 @@ return {
             className: 'mcart-icon', type: 'button', title: '手动修改（按面编辑这张贴图）',
             'aria-label': '手动修改', onClick: openEditor,
           }, '✎'),
-          React.createElement('button', {
-            className: 'mcart-btn mcart-primary', type: 'button', onClick: complain,
-          }, '@ 提意见'),
         ))
         if (bad > 0) stage.push(React.createElement('div', { className: 'mcart-bad', key: 'bad' }, bad + ' 张贴图解码失败'))
         if (scene.errors && scene.errors.length > 0) {
@@ -3320,9 +3340,6 @@ return {
               className: 'mcart-icon', type: 'button', title: '手动修改（按面编辑这张贴图）',
               'aria-label': '手动修改', onClick: openEditor,
             }, '✎'),
-            React.createElement('button', {
-              className: 'mcart-btn mcart-primary', type: 'button', onClick: complain,
-            }, '@ 提意见'),
           ))
         }
       }
@@ -3523,8 +3540,8 @@ return {
         const settingsTitle = settings.title || settings.project || '项目'
         return React.createElement('div', { className: 'mcart-root' },
           React.createElement('div', { className: 'mcart-head' },
-            React.createElement('span', { className: 'mcart-settings-prefix' }, '设置'),
-            React.createElement('span', { className: 'mcart-settings-title', title: settingsTitle }, settingsTitle),
+            React.createElement('span', { className: 'mcart-title' }, '设置'),
+            React.createElement('span', { className: 'mcart-headpath', title: settingsTitle }, settingsTitle),
             React.createElement('span', { className: 'mcart-headgrow' }),
             React.createElement('button', {
               className: 'mcart-icon', type: 'button', title: '返回资产列表',
@@ -3536,19 +3553,27 @@ return {
       }
       return React.createElement('div', { className: 'mcart-root' },
         React.createElement('div', { className: 'mcart-head' },
-          // 顶部那行**只有路径**（"方块"这类视图名在区块标题里已经写过了）。
+          // v2 顶栏：衬线标题 + 路径 + 胶囊页签 + 圆形图标动作。
+          React.createElement('span', { className: 'mcart-title' }, 'MC 资产'),
           React.createElement('span', { className: 'mcart-headpath', title: root },
             root === '' ? '未选择项目' : root),
           React.createElement('span', { className: 'mcart-headgrow' }),
-          React.createElement('button', {
-            className: 'mcart-icon', type: 'button', title: '物品列表（浏览器）',
-            'aria-label': '物品列表', 'data-on': itemOpen ? '1' : '0',
-            onClick: openItems,
-          }, '▤'),
-          React.createElement('button', {
-            className: 'mcart-icon', type: 'button', title: '设置', 'aria-label': '设置',
-            onClick: openSettings,
-          }, settings === null ? '⚙' : '⚙▾'),
+          // 胶囊页签：资产 / 物品 / 设置（选中项 = --card 底 + 软阴影）。
+          React.createElement('div', { className: 'mcart-tabs' },
+            React.createElement('button', {
+              className: 'mcart-tab', type: 'button', title: '资产列表',
+              'data-on': itemOpen ? '0' : '1',
+              onClick: () => { if (itemOpen) setItemOpen(false) },
+            }, '资产'),
+            React.createElement('button', {
+              className: 'mcart-tab', type: 'button', title: '物品列表', 'aria-label': '物品列表',
+              'data-on': itemOpen ? '1' : '0', onClick: openItems,
+            }, '物品'),
+            React.createElement('button', {
+              className: 'mcart-tab', type: 'button', title: '设置', 'aria-label': '设置',
+              'data-on': '0', onClick: openSettings,
+            }, '设置'),
+          ),
           React.createElement('button', {
             className: 'mcart-icon', type: 'button', title: '回到项目根（换一个项目）',
             'aria-label': '返回项目根', onClick: forgetProject,
@@ -3569,12 +3594,34 @@ return {
         emptyRoot === null ? null : guideCard(),
         failure === null ? null : failureView(failure),
         diagnosticCard(),
-        React.createElement('div', { className: 'mcart-list' }, menu),
+        menuCards,
+        // launcher: 内置轻量启动器（选版本/JDK/内存 → 真启动本机游戏 → 看日志尾巴 → 停止）。
+        // 组件 + 样式 + 轮询全在 client/35-launch.js；这里只给壳的服务和当前项目。
+        React.createElement(LaunchCard, {
+          host: host, timer: timer, styles: styles, root: root, projectId: activeProjectId(),
+        }),
         editorCard(),
         voxelCard(),
         itemOpen ? itemCard() : null,
         ),
         // 舞台：占满剩余高度（视口 flex 填满，列表区自己滚）。
+        React.createElement('div', { className: 'mcart-complain' },
+          React.createElement('span', { className: 'mcart-complain-icon' }, '✎'),
+          React.createElement('span', { className: 'mcart-complain-hint' },
+            '提意见：把 @ 路径和一句话插进输入框'),
+          React.createElement('button', {
+            className: 'mcart-btn mcart-complain-send mcart-primary', type: 'button',
+            title: '提意见', 'aria-label': '提意见',
+            'data-inserted': complainInserted ? '1' : '0',
+            onClick: () => {
+              const inserted = complain()
+              if (inserted !== false) {
+                setComplainInserted(true)
+                try { timer.timeout(() => setComplainInserted(false), 1200) } catch (error) { /* 没有定时器就保持 */ }
+              }
+            },
+          }, complainInserted ? '已插入' : '→'),
+        ),
         React.createElement('div', { className: 'mcart-stage' }, stage),
         React.createElement('div', { style: { display: 'none' } },
           React.createElement('canvas', { ref: setScratch, width: 256, height: 256 }),

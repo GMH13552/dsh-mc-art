@@ -755,7 +755,7 @@ async function main() {
     console.log('  [debug] 首屏文本：', ui.text().replace(/\s+/g, ' ').slice(0, 300))
   }
   await ui.click('用本会话目录')
-  await ui.click('⚙')
+  await ui.clickTitle('设置')
 
 
   // 设置是**独立视图**：点齿轮进设置（带返回），列表/3D 让位；点返回回列表。
@@ -769,7 +769,7 @@ async function main() {
   check('点「返回资产列表」回到资产列表（列表项重新出现）',
     settingsBack === true && ui.buttons().filter((label) => label.indexOf('示例方块') >= 0).length > 0,
     '按钮：' + ui.buttons().join(' / '))
-  await ui.click('⚙')
+  await ui.clickTitle('设置')
   /** 复用的假 React 会保留上一处打开的设置视图：进资产列表前先返回。 */
   async function ensureAssetList(panel) {
     if (panel.buttonTitled('返回资产列表') !== undefined) await panel.clickTitle('返回资产列表')
@@ -1027,9 +1027,11 @@ async function main() {
   if (uiA.buttonProps('用本会话目录') !== undefined) await uiA.click('用本会话目录')
   await uiA.settle()
   const beforeComplain = injectCalls.length
-  const couldComplain = await uiA.click('@ 提意见').then(() => true).catch(() => false)
+  const couldComplain = await uiA.clickTitle('提意见').then(() => true).catch(() => false)
   check('资产旁边有「@ 提意见」（没有它，用户只能自己描述问题）',
     couldComplain === true, uiA.buttons().join(' / '))
+  check('插入后按钮短暂变「已插入」（1.2s 后复原）',
+    uiA.text().indexOf('已插入') >= 0, uiA.buttons().join(' / '))
   check('点「@ 提意见」**直接**把 @路径 追加进输入框草稿（保留用户已写的字，末尾一个空格）',
     draftCalls.length === 1
     && draftCalls[0] === '我本来打了一半的话 @pack/assets/ui_probe/models/block/example_block.json ',
@@ -1052,7 +1054,7 @@ async function main() {
   const uiFallback = await mount(builtFallback.main, { sessionId: 'ui-test' }, hostFallback, reactFallback, 'main')
   if (uiFallback.buttonProps('用本会话目录') !== undefined) await uiFallback.click('用本会话目录')
   await uiFallback.settle()
-  const fallbackClicked = await uiFallback.click('@ 提意见').then(() => true).catch(() => false)
+  const fallbackClicked = await uiFallback.clickTitle('提意见').then(() => true).catch(() => false)
   const dockLate = builtFallback.dock === null ? null : await mount(builtFallback.dock, {
     sessionId: 'ui-test',
     useInput: (selector) => selector({ draft: '' }),
@@ -1115,7 +1117,7 @@ async function main() {
   check('项目自己的缺失**不许**写成"缺的原版母模型"（用户贴的那份报告就是这么指错方向的）',
     diagSaid.indexOf('缺的原版母模型：ui_probe:block/mist_door_lower') < 0)
   check('没设参考目录时明说去哪设（⚙ → 参考目录）',
-    diagSaid.indexOf('参考目录：没设') >= 0 && diagSaid.indexOf('⚙') >= 0)
+    diagSaid.indexOf('参考目录：没设') >= 0 && diagSaid.indexOf('设置') >= 0)
   check('报告带面板版本号（报问题时能一句说清是哪一版）', diagSaid.indexOf('0.0.0-test') >= 0)
   check('短报告不出现折叠按钮（能一眼看完的东西不该多一次点击）',
     uiDiag.buttonProps('展开全部') === undefined, uiDiag.buttons().join(' / '))
@@ -1261,7 +1263,7 @@ async function main() {
     && autoBusy.drafts[0].indexOf('textures-unresolved') >= 0, JSON.stringify(autoBusy.drafts))
 
   // 设置开关：默认开，位置在 ⚙ 设置卡里。
-  await uiBusy.click('⚙')
+  await uiBusy.clickTitle('设置')
   const autoLabel = uiBusy.nodes().filter((node) => node.type === 'label'
     && textOf(node).indexOf('出错时自动把报告放进输入框') >= 0)[0]
   const autoBox = autoLabel === undefined ? undefined : walk(autoLabel, []).filter((node) => node.type === 'input')[0]

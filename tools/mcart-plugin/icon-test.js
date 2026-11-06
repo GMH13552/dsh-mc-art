@@ -955,9 +955,11 @@ async function main() {
     /const path = asset\.recipe === null \|\| asset\.recipe\.modelPath === undefined/.test(client)
     && /setPending\(\{ path: path, title: asset\.title \}\)/.test(client))
   const itemRow = client.slice(client.indexOf("key: 'itemrow'"), client.indexOf("key: 'viewport'"))
-  check('物品那一行带着和方块同一套的两个按钮',
-    itemRow.indexOf("'aria-label': '手动修改'") >= 0 && itemRow.indexOf("'@ 提意见'") >= 0
-    && itemRow.indexOf('onClick: openEditor') >= 0 && itemRow.indexOf('onClick: complain') >= 0)
+  check('物品那一行有「手动修改」；提意见统一在底部胶囊输入条',
+    itemRow.indexOf("'aria-label': '手动修改'") >= 0
+    && itemRow.indexOf('onClick: openEditor') >= 0
+    && client.indexOf("'aria-label': '提意见'") >= 0
+    && client.indexOf("className: 'mcart-complain'") >= 0)
   // 真注入：把物品那条分支去掉，回到原来的 `if (scene === null) return`。
   const noItemBranch = client.replace(
     '        const asset = itemAsset()\n        if (scene === null && asset === null) return',
@@ -1052,11 +1054,12 @@ async function main() {
   check('头部只剩路径一行（不再泄漏内部落点术语 / 不再重复视图名）',
     client.indexOf("'中央面板'") < 0 && client.indexOf("'右侧栏'") < 0
     && /className: 'mcart-headpath'/.test(client) && client.indexOf('mcart-viewname') < 0)
-  check('四个图标按钮都有 tooltip（title），顺序 = 列表 / 设置 / 回到项目根 / 刷新',
-    /title: '物品列表（浏览器）'/.test(client) && /title: '设置'/.test(client)
-    && /title: '回到项目根（换一个项目）'/.test(client) && /title: '刷新资产（重新读磁盘）'/.test(client)
-    && client.indexOf("title: '物品列表（浏览器）'") < client.indexOf("title: '设置'")
-    && client.indexOf("title: '设置'") < client.indexOf("title: '回到项目根（换一个项目）'"))
+  check('顶栏：胶囊页签（资产/物品/设置）+ 圆形图标动作，都有 tooltip',
+    /className: 'mcart-tabs'/.test(client) && /className: 'mcart-tab'/.test(client)
+    && /title: '资产列表'/.test(client) && /title: '物品列表'/.test(client)
+    && /title: '设置'/.test(client)
+    && /title: '回到项目根（换一个项目）'/.test(client)
+    && /title: '刷新资产（重新读磁盘）'/.test(client))
 
   // ── 列表与工具栏：检查器式排版（两列行 / 三级权重） ────────────────────────
   console.log('--- 列表与工具栏：两列行 + 三级权重')
@@ -1065,10 +1068,11 @@ async function main() {
     && /title: item\.id/.test(client))
   check('分组头是独立一条（不是把项目名当普通行）',
     /className: 'mcart-group-head'/.test(client) && client.indexOf("className: 'mcart-group', key: 'p' + project.id }, project.title") < 0)
-  check('舞台工具栏：事实（mono）+ 图标工具（重置/手动修改）+ 主操作（@ 提意见）',
+  check('舞台工具栏：事实（mono）+ 图标工具（重置/手动修改）；主操作在底部输入条',
     /className: 'mcart-toolbar-facts'/.test(client)
-    && /className: 'mcart-btn mcart-primary'/.test(client)
-    && /'aria-label': '重置'/.test(client) && /'aria-label': '手动修改'/.test(client))
+    && /'aria-label': '重置'/.test(client) && /'aria-label': '手动修改'/.test(client)
+    && /mcart-complain-send mcart-primary/.test(client)
+    && /title: '提意见'/.test(client))
   check('相机按包围盒 fit：8 个角都拉进 88% 安全框、并避让底部热键栏',
     /function boxCorners\(box\)/.test(client) && /const margin = 0\.88/.test(client)
     && /for \(let pass = 0; pass < 6; pass\+\+\)/.test(client)
