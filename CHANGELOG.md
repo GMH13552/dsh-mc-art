@@ -11,6 +11,22 @@ panel/report contract is stable, and whose shipped skills are general (no loader
 version, machine or project is baked in). Earlier 0.1.x releases were development
 snapshots and are not itemised here.
 
+## 0.3.5
+
+### Changed — the npm page now reads like a person wrote it
+
+`panel/README.md` had grown to 252 lines of engineering post-mortems: the comment stripper that ate
+313 lines, the fallback ladder for missing services, the directory picker that never returned. That
+material is worth keeping for anyone debugging this codebase, but it is the wrong thing for someone
+deciding whether to install the package.
+
+The page is now short: what it is, one command to install, what you see after opening it, what is in
+the package, and the three things that will bite you (restart the process after upgrading; the panel
+does not judge taste for you; it only writes your project's resource pack). The post-mortems stay in
+the repository's own docs, where someone debugging can find them.
+
+No code change — the version bump exists only to republish the page.
+
 ## 0.3.4
 
 ### Fixed — one preset variable broke every session on the mode
